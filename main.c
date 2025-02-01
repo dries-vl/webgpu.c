@@ -2,22 +2,18 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <assert.h>
-
-#include "webgpu.c"
+#include "webgpu.c"  // Includes our modified webgpu functions and definitions
 
 extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
 extern void  wgpuShutdown();
-
 extern int   wgpuCreatePipeline(const char *shaderPath);
 extern int   wgpuCreateMesh(int pipelineID, const Vertex *vertices, int vertexCount);
-
-extern void  wgpuSetUniform(int pipelineID, float someValue);
+extern int   wgpuAddUniform(int pipelineID, float initialValue);
+extern void  wgpuSetUniformValue(int uniformID, float newValue);
 extern void  wgpuStartFrame();
 extern void  wgpuDrawPipeline(int pipelineID);
 extern void  wgpuEndFrame();
 
-
-// Win32 boilerplate
 static bool g_Running = true;
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -39,7 +35,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)lpCmdLine;
     (void)nCmdShow;
 
-    // Register window class
     WNDCLASSEX wc = {0};
     wc.cbSize        = sizeof(WNDCLASSEX);
     wc.style         = CS_OWNDC;
@@ -49,13 +44,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.lpszClassName = "WgpuWindowClass";
     RegisterClassEx(&wc);
 
-    // Create window
     HWND hwnd = CreateWindowEx(
         0,
         wc.lpszClassName,
-        "Multi-Mesh Demo",
+        "3D rpg.c",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 
+        CW_USEDEFAULT, CW_USEDEFAULT,
         800, 600,
         NULL,
         NULL,
@@ -64,37 +58,34 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     );
     assert(hwnd);
 
-    // Init WebGPU
     wgpuInit(hInstance, hwnd, 800, 600);
 
-    // 1) Create multiple pipelines
-    int pipelineGreen  = wgpuCreatePipeline("shader.wgsl");
-    int pipelineOrange = wgpuCreatePipeline("shader2.wgsl");
+    // Create two pipelines (shaders must support the uniform buffer binding).
+    int pipelineA = wgpuCreatePipeline("shader.wgsl");
+    int pipelineB = wgpuCreatePipeline("shader2.wgsl");
 
-    // 2) Create some meshes with different vertex data & pipeline assignments
+    // Create meshes.
     Vertex triVertsA[] = {
-        {{  -0.5f,  0.8f }, { 0.0f, 0.0f, 0.0f }},
-        {{ -1.3f, -0.8f }, { 1.0f, 1.0f, 1.0f }},
-        {{  0.3f, -0.8f }, { 1.0f, 1.0f, 1.0f }},
+        {{ -0.5f,  0.8f, 0.0f }, { 0.0f, 0.0f, 0.0f }},
+        {{ -1.3f, -0.8f, 0.0f }, { 1.0f, 1.0f, 1.0f }},
+        {{  0.3f, -0.8f, 0.0f }, { 1.0f, 1.0f, 1.0f }},
     };
     Vertex triVertsB[] = {
-        {{  0.0f,  0.8f }, { 1.0f, 0.0f, 0.0f }},
-        {{ -0.8f, -0.8f }, { 0.0f, 1.0f, 0.0f }},
-        {{  0.8f, -0.8f }, { 0.0f, 0.0f, 1.0f }},
+        {{  0.0f,  0.8f, 0.0f }, { 1.0f, 0.0f, 0.0f }},
+        {{ -0.8f, -0.8f, 0.0f }, { 0.0f, 1.0f, 0.0f }},
+        {{  0.8f, -0.8f, 0.5f }, { 0.0f, 0.0f, 1.0f }},
     };
 
-    // Create two meshes, each assigned to a different pipeline
-    int meshA = wgpuCreateMesh(pipelineGreen,  triVertsA, 3);
-    int meshB = wgpuCreateMesh(pipelineOrange, triVertsB, 3);
+    int meshA = wgpuCreateMesh(pipelineA, triVertsA, 3);
+    int meshB = wgpuCreateMesh(pipelineB, triVertsB, 3);
 
-    // 3) Example of setting a uniform on the pipelines
-    //    (In a real engine, you'd have per-mesh or per-material uniform buffers)
-    wgpuSetUniform(pipelineGreen,  1.0f);  // maybe some time-based param
-    wgpuSetUniform(pipelineOrange, 2.0f);
+    // Add one uniform per pipeline.
+    int uniformA = wgpuAddUniform(pipelineA, 1.0f);
+    float uniformBValue = 1.0; 
+    int uniformB = wgpuAddUniform(pipelineB, uniformBValue);
 
-    // Main loop
+    // Main loop.
     while (g_Running) {
-        // Windows message pump
         MSG msg;
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
@@ -104,25 +95,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
-        if (!g_Running) break;
+        if (!g_Running)
+            break;
 
-		// todo: what about the command buffer (?)
-		// todo: what about the gpu malloc/free regardless of pipeline (?)
+        // Optionally update uniform values here, e.g.,
+        uniformBValue -= 0.01;
+        wgpuSetUniformValue(uniformB, uniformBValue);
 
-        // Begin frame
         wgpuStartFrame();
-
-        // Draw calls for each pipeline
-        wgpuDrawPipeline(pipelineGreen);
-        wgpuDrawPipeline(pipelineOrange);
-
-        // End frame
+        wgpuDrawPipeline(pipelineA);
+        wgpuDrawPipeline(pipelineB);
         wgpuEndFrame();
     }
 
-    // Cleanup
     wgpuShutdown();
     DestroyWindow(hwnd);
-
     return 0;
 }
