@@ -1,26 +1,33 @@
-// A uniform buffer is declared in group(0) binding(0)
 struct Uniforms {
-  value: f32,
+    brightness : f32,
+    time : f32,
+    padding1 : vec2<f32>,  // Ensures 16-byte alignment (optional)
+    camera : mat4x4<f32>,  // 16 floats (64 bytes)
 };
 
 @group(0) @binding(0)
-var<uniform> uUniform : Uniforms;
+var<uniform> uniforms : Uniforms;
+
+struct VertexInput {
+    @location(0) position : vec3<f32>,
+    @location(1) color : vec3<f32>
+};
 
 struct VertexOutput {
-  @builtin(position) position : vec4<f32>,
-  @location(0) color : vec3<f32>,
+    @builtin(position) position : vec4<f32>,
+    @location(0) color : vec3<f32>
 };
 
 @vertex
-fn vs_main(@location(0) a_position: vec3<f32>, @location(1) a_color: vec3<f32>) -> VertexOutput {
-  var output: VertexOutput;
-  output.position = vec4<f32>(a_position, 1.0);
-  output.color = a_color;
-  return output;
+fn vs_main(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = uniforms.camera * vec4<f32>(input.position, 1.0);
+    output.color = input.color;
+    return output;
 }
 
 @fragment
-fn fs_main(@location(0) color: vec3<f32>) -> @location(0) vec4<f32> {
-  // Here the uniform value is used to modulate the incoming color.
-  return vec4<f32>(color * uUniform.value, 1.0);
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let finalColor = input.color * uniforms.brightness;
+    return vec4<f32>(finalColor, 1.0);
 }
