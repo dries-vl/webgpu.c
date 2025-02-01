@@ -8,7 +8,7 @@ extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
 extern void  wgpuShutdown();
 extern int   wgpuCreatePipeline(const char *shaderPath);
 extern int   wgpuCreateMesh(int pipelineID, const Vertex *vertices, int vertexCount);
-extern int   wgpuAddUniform(int pipelineID, const void* data, int dataSize);
+extern int   wgpuAddUniform(int pipelineID, const void* data);
 extern void  wgpuSetUniformValue(int pipelineID, int uniformOffset, const void* data, int dataSize);
 extern int   wgpuAddTexture(int pipelineID, const char* texturePath);
 extern void  wgpuStartFrame();
@@ -82,22 +82,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // Create a mesh.
     Vertex triVerts[] = {
-        {{ -0.5f,  0.8f, 0.0f }, { 0.0f, 0.0f, 0.0f }},
-        {{ -1.3f, -0.8f, 0.0f }, { 1.0f, 1.0f, 1.0f }},
-        {{  0.3f, -0.8f, 0.0f }, { 1.0f, 1.0f, 1.0f }},
+        {{ -0.5f,  0.8f, 0.0f }, { 1.0f, 0.0f, 0.0f }},
+        {{ -1.3f, -0.8f, 0.0f }, { 0.0f, 1.0f, 0.0f }},
+        {{  0.3f, -0.8f, 0.0f }, { 0.0f, 0.0f, 1.0f }},
     };
     int meshA = wgpuCreateMesh(pipelineA, triVerts, 3);
     
     // Add uniforms. For example, add a brightness value (a float).
     float brightness = 1.0f;
-    int brightnessOffset = wgpuAddUniform(pipelineA, &brightness, sizeof(float));
+    int brightnessOffset = wgpuAddUniform(pipelineA, &brightness);
+
     // Optionally, add a time uniform.
     float timeVal = 0.0f;
-    int timeOffset = wgpuAddUniform(pipelineA, &timeVal, sizeof(float));
-    
-    float padding = 0.0f;
-    wgpuAddUniform(pipelineA, &padding, sizeof(float));
-    wgpuAddUniform(pipelineA, &padding, sizeof(float));
+    int timeOffset = wgpuAddUniform(pipelineA, &timeVal);
     
     // Add a camera transform (a 4x4 matrix).  
     float camera[16] = {
@@ -106,8 +103,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
          0.0f, 0.0f, 1.0f, 0.0f,
          0.0f, 0.0f, 0.0f, 1
     };
-    int cameraOffset = wgpuAddUniform(pipelineA, camera, sizeof(camera));
-    
+    int cameraOffset = wgpuAddUniform(pipelineA, camera);
+
     // Main loop.
     while (g_Running) {
         MSG msg;
