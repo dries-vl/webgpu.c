@@ -17,6 +17,29 @@ extern void  wgpuEndFrame();
 
 static bool g_Running = true;
 
+struct Vector3 {
+    float x, y, z;
+};
+
+
+void move(struct Vector3 move, float *matrix) {
+    matrix[3] += move.x;
+    matrix[7] += move.y;
+    matrix[11] += move.z;
+}
+
+void yaw(float angle, float *matrix) {
+    float rotMatrix[16] = {
+         1.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, 1.0f, 0.0f, 0.0f,
+         0.0f, 0.0f, 1.0f, 0.0f,
+         0.0f, 0.0f, 0.0f, 1
+    };
+
+}
+
+
+
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
@@ -68,19 +91,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // Add uniforms. For example, add a brightness value (a float).
     float brightness = 1.0f;
     int brightnessOffset = wgpuAddUniform(pipelineA, &brightness, sizeof(float));
-    
-    // Add a camera transform (a 4x4 matrix).  
-    float camera[16] = {
-         1, 0, 0, 0,
-         0, 1, 0, 0,
-         0, 0, 1, 0,
-         0, 0, 0, 1
-    };
-    int cameraOffset = wgpuAddUniform(pipelineA, camera, sizeof(camera));
-    
     // Optionally, add a time uniform.
     float timeVal = 0.0f;
     int timeOffset = wgpuAddUniform(pipelineA, &timeVal, sizeof(float));
+    
+    float padding = 0.0f;
+    wgpuAddUniform(pipelineA, &padding, sizeof(float));
+    wgpuAddUniform(pipelineA, &padding, sizeof(float));
+    
+    // Add a camera transform (a 4x4 matrix).  
+    float camera[16] = {
+         1.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, 1.0f, 0.0f, 0.0f,
+         0.0f, 0.0f, 1.0f, 0.0f,
+         0.0f, 0.0f, 0.0f, 1
+    };
+    int cameraOffset = wgpuAddUniform(pipelineA, camera, sizeof(camera));
     
     // Main loop.
     while (g_Running) {
@@ -97,7 +123,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         // For example, update the time uniform.
         timeVal += 0.016f; // pretend 16ms per frame
+        move((struct Vector3){0.016f, 0.0f, 0.0f}, camera);
         wgpuSetUniformValue(pipelineA, timeOffset, &timeVal, sizeof(float));
+        wgpuSetUniformValue(pipelineA, cameraOffset, &camera, sizeof(camera));
         
         wgpuStartFrame();
         wgpuDrawPipeline(pipelineA);
