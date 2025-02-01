@@ -17,7 +17,7 @@ typedef struct {
 // Limits and capacities
 #define MAX_PIPELINES             16
 #define MAX_MESHES                128
-#define UNIFORM_BUFFER_CAPACITY   1024  // bytes per pipeline’s uniform buffer
+#define UNIFORM_BUFFER_CAPACITY   4 * 20  // bytes per pipeline’s uniform buffer
 
 // -----------------------------------------------------------------------------
 // Pipeline Data: each pipeline holds its render pipeline plus one generic
@@ -318,24 +318,32 @@ int wgpuCreateMesh(int pipelineID, const Vertex *vertices, int vertexCount) {
     return meshID;
 }
 
-// -----------------------------------------------------------------------------
-// wgpuAddUniform: Append arbitrary uniform data to the pipeline’s generic uniform buffer.
-// Returns an offset (handle) that can be used for later updates.
-int wgpuAddUniform(int pipelineID, const void* data, int dataSize) {
+int wgpuAddUniform(int pipelineID, const void* data) {
+    int dataSize = sizeof(data);
     if (pipelineID < 0 || pipelineID >= MAX_PIPELINES || !g_wgpu.pipelines[pipelineID].used) {
         fprintf(stderr, "[webgpu.c] Invalid pipeline ID for uniform: %d\n", pipelineID);
         return -1;
     }
+    // Inline alignment determination using ternary operators
+    int alignment = (dataSize <= 4) ? 4 :
+                    (dataSize <= 8) ? 8 :
+                    16; // Default for vec3, vec4, mat4x4, or larger
+
     PipelineData* pd = &g_wgpu.pipelines[pipelineID];
-    if (pd->uniformCurrentOffset + dataSize > UNIFORM_BUFFER_CAPACITY) {
+    // Align the offset to the correct boundary (based on WGSL rules)
+    int alignedOffset = (pd->uniformCurrentOffset + (alignment - 1)) & ~(alignment - 1); // *info: bitwise trick to round up to next alignment offset
+    // Check if the new offset exceeds buffer capacity
+    if (alignedOffset + dataSize > UNIFORM_BUFFER_CAPACITY) {
         fprintf(stderr, "[webgpu.c] Uniform buffer capacity exceeded for pipeline %d\n", pipelineID);
         return -1;
     }
-    int offset = pd->uniformCurrentOffset;
-    memcpy(pd->uniformData + offset, data, dataSize);
-    pd->uniformCurrentOffset += dataSize;
-    printf("[webgpu.c] Added uniform at offset %d (size %d) to pipeline %d\n", offset, dataSize, pipelineID);
-    return offset;
+    // Copy the data into the aligned buffer
+    memcpy(pd->uniformData + alignedOffset, data, dataSize);
+    // Update the current offset
+    pd->uniformCurrentOffset = alignedOffset + dataSize;
+    printf("[webgpu.c] Added uniform at aligned offset %d (size %d) with alignment %d to pipeline %d\n", 
+            alignedOffset, dataSize, alignment, pipelineID);
+    return alignedOffset;
 }
 
 // -----------------------------------------------------------------------------
