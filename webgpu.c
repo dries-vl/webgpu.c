@@ -318,8 +318,7 @@ int wgpuCreateMesh(int pipelineID, const Vertex *vertices, int vertexCount) {
     return meshID;
 }
 
-int wgpuAddUniform(int pipelineID, const void* data) {
-    int dataSize = sizeof(data);
+int wgpuAddUniform(int pipelineID, const void* data, int dataSize) {
     if (pipelineID < 0 || pipelineID >= MAX_PIPELINES || !g_wgpu.pipelines[pipelineID].used) {
         fprintf(stderr, "[webgpu.c] Invalid pipeline ID for uniform: %d\n", pipelineID);
         return -1;
@@ -331,7 +330,7 @@ int wgpuAddUniform(int pipelineID, const void* data) {
 
     PipelineData* pd = &g_wgpu.pipelines[pipelineID];
     // Align the offset to the correct boundary (based on WGSL rules)
-    int alignedOffset = (pd->uniformCurrentOffset + (alignment - 1)) & ~(alignment - 1); // *info: bitwise trick to round up to next alignment offset
+    int alignedOffset = (pd->uniformCurrentOffset + (alignment - 1)) & ~(alignment - 1);
     // Check if the new offset exceeds buffer capacity
     if (alignedOffset + dataSize > UNIFORM_BUFFER_CAPACITY) {
         fprintf(stderr, "[webgpu.c] Uniform buffer capacity exceeded for pipeline %d\n", pipelineID);
