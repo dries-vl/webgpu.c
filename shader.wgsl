@@ -2,6 +2,7 @@ struct Uniforms {
     brightness : f32,
     time : f32,
     camera : mat4x4<f32>,  // 16 floats (64 bytes)
+    view : mat4x4<f32>,  // 16 floats (64 bytes)
 };
 
 @group(0) @binding(0)
@@ -21,13 +22,14 @@ struct VertexOutput {
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     output.position = vec4<f32>(input.position, 1.0) * uniforms.camera;
-    output.color = input.color - uniforms.time;
-    output.position.z = 0.5;
+    output.position = output.position * uniforms.view;
+    output.position.z = 0.5f;
+    output.color.y = output.position.z;
     return output;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let finalColor = input.color * uniforms.brightness;
+    let finalColor = input.color;
     return vec4<f32>(finalColor, 1.0);
 }

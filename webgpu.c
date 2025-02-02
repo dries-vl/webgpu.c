@@ -17,7 +17,7 @@ typedef struct {
 // Limits and capacities
 #define MAX_PIPELINES             16
 #define MAX_MESHES                128
-#define UNIFORM_BUFFER_CAPACITY   4 * 20  // bytes per pipeline’s uniform buffer
+#define UNIFORM_BUFFER_CAPACITY   1024  // bytes per pipeline’s uniform buffer
 
 // -----------------------------------------------------------------------------
 // Pipeline Data: each pipeline holds its render pipeline plus one generic
@@ -358,7 +358,7 @@ void wgpuSetUniformValue(int pipelineID, int offset, const void* data, int dataS
         return;
     }
     memcpy(pd->uniformData + offset, data, dataSize);
-    printf("[webgpu.c] Pipeline %d uniform at offset %d updated (size %d)\n", pipelineID, offset, dataSize);
+    //printf("[webgpu.c] Pipeline %d uniform at offset %d updated (size %d)\n", pipelineID, offset, dataSize);
 }
 
 // -----------------------------------------------------------------------------

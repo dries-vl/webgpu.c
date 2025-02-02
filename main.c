@@ -17,28 +17,24 @@ extern void  wgpuDrawPipeline(int pipelineID);
 extern void  wgpuEndFrame();
 
 static bool g_Running = true;
+float fov = 4.0f;
+float farClip = 2000.0f;
+float nearClip = 1.0f;
 
 struct Vector3 {
     float x, y, z;
 };
-void multiply(int *a, int row1, int col1, int *b, int row2, int col2, int *d) 
+void multiply(float *a, int row1, int col1, float *b, int row2, int col2, float *d) 
 {
     assert(col1 == row2); // check valid dimensions
     int size = row1*col2;
     for (int i = 0; i < row1; i++) {
         for (int j = 0; j < col2; j++) {
-            int sum = 0;
+            float sum = 0;
             for (int k = 0; k < col1; k++)
                 sum = sum + a[i * col1 + k] * b[k * col2 + j];
             d[i * col2 + j] = sum;
         }
-    }
-
-    for (int i = 0; i < size; i++) {
-        if (i % col2 == 0) {
-            printf("\n");
-        }
-        printf("%d ", d[i]);
     }
 }
 
@@ -66,7 +62,6 @@ void pitch(float angle, float *matrix) {
          0.0f, sin(angle), cos(angle), 0.0f,
          0.0f, 0.0f, 0.0f, 1
     };
-    printf("%f", sin(angle));
     multiply(matrix, 4, 4, rotMatrix, 4, 4, matrix);
 }
 
@@ -135,6 +130,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
          0.0f, 0.0f, 0.0f, 1
     };
     int cameraOffset = wgpuAddUniform(pipelineA, camera, sizeof(camera));
+    
+    // Add a projection matrix (a 4x4 matrix).  
+    float view[16] = {
+         1.0/(tan(fov/2.0)*1.6), 0.0f, 0.0f, 0.0f,
+         0.0f, 1.0/tan(fov/2.0), 0.0f, 0.0f,
+         0.0f, 0.0f, (nearClip+farClip)/(nearClip-farClip), (2*farClip*nearClip)/(nearClip-farClip),
+         0.0f, 0.0f, -1, 1
+    };
+    int viewOffset = wgpuAddUniform(pipelineA, view, sizeof(view));
 
     // Main loop.
     while (g_Running) {
@@ -151,10 +155,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         // For example, update the time uniform.
         timeVal += 0.016f; // pretend 16ms per frame
-        pitch(0.03, camera);
-        printf("Camera: %f %f %f\n", camera[0], camera[1], camera[2]);
-        printf("Camera: %f %f %f\n", camera[4], camera[5], camera[6]);
-        printf("Camera: %f %f %f\n", camera[8], camera[9], camera[10]);
+        move((struct Vector3){0.0f, 0.0f, -0.001f}, camera);
+        yaw(0.01f, camera);
         wgpuSetUniformValue(pipelineA, timeOffset, &timeVal, sizeof(float));
         wgpuSetUniformValue(pipelineA, cameraOffset, &camera, sizeof(camera));
         
