@@ -1,7 +1,7 @@
 struct Uniforms {
     brightness : f32,
     time : f32,
-    camera : mat4x4<f32>,  // 16 floats (64 bytes)
+    camera : mat4x4<f32>,  // 16 floats (64 bytes) IS matrix for projection not position of
     view : mat4x4<f32>,  // 16 floats (64 bytes)
 };
 
