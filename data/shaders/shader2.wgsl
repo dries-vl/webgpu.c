@@ -23,6 +23,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     output.position = uniforms.camera * vec4<f32>(input.position, 1.0);
     output.color = input.color;
+    output.position.z = 0.5
     return output;
 }
 

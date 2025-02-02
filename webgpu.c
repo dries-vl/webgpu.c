@@ -564,7 +564,6 @@ int wgpuAddTexture(int pipelineID, const char* filename) {
 
     return slot;
 }
-
 // -----------------------------------------------------------------------------
 // wgpuStartFrame: Begin a new frame.
 void wgpuStartFrame(void) {

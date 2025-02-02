@@ -1,10 +1,18 @@
 struct Uniforms {
     brightness : f32,
     time : f32,
-    camera : mat4x4<f32>
+    camera : mat4x4<f32>,  // 16 floats (64 bytes) IS matrix for projection not position of
+    view : mat4x4<f32>,  // 16 floats (64 bytes)
 };
 @group(0) @binding(0)
 var<uniform> uniforms : Uniforms;
+
+
+struct VertexInput {
+    @location(0) position : vec3<f32>,
+    @location(1) color : vec3<f32>
+};
+
 
 // Vertex output.
 struct VertexOutput {
@@ -14,16 +22,13 @@ struct VertexOutput {
 };
 
 @vertex
-fn vs_main(
-    @location(0) position: vec3<f32>,
-    @location(1) color: vec3<f32>,
-    @location(2) uv: vec2<f32>
-) -> VertexOutput {
-    var out: VertexOutput;
-    out.pos = vec4<f32>(position, 1.0);
-    out.color = color;
-    out.uv = uv;
-    return out;
+fn vs_main(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+    output.pos = vec4<f32>(input.position, 1.0) * uniforms.camera;
+    output.pos = output.pos * uniforms.view;
+    output.pos.z = 0.5f;
+    output.color.y = output.pos.z;
+    return output;
 }
 
 // Group 1: Textures
