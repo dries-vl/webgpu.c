@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <assert.h>
+#include <math.h>
 #include "webgpu.c"  // Includes our updated webgpu implementation
 
 extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
@@ -20,6 +21,26 @@ static bool g_Running = true;
 struct Vector3 {
     float x, y, z;
 };
+void multiply(int *a, int row1, int col1, int *b, int row2, int col2, int *d) 
+{
+    assert(col1 == row2); // check valid dimensions
+    int size = row1*col2;
+    for (int i = 0; i < row1; i++) {
+        for (int j = 0; j < col2; j++) {
+            int sum = 0;
+            for (int k = 0; k < col1; k++)
+                sum = sum + a[i * col1 + k] * b[k * col2 + j];
+            d[i * col2 + j] = sum;
+        }
+    }
+
+    for (int i = 0; i < size; i++) {
+        if (i % col2 == 0) {
+            printf("\n");
+        }
+        printf("%d ", d[i]);
+    }
+}
 
 
 void move(struct Vector3 move, float *matrix) {
@@ -30,14 +51,24 @@ void move(struct Vector3 move, float *matrix) {
 
 void yaw(float angle, float *matrix) {
     float rotMatrix[16] = {
-         1.0f, 0.0f, 0.0f, 0.0f,
+         cos(angle), 0.0f, sin(angle), 0.0f,
          0.0f, 1.0f, 0.0f, 0.0f,
-         0.0f, 0.0f, 1.0f, 0.0f,
+         -sin(angle), 0.0f, cos(angle), 0.0f,
          0.0f, 0.0f, 0.0f, 1
     };
-
+    multiply(matrix, 4, 4, rotMatrix, 4, 4, matrix);
 }
 
+void pitch(float angle, float *matrix) {
+    float rotMatrix[16] = {
+         1.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, cos(angle), -sin(angle), 0.0f,
+         0.0f, sin(angle), cos(angle), 0.0f,
+         0.0f, 0.0f, 0.0f, 1
+    };
+    printf("%f", sin(angle));
+    multiply(matrix, 4, 4, rotMatrix, 4, 4, matrix);
+}
 
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -120,7 +151,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         // For example, update the time uniform.
         timeVal += 0.016f; // pretend 16ms per frame
-        move((struct Vector3){0.016f, 0.0f, 0.0f}, camera);
+        pitch(0.03, camera);
+        printf("Camera: %f %f %f\n", camera[0], camera[1], camera[2]);
+        printf("Camera: %f %f %f\n", camera[4], camera[5], camera[6]);
+        printf("Camera: %f %f %f\n", camera[8], camera[9], camera[10]);
         wgpuSetUniformValue(pipelineA, timeOffset, &timeVal, sizeof(float));
         wgpuSetUniformValue(pipelineA, cameraOffset, &camera, sizeof(camera));
         
