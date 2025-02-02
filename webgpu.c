@@ -1,3 +1,10 @@
+// webgpu.c
+// ----------------------------
+// NOTE: This file now uses stb_image to load PNG files.
+#define STBI_NO_SIMD  // Disable SSE/AVX intrinsics (doesn't work with TCC)
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include <windows.h>
 #include <assert.h>
 #include <stdio.h>
@@ -7,10 +14,11 @@
 #include "wgpu.h"
 
 // -----------------------------------------------------------------------------
-// Minimal Vertex definition (must match main.c)
+// Update Vertex definition to include UV coordinates.
 typedef struct {
     float position[3];
     float color[3];
+    float uv[2]; // New: texture coordinates
 } Vertex;
 
 // -----------------------------------------------------------------------------
@@ -18,18 +26,24 @@ typedef struct {
 #define MAX_PIPELINES             16
 #define MAX_MESHES                128
 #define UNIFORM_BUFFER_CAPACITY   1024  // bytes per pipeline’s uniform buffer
+#define MAX_TEXTURES              16        // maximum textures per pipeline
 
 // -----------------------------------------------------------------------------
-// Pipeline Data: each pipeline holds its render pipeline plus one generic
-// uniform buffer (and a CPU copy) and texture info.
+// Pipeline Data: each pipeline now holds not only a uniform bind group but also a texture bind group.
 typedef struct {
     WGPURenderPipeline pipeline;
     bool               used;
-    // Generic uniform system:
+    // Uniform system.
     WGPUBuffer         uniformBuffer;
     WGPUBindGroup      uniformBindGroup;
     uint8_t            uniformData[UNIFORM_BUFFER_CAPACITY];
     int                uniformCurrentOffset;
+    // --- NEW TEXTURE DATA ---
+    WGPUBindGroup      textureBindGroup;
+    WGPUSampler        textureSampler;
+    WGPUTexture        textureObjects[MAX_TEXTURES];
+    WGPUTextureView    textureViews[MAX_TEXTURES];
+    int                textureCount;
 } PipelineData;
 
 // Mesh Data remains the same.
@@ -57,9 +71,15 @@ typedef struct {
 static WebGPUContext g_wgpu = {0};
 
 // -----------------------------------------------------------------------------
-// Global bind group layouts: one for the generic uniform buffer and one for textures.
-// For textures we now need two entries (binding 0: sampler, binding 1: texture view).
+// Global bind group layouts: one for the uniform buffer and one for textures.
+// (For textures we create a bindgroup layout with one sampler (binding 0)
+//  and MAX_TEXTURES individual texture bindings (bindings 1..MAX_TEXTURES).)
 static WGPUBindGroupLayout s_uniformBindGroupLayout = NULL;
+static WGPUBindGroupLayout s_textureBindGroupLayout = NULL;
+
+// A 1×1 white texture for empty slots:
+static WGPUTexture      g_defaultTexture = NULL;
+static WGPUTextureView  g_defaultTextureView = NULL;
 
 // Forward declarations
 static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, const char* message, void* userdata);
@@ -78,6 +98,7 @@ static WGPURenderPassEncoder g_currentPass = NULL;
 void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
     g_wgpu = (WebGPUContext){0}; // initialize all fields to zero
 
+    // Instance creation (your instance extras, etc.)
     WGPUInstanceExtras extras = {0};
     extras.chain.sType = WGPUSType_InstanceExtras;
     extras.backends   = WGPUInstanceBackend_GL;
@@ -123,6 +144,57 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         bglDesc.entries = &entry;
         s_uniformBindGroupLayout = wgpuDeviceCreateBindGroupLayout(g_wgpu.device, &bglDesc);
     }
+    
+        // 2) Create a texture bind group layout with 1 sampler + 16 textures
+    {
+        int totalEntries = 1 + MAX_TEXTURES; // binding0: sampler, binding1..16: textures
+        WGPUBindGroupLayoutEntry *texEntries = calloc(totalEntries, sizeof(WGPUBindGroupLayoutEntry));
+        // Sampler at binding=0
+        texEntries[0].binding = 0;
+        texEntries[0].visibility = WGPUShaderStage_Fragment;
+        texEntries[0].sampler.type = WGPUSamplerBindingType_Filtering;
+
+        // 16 texture bindings
+        for (int i = 0; i < MAX_TEXTURES; i++) {
+            texEntries[i+1].binding = i + 1;  // i+1
+            texEntries[i+1].visibility = WGPUShaderStage_Fragment;
+            texEntries[i+1].texture.sampleType = WGPUTextureSampleType_Float;
+            texEntries[i+1].texture.viewDimension = WGPUTextureViewDimension_2D;
+            texEntries[i+1].texture.multisampled = false;
+        }
+        WGPUBindGroupLayoutDescriptor texLayoutDesc = {0};
+        texLayoutDesc.entryCount = totalEntries;
+        texLayoutDesc.entries = texEntries;
+        s_textureBindGroupLayout = wgpuDeviceCreateBindGroupLayout(g_wgpu.device, &texLayoutDesc);
+        free(texEntries);
+    }
+
+    // 3) Create a 1×1 white texture for empty slots
+    {
+        uint8_t whitePixel[4] = {255,255,255,255};
+        WGPUTextureDescriptor td = {0};
+        td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
+        td.dimension = WGPUTextureDimension_2D;
+        td.format = WGPUTextureFormat_RGBA8Unorm;
+        td.size.width  = 1;
+        td.size.height = 1;
+        td.size.depthOrArrayLayers = 1;
+        td.mipLevelCount = 1;
+        td.sampleCount   = 1;
+        g_defaultTexture = wgpuDeviceCreateTexture(g_wgpu.device, &td);
+
+        // Copy data
+        WGPUImageCopyTexture ict = {0};
+        ict.texture = g_defaultTexture;
+        WGPUTextureDataLayout tdl = {0};
+        tdl.bytesPerRow    = 4;
+        tdl.rowsPerImage   = 1;
+        WGPUExtent3D extent = {1,1,1};
+        wgpuQueueWriteTexture(g_wgpu.queue, &ict, whitePixel, 4, &tdl, &extent);
+
+        // Create a view
+        g_defaultTextureView = wgpuTextureCreateView(g_defaultTexture, NULL);
+    }
 
     WGPUSurfaceCapabilities caps = {0};
     wgpuSurfaceGetCapabilities(g_wgpu.surface, g_wgpu.adapter, &caps);
@@ -162,10 +234,20 @@ void wgpuShutdown(void) {
                 wgpuBindGroupRelease(g_wgpu.pipelines[i].uniformBindGroup);
             if (g_wgpu.pipelines[i].uniformBuffer)
                 wgpuBufferRelease(g_wgpu.pipelines[i].uniformBuffer);
+            // --- Release texture resources ---
+            if (g_wgpu.pipelines[i].textureBindGroup)
+                wgpuBindGroupRelease(g_wgpu.pipelines[i].textureBindGroup);
+            if (g_wgpu.pipelines[i].textureSampler)
+                wgpuSamplerRelease(g_wgpu.pipelines[i].textureSampler);
+            for (int j = 0; j < g_wgpu.pipelines[i].textureCount; j++) {
+                wgpuTextureViewRelease(g_wgpu.pipelines[i].textureViews[j]);
+                wgpuTextureRelease(g_wgpu.pipelines[i].textureObjects[j]);
+            }
             g_wgpu.pipelines[i].used = false;
         }
     }
     if (s_uniformBindGroupLayout) { wgpuBindGroupLayoutRelease(s_uniformBindGroupLayout); s_uniformBindGroupLayout = NULL; }
+    if (s_textureBindGroupLayout) { wgpuBindGroupLayoutRelease(s_textureBindGroupLayout); s_textureBindGroupLayout = NULL; }
     if (g_wgpu.queue) { wgpuQueueRelease(g_wgpu.queue); g_wgpu.queue = NULL; }
     if (g_wgpu.device) { wgpuDeviceRelease(g_wgpu.device); g_wgpu.device = NULL; }
     if (g_wgpu.adapter) { wgpuAdapterRelease(g_wgpu.adapter); g_wgpu.adapter = NULL; }
@@ -176,8 +258,7 @@ void wgpuShutdown(void) {
 }
 
 // -----------------------------------------------------------------------------
-// wgpuCreatePipeline: Create a render pipeline plus a generic uniform buffer and texture binding.
-// The pipeline layout reserves 2 bind groups: group 0 for the uniform buffer, group 1 for texture.
+// wgpuCreatePipeline: Create a render pipeline plus a generic uniform and texture bindgroup.
 int wgpuCreatePipeline(const char* shaderPath) {
     if (!g_wgpu.initialized) {
         fprintf(stderr, "[webgpu.c] wgpuCreatePipeline called before init!\n");
@@ -189,9 +270,7 @@ int wgpuCreatePipeline(const char* shaderPath) {
             pipelineID = i;
             g_wgpu.pipelines[i].used = true;
             g_wgpu.pipelines[i].uniformCurrentOffset = 0;
-            for (int j = 0; j < UNIFORM_BUFFER_CAPACITY; j++) {
-                g_wgpu.pipelines[i].uniformData[j] = 0;
-            }
+            memset(g_wgpu.pipelines[i].uniformData, 0, UNIFORM_BUFFER_CAPACITY);
             break;
         }
     }
@@ -207,10 +286,11 @@ int wgpuCreatePipeline(const char* shaderPath) {
         return -1;
     }
     
-    // Create a pipeline layout with 2 bind groups: group 0 (uniform buffer) and group 1 (texture).
-    WGPUBindGroupLayout bgls[1] = { s_uniformBindGroupLayout };
+    // Create a pipeline layout with 2 bind groups:
+    // group 0: uniform buffer, group 1: textures.
+    WGPUBindGroupLayout bgls[2] = { s_uniformBindGroupLayout, s_textureBindGroupLayout };
     WGPUPipelineLayoutDescriptor layoutDesc = {0};
-    layoutDesc.bindGroupLayoutCount = 1;
+    layoutDesc.bindGroupLayoutCount = 2;
     layoutDesc.bindGroupLayouts = bgls;
     WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(g_wgpu.device, &layoutDesc);
     assert(pipelineLayout);
@@ -221,16 +301,20 @@ int wgpuCreatePipeline(const char* shaderPath) {
     // Vertex stage.
     rpDesc.vertex.module = shaderModule;
     rpDesc.vertex.entryPoint = "vs_main";
-    WGPUVertexAttribute attributes[2] = {0};
+    // --- Update vertex attributes to include UV ---
+    WGPUVertexAttribute attributes[3] = {0};
     attributes[0].format = WGPUVertexFormat_Float32x3;
     attributes[0].offset = 0;
     attributes[0].shaderLocation = 0;
     attributes[1].format = WGPUVertexFormat_Float32x3;
     attributes[1].offset = sizeof(float) * 3;
     attributes[1].shaderLocation = 1;
+    attributes[2].format = WGPUVertexFormat_Float32x2;
+    attributes[2].offset = sizeof(float) * 6;
+    attributes[2].shaderLocation = 2;
     WGPUVertexBufferLayout vbl = {0};
     vbl.arrayStride = sizeof(Vertex);
-    vbl.attributeCount = 2;
+    vbl.attributeCount = 3;
     vbl.attributes = attributes;
     rpDesc.vertex.bufferCount = 1;
     rpDesc.vertex.buffers = &vbl;
@@ -257,12 +341,14 @@ int wgpuCreatePipeline(const char* shaderPath) {
     WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(g_wgpu.device, &rpDesc);
     g_wgpu.pipelines[pipelineID].pipeline = pipeline;
     
+    // Create uniform buffer.
     WGPUBufferDescriptor ubDesc = {0};
     ubDesc.size = UNIFORM_BUFFER_CAPACITY;
     ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     g_wgpu.pipelines[pipelineID].uniformBuffer = wgpuDeviceCreateBuffer(g_wgpu.device, &ubDesc);
     assert(g_wgpu.pipelines[pipelineID].uniformBuffer);
     
+    // Create uniform bind group.
     WGPUBindGroupEntry uEntry = {0};
     uEntry.binding = 0;
     uEntry.buffer = g_wgpu.pipelines[pipelineID].uniformBuffer;
@@ -273,6 +359,50 @@ int wgpuCreatePipeline(const char* shaderPath) {
     uBgDesc.entryCount = 1;
     uBgDesc.entries = &uEntry;
     g_wgpu.pipelines[pipelineID].uniformBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &uBgDesc);
+    
+    // Create a sampler
+    PipelineData *pd = &g_wgpu.pipelines[pipelineID];
+    WGPUSamplerDescriptor samplerDesc = {0};
+    samplerDesc.minFilter = WGPUFilterMode_Linear;
+    samplerDesc.magFilter = WGPUFilterMode_Linear;
+    samplerDesc.maxAnisotropy = 1;
+    samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
+    samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
+    samplerDesc.addressModeW = WGPUAddressMode_ClampToEdge;
+    pd->textureSampler = wgpuDeviceCreateSampler(g_wgpu.device, &samplerDesc);
+
+    // Initialize all textures to default
+    pd->textureCount = 0;
+    for (int i=0; i<MAX_TEXTURES; i++) {
+        pd->textureObjects[i] = NULL;  // will fill later
+        pd->textureViews[i]   = g_defaultTextureView;
+    }
+
+    // Create the initial texture bind group
+    {
+        // We'll have 1 + 16 = 17 entries
+        int totalEntries = 1 + MAX_TEXTURES;
+        WGPUBindGroupEntry *entries = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
+        // Sampler at binding=0
+        entries[0].binding = 0;
+        entries[0].sampler = pd->textureSampler;
+        // 16 textures at binding=1..16
+        for (int i=0; i<MAX_TEXTURES; i++) {
+            entries[i+1].binding = i + 1;
+            entries[i+1].textureView = pd->textureViews[i];
+        }
+
+        if (pd->textureBindGroup) {
+            wgpuBindGroupRelease(pd->textureBindGroup);
+        }
+        WGPUBindGroupDescriptor bgDesc = {0};
+        bgDesc.layout     = s_textureBindGroupLayout;
+        bgDesc.entryCount = totalEntries;
+        bgDesc.entries    = entries;
+        pd->textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
+
+        free(entries);
+    }
     
     wgpuShaderModuleRelease(shaderModule);
     wgpuPipelineLayoutRelease(pipelineLayout);
@@ -318,6 +448,8 @@ int wgpuCreateMesh(int pipelineID, const Vertex *vertices, int vertexCount) {
     return meshID;
 }
 
+// -----------------------------------------------------------------------------
+// wgpuAddUniform: (unchanged)
 int wgpuAddUniform(int pipelineID, const void* data, int dataSize) {
     if (pipelineID < 0 || pipelineID >= MAX_PIPELINES || !g_wgpu.pipelines[pipelineID].used) {
         fprintf(stderr, "[webgpu.c] Invalid pipeline ID for uniform: %d\n", pipelineID);
@@ -362,6 +494,78 @@ void wgpuSetUniformValue(int pipelineID, int offset, const void* data, int dataS
 }
 
 // -----------------------------------------------------------------------------
+// wgpuAddTexture: Load a PNG file and add it to the pipeline’s texture bind group.
+int wgpuAddTexture(int pipelineID, const char* filename) {
+    PipelineData* pd = &g_wgpu.pipelines[pipelineID];
+    if (pd->textureCount >= MAX_TEXTURES) {
+        fprintf(stderr, "No more texture slots!\n");
+        return -1;
+    }
+    int slot = pd->textureCount; // e.g. 0 => binding=1, 1 => binding=2, etc.
+
+    // Load from disk using stb_image
+    int w,h,channels;
+    unsigned char* data = stbi_load(filename, &w, &h, &channels, STBI_rgb_alpha);
+    if (!data) {
+        fprintf(stderr, "Failed to load %s\n", filename);
+        return -1;
+    }
+    // Create texture
+    WGPUTextureDescriptor td = {0};
+    td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
+    td.dimension = WGPUTextureDimension_2D;
+    td.format    = WGPUTextureFormat_RGBA8Unorm;
+    td.size.width  = w;
+    td.size.height = h;
+    td.size.depthOrArrayLayers = 1;
+    td.mipLevelCount = 1;
+    td.sampleCount   = 1;
+    WGPUTexture tex = wgpuDeviceCreateTexture(g_wgpu.device, &td);
+
+    // Upload data
+    WGPUImageCopyTexture ict = {0};
+    ict.texture = tex;
+    WGPUTextureDataLayout tdl = {0};
+    tdl.bytesPerRow   = 4 * w;
+    tdl.rowsPerImage  = h;
+    WGPUExtent3D ext = {(uint32_t)w,(uint32_t)h,1};
+    wgpuQueueWriteTexture(g_wgpu.queue, &ict, data, (size_t)(4*w*h), &tdl, &ext);
+    stbi_image_free(data);
+
+    // Create view
+    WGPUTextureView view = wgpuTextureCreateView(tex, NULL);
+
+    pd->textureObjects[slot] = tex;
+    pd->textureViews[slot]   = view;
+    pd->textureCount++;
+
+    // Now rebuild the bind group
+    int totalEntries = 1 + MAX_TEXTURES;
+    WGPUBindGroupEntry* e = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
+    e[0].binding = 0;
+    e[0].sampler = pd->textureSampler;
+    for (int i=0; i<MAX_TEXTURES; i++) {
+        e[i+1].binding = i+1;
+        e[i+1].textureView = (i < pd->textureCount) 
+                             ? pd->textureViews[i]
+                             : g_defaultTextureView;
+    }
+    if (pd->textureBindGroup) {
+        wgpuBindGroupRelease(pd->textureBindGroup);
+    }
+    WGPUBindGroupDescriptor bgDesc = {0};
+    bgDesc.layout     = s_textureBindGroupLayout;
+    bgDesc.entryCount = totalEntries;
+    bgDesc.entries    = e;
+    pd->textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
+    free(e);
+
+    printf("Added texture %s to pipeline %d at slot %d (binding=%d)\n",
+           filename, pipelineID, slot, slot+1);
+
+    return slot;
+}
+// -----------------------------------------------------------------------------
 // wgpuStartFrame: Begin a new frame.
 void wgpuStartFrame(void) {
     wgpuSurfaceGetCurrentTexture(g_wgpu.surface, &g_currentSurfaceTexture);
@@ -389,10 +593,12 @@ void wgpuDrawPipeline(int pipelineID) {
         return;
     
     PipelineData* pd = &g_wgpu.pipelines[pipelineID];
-    // Write the CPU–side uniform data to the GPU buffer.
+    // Write CPU–side uniform data to GPU.
     wgpuQueueWriteBuffer(g_wgpu.queue, pd->uniformBuffer, 0, pd->uniformData, UNIFORM_BUFFER_CAPACITY);
     // Bind uniform bind group (group 0).
     wgpuRenderPassEncoderSetBindGroup(g_currentPass, 0, pd->uniformBindGroup, 0, NULL);
+    // --- Bind texture bind group (group 1) ---
+    wgpuRenderPassEncoderSetBindGroup(g_currentPass, 1, pd->textureBindGroup, 0, NULL);
     // Set the render pipeline.
     wgpuRenderPassEncoderSetPipeline(g_currentPass, pd->pipeline);
     

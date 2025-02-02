@@ -1,3 +1,4 @@
+// main.c
 #include <windows.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -164,7 +165,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     RegisterClassEx(&wc);
     
     HWND hwnd = CreateWindowEx(
-        0, wc.lpszClassName, "Generic Uniform Demo",
+        0, wc.lpszClassName, "Generic Uniform & Texture Demo",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
         800, 600, NULL, NULL, hInstance, NULL
     );
@@ -173,15 +174,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wgpuInit(hInstance, hwnd, 800, 600);
     
     // Create a pipeline.
-    // Your shader (shader.wgsl) should declare a uniform block that matches
-    // the layout of the generic uniform buffer (e.g. an array of floats of size UNIFORM_BUFFER_CAPACITY).
-    int pipelineA = wgpuCreatePipeline("shader.wgsl");
+    // The shader (shader.wgsl) must declare a uniform block (group0) and texture struct (group1).
+    int pipelineA = wgpuCreatePipeline("data/shaders/shader.wgsl");
+
+    // struct Material {
+
+    // };
     
     // Create a mesh.
+    // Note: vertices now include UV coordinates.
     Vertex triVerts[] = {
-        {{ -0.5f,  0.8f, 0.0f }, { 1.0f, 0.0f, 0.0f }},
-        {{ -1.3f, -0.8f, 0.0f }, { 0.0f, 1.0f, 0.0f }},
-        {{  0.3f, -0.8f, 0.0f }, { 0.0f, 0.0f, 1.0f }},
+        { { -0.5f,  0.8f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.5f, -0.5f } },
+        { { -1.3f, -0.8f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { -0.5f, 1.0f } },
+        { {  0.3f, -0.8f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.5f, 1.0f } },
     };
     int meshA = wgpuCreateMesh(pipelineA, triVerts, 3);
     Vertex triVerts2[] = {
@@ -217,6 +222,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     };
     int viewOffset = wgpuAddUniform(pipelineA, view, sizeof(view));
 
+    // --- Add a texture to the pipeline ---
+    // (Your file "texture.png" must exist.)
+    int texSlot1 = wgpuAddTexture(pipelineA, "data/textures/texture_1.png");
+    int texSlot2 = wgpuAddTexture(pipelineA, "data/textures/texture_2.png");
+    
     // Main loop.
     while (g_Running) {
         MSG msg;
