@@ -209,7 +209,7 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         .width = width,
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
-        .presentMode = WGPUPresentMode_Fifo
+        .presentMode = WGPUPresentMode_Immediate // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(g_wgpu.surface, &g_wgpu.config);
 
@@ -490,7 +490,6 @@ void wgpuSetUniformValue(int pipelineID, int offset, const void* data, int dataS
         return;
     }
     memcpy(pd->uniformData + offset, data, dataSize);
-    printf("[webgpu.c] Pipeline %d uniform at offset %d updated (size %d)\n", pipelineID, offset, dataSize);
 }
 
 // -----------------------------------------------------------------------------
