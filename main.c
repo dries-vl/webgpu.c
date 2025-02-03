@@ -254,6 +254,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     LARGE_INTEGER current_tick_count;
     QueryPerformanceCounter(&current_tick_count);
     long current_cycle_count = read_cycle_count();
+    float ms_last_frame = 1.0f;
     // Main loop
     while (g_Running) {
         MSG msg;
@@ -269,7 +270,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         // Update uniforms
         timeVal += 0.016f; // pretend 16ms per frame
-        yaw(0.1f, camera);
+        yaw(0.001f * ms_last_frame, camera);
         float inv[16];
         inverseViewMatrix(camera, inv);
         wgpuSetUniformValue(pipelineA, timeOffset, &timeVal, sizeof(float));
@@ -295,12 +296,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             int cycles_last_frame = (int) cycles_elapsed / 1000000; // million cycles per frame
             current_cycle_count = new_cycle_count;
 
-            int ms_last_frame = (int) ((1000*ticks_elapsed) / ticks_per_second);
+            ms_last_frame = (float) (((float)(1000*ticks_elapsed)) / (float)ticks_per_second);
             int fps = ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
             // todo: render in bitmap font to screen instead of printf IO
-            char perf_output_string[256];
-            wsprintf(perf_output_string, "%dms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
-            printf(perf_output_string);
+            printf("%.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
         }
     }
     

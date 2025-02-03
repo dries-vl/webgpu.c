@@ -209,7 +209,7 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         .width = width,
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
-        .presentMode = WGPUPresentMode_Immediate // *info* use fifo for vsync
+        .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(g_wgpu.surface, &g_wgpu.config);
 
