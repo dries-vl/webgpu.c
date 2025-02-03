@@ -27,7 +27,7 @@ struct Vector3 {
 void multiply(const float *a, int row1, int col1, const float *b, int row2, int col2, float *d) {
     assert(col1 == row2); // Ensure valid matrix dimensions
 
-    float temp[row1 * col2]; // Stack-allocated temporary array
+    float *temp = (float *) malloc(row1 * col2 * 4); // Stack-allocated temporary array
 
     for (int i = 0; i < row1; i++) {
         for (int j = 0; j < col2; j++) {
@@ -43,6 +43,7 @@ void multiply(const float *a, int row1, int col1, const float *b, int row2, int 
     for (int i = 0; i < row1 * col2; i++) {
         d[i] = temp[i];
     }
+    free(temp);
 }
 void inverseViewMatrix(const float m[16], float inv[16]) {
     // Extract the 3x3 rotation matrix
@@ -155,9 +156,98 @@ inline unsigned long long read_cycle_count() {
 }
 #endif
 
+typedef BOOL (WINAPI *RegisterRawInputDevices_t)(PCRAWINPUTDEVICE, UINT, UINT);
+typedef UINT (WINAPI *GetRawInputData_t)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
+
+RegisterRawInputDevices_t pRegisterRawInputDevices = NULL;
+GetRawInputData_t pGetRawInputData = NULL;
+
+// Load required functions dynamically
+void load_raw_input_functions() {
+    HMODULE hUser32 = LoadLibrary("user32.dll");
+    if (!hUser32) {
+        printf("Failed to load user32.dll\n");
+        exit(1);
+    }
+
+    pRegisterRawInputDevices = (RegisterRawInputDevices_t)GetProcAddress(hUser32, "RegisterRawInputDevices");
+    pGetRawInputData = (GetRawInputData_t)GetProcAddress(hUser32, "GetRawInputData");
+
+    if (!pRegisterRawInputDevices || !pGetRawInputData) {
+        printf("Failed to get function addresses from user32.dll\n");
+        exit(1);
+    }
+}
+RAWINPUTDEVICE rid[2];
+HRESULT InitializeRawInput()
+{
+    HRESULT hr = S_OK;
+    // Keyboard
+    rid[0].usUsagePage = 0x01;
+    rid[0].usUsage = 0x06; // Keyboard
+    rid[0].dwFlags = 0;
+    rid[0].hwndTarget = NULL;
+
+    // Mouse
+    rid[1].usUsagePage = 0x01;
+    rid[1].usUsage = 0x02; // Mouse
+    rid[1].dwFlags = 0;
+    rid[1].hwndTarget = NULL;
+
+    if (!pRegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE)))
+    {
+        MessageBox(NULL, "Failed to register raw input devices!", "Error", MB_ICONEXCLAMATION | MB_OK);
+        return E_FAIL;
+    }
+}
+
+#define MAX_KEYS 256
+bool keyStates[MAX_KEYS] = { false };  // Track pressed keys
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
+        case WM_INPUT:
+        {
+            UINT dwSize = 0;
+            pGetRawInputData((HRAWINPUT)lParam, RID_INPUT, NULL, &dwSize, sizeof(RAWINPUTHEADER));
+            LPBYTE lpb = (LPBYTE)malloc(dwSize);
+            if (lpb == NULL) break;
+            if (pGetRawInputData((HRAWINPUT)lParam, RID_INPUT, lpb, &dwSize, sizeof(RAWINPUTHEADER)) != dwSize)
+                OutputDebugString(TEXT("GetRawInputData does not return correct size !\n"));
+            RAWINPUT* raw = (RAWINPUT*)lpb;
+            if (raw->header.dwType == RIM_TYPEKEYBOARD)
+            {
+                // Process keyboard input
+                USHORT scanCode = raw->data.keyboard.MakeCode;
+                USHORT flags = raw->data.keyboard.Flags;
+                bool isPressed = !(flags & RI_KEY_BREAK);
+                // Convert scan code to virtual key
+                UINT virtualKey = raw->data.keyboard.VKey;
+                // Handle key press/release
+                // Translate scan code to virtual key if needed
+                if (virtualKey == 0) virtualKey = MapVirtualKey(scanCode, 1);
+                if (virtualKey < MAX_KEYS) {
+                    keyStates[virtualKey] = isPressed;
+                }
+
+                // Print active keys
+                if (isPressed) {
+                    char msg[32];
+                    snprintf(msg, sizeof(msg), "Key Pressed: %c\n", virtualKey);
+                    printf(msg);
+                }
+            }
+            else if (raw->header.dwType == RIM_TYPEMOUSE)
+            {
+                // Process mouse input
+                LONG dx = raw->data.mouse.lLastX;
+                LONG dy = raw->data.mouse.lLastY;
+                USHORT buttonFlags = raw->data.mouse.usButtonFlags;
+                // Handle mouse movement and button clicks
+            }
+            free(lpb); // Free allocated memory
+            break;
+        }
         case WM_CLOSE:
             g_Running = false;
             return 0;
@@ -187,6 +277,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         800, 600, NULL, NULL, hInstance, NULL
     );
     assert(hwnd);
+
+    load_raw_input_functions();
+    InitializeRawInput();
     
     wgpuInit(hInstance, hwnd, 800, 600);
     
@@ -211,9 +304,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     };
     int meshA = wgpuCreateMesh(pipelineA, triVerts, 3);
     Vertex triVerts2[] = {
-        {{ -0.5f,  0.8f, 0.5f }, { 1.0f, 0.0f, 0.0f }, { 0.5f, -0.5f }},
-        {{ -1.3f, -0.8f, 0.5f }, { 0.0f, 1.0f, 0.0f }, { -0.5f, 1.0f }},
-        {{  0.3f, -0.8f, 0.5f }, { 0.0f, 0.0f, 1.0f }, { 1.5f, 1.0f }},
+        {{ -0.5f,  0.8f, 0.25f }, { 1.0f, 0.0f, 0.0f }, { 0.5f, -0.5f }},
+        {{ -1.3f, -0.8f, 0.25f }, { 0.0f, 1.0f, 0.0f }, { -0.5f, 1.0f }},
+        {{  0.3f, -0.8f, 0.25f }, { 0.0f, 0.0f, 1.0f }, { 1.5f, 1.0f }},
     };
     int meshB = wgpuCreateMesh(pipelineA, triVerts2, 3);
     
@@ -268,8 +361,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (!g_Running) break;
         
         // Update uniforms
-        timeVal += 0.016f; // pretend 16ms per frame
-        yaw(0.1f, camera);
+        timeVal += 0.016f;
+        pitch(0.0001f, camera);
         float inv[16];
         inverseViewMatrix(camera, inv);
         wgpuSetUniformValue(pipelineA, timeOffset, &timeVal, sizeof(float));
@@ -300,7 +393,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             // todo: render in bitmap font to screen instead of printf IO
             char perf_output_string[256];
             wsprintf(perf_output_string, "%dms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
-            printf(perf_output_string);
+            //printf(perf_output_string);
         }
     }
     
