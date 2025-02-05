@@ -430,7 +430,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             long new_cycle_count = read_cycle_count();
             long cycles_elapsed = new_cycle_count - current_cycle_count;
             int cycles_last_frame = (int) cycles_elapsed / 1000000; // million cycles per frame
-            current_cycle_count = new_cycle_count;  
+            current_cycle_count = new_cycle_count;
 
             float ms_last_frame = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
             int fps = ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
