@@ -138,6 +138,29 @@ void pitch(float angle, float *matrix) { // for rotating around itself
 }
 
 
+float camera[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, -10.0f,
+        0.0f, 0.0f, 0.0f, 1
+};
+float cameraspeed[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+void cameraMovement(float *camera, float *speed, float ms) {
+    float cameraRotation[9] = {
+        camera[0], camera[1], camera[2],
+        camera[4], camera[5], camera[6],
+        camera[8], camera[9], camera[10]
+    };
+    float transSpeed[3] = {speed[0], speed[1], speed[2]};
+    printf("transSpeed: %f %f %f\n", transSpeed[0], transSpeed[1], transSpeed[2]);
+    multiply(transSpeed, 1, 3, cameraRotation, 3, 3, transSpeed); // in world coords
+    printf("transSpeedAbs: %f %f %f\n", transSpeed[0], transSpeed[1], transSpeed[2]);
+    yaw(speed[3] * ms, camera);
+    struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
+    move(movit, camera);
+}
+
 // todo: move this somewhere deep...
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -232,9 +255,51 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 
                 // Print active keys
                 if (isPressed) {
+                    printf("%d\n", virtualKey);
+                    printf("%d\n", flags);
                     char msg[32];
                     snprintf(msg, sizeof(msg), "Key Pressed: %c\n", virtualKey);
                     printf(msg);
+                    if (virtualKey == 'Z') {
+                        cameraspeed[0] = 0.1f;
+                        printf("Z pressed\n");
+                    }
+                    if (virtualKey == 'S') {
+                        cameraspeed[0] = -0.1f;
+                    }
+                    if (virtualKey == 'Q') {
+                        cameraspeed[2] = 0.1f;
+                    }
+                    if (virtualKey == 'D') {
+                        cameraspeed[2] = -0.1f;
+                    }
+                    if (virtualKey == 'E') {
+                        cameraspeed[3] = 0.01f;
+                    }
+                    if (virtualKey == 'A') {
+                        cameraspeed[3] = -0.01f;
+                    }
+                }
+                else if (!isPressed) {
+                    if (virtualKey == 'Z') {
+                        cameraspeed[0] = 0.0f;
+                        printf("Z released\n");
+                    }
+                    if (virtualKey == 'S') {
+                        cameraspeed[0] = 0.0f;
+                    }
+                    if (virtualKey == 'Q') {
+                        cameraspeed[1] = 0.0f;
+                    }
+                    if (virtualKey == 'D') {
+                        cameraspeed[1] = 0.0f;
+                    }
+                    if (virtualKey == 'E') {
+                        cameraspeed[3] = 0.0f;
+                    }
+                    if (virtualKey == 'A') {
+                        cameraspeed[3] = 0.0f;
+                    }
                 }
             }
             else if (raw->header.dwType == RIM_TYPEMOUSE)
@@ -319,12 +384,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int timeOffset = wgpuAddUniform(pipelineA, &timeVal, sizeof(float));
     
     // Add a camera transform (a 4x4 matrix).  
-    float camera[16] = {
-         1.0f, 0.0f, 0.0f, 0.0f,
-         0.0f, 1.0f, 0.0f, 0.0f,
-         0.0f, 0.0f, 1.0f, -10.0f,
-         0.0f, 0.0f, 0.0f, 1
-    };
     int cameraOffset = wgpuAddUniform(pipelineA, camera, sizeof(camera));
     
     // Add a projection matrix (a 4x4 matrix).  
@@ -363,7 +422,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         // Update uniforms
         timeVal += 0.016f; // pretend 16ms per frame
-        yaw(0.001f * ms_last_frame, camera);
+        //yaw(0.001f * ms_last_frame, camera);
+        cameraMovement(camera, cameraspeed, ms_last_frame);
         float inv[16];
         inverseViewMatrix(camera, inv);
         wgpuSetUniformValue(pipelineA, timeOffset, &timeVal, sizeof(float));
@@ -392,7 +452,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             ms_last_frame = (float) (((float)(1000*ticks_elapsed)) / (float)ticks_per_second);
             int fps = ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
             // todo: render in bitmap font to screen instead of printf IO
-            printf("%.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
+            //printf("%.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
         }
     }
     
