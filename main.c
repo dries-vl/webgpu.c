@@ -304,8 +304,29 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
     return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
-#define WINDOW_WIDTH 1200
-#define WINDOW_HEIGHT 800
+void set_fullscreen(HWND hwnd, int width, int height, int refreshRate) {
+    DEVMODE devMode = {0};
+    devMode.dmSize = sizeof(devMode);
+    devMode.dmPelsWidth = width;
+    devMode.dmPelsHeight = height;
+    devMode.dmBitsPerPel = 32;  // 32-bit color
+    devMode.dmDisplayFrequency = refreshRate;
+    devMode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY;
+
+    // Switch to fullscreen mode
+    if (ChangeDisplaySettingsEx(NULL, &devMode, NULL, CDS_FULLSCREEN, NULL) != DISP_CHANGE_SUCCESSFUL) {
+        MessageBox(hwnd, "Failed to switch to fullscreen!", "Error", MB_OK);
+        return;
+    }
+
+    SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+    SetWindowPos(hwnd, HWND_TOP, 0, 0, width, height, SWP_FRAMECHANGED);
+}
+
+typedef HRESULT (WINAPI *SetProcessDpiAwareness_t)(int);
+#define PROCESS_PER_MONITOR_DPI_AWARE 2  // Define missing constant
+#define WINDOW_WIDTH 1920
+#define WINDOW_HEIGHT 1080
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
@@ -326,6 +347,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         WINDOW_WIDTH, WINDOW_HEIGHT, NULL, NULL, hInstance, NULL
     );
     assert(hwnd);
+    float aspect_ratio = ((float) WINDOW_WIDTH / (float) WINDOW_HEIGHT);
+
+    // *info* to be aware of DPI to avoid specified resolutions with lower granularity than actual screen resolution
+    HMODULE shcore = LoadLibrary("Shcore.dll"); // import explicitly because tcc doesn't know these headers
+    if (shcore) {
+        SetProcessDpiAwareness_t SetProcessDpiAwareness = 
+            (SetProcessDpiAwareness_t) GetProcAddress(shcore, "SetProcessDpiAwareness");
+
+        if (SetProcessDpiAwareness) {
+            SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+        }
+
+        FreeLibrary(shcore);
+    }
+
+    // *info* this sets the window to exclusive fullscreen bypassing the window manager
+    // set_fullscreen(hwnd, WINDOW_WIDTH, WINDOW_HEIGHT, 60); // need to specify refresh rate of monitor (?)
 
     RECT screen;
     GetClientRect(GetDesktopWindow(), &screen);
@@ -383,8 +421,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         .use_alpha=1, .use_textures=1, .use_uniforms=0, .pixel_art=0};
     int hud_pipeline_id = wgpuCreatePipeline(hud_material);
     int quad_mesh_id = wgpuCreateMesh(hud_pipeline_id, quad_mesh);
-    // todo: load in uncompressed bmp textures as fast as possible instead of decompressing png at startup
+    // todo: load in uncompressed textures as fast as possible (as binary array?) instead of decompressing png at startup
     int font_atlas_texture_slot = wgpuAddTexture(hud_pipeline_id, "data/textures/font_atlas.png");
+    int aspect_ratio_uniform = wgpuAddUniform(hud_pipeline_id, &aspect_ratio, sizeof(float));
     
     // Add uniforms. For example, add a brightness value (a float).
     float brightness = 1.0f;
