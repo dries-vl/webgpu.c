@@ -17,9 +17,10 @@ extern void  wgpuDrawPipeline(int pipelineID);
 extern void  wgpuEndFrame();
 
 static bool g_Running = true;
-float fov = 4.0f;
+float fov = 3.14f / 4.0f; // 45 degrees
 float farClip = 2000.0f;
 float nearClip = 1.0f;
+float AR = 800.0f / 600.0f; // aspect ratio
 
 struct Vector3 {
     float x, y, z;
@@ -80,38 +81,38 @@ void move(struct Vector3 move, float *matrix) {
 }
 
 void yaw(float angle, float *matrix) {
-    // Rotation around Y-axis
-    float rotMatrix[16] = {
+    // Create the yaw rotation matrix.
+    float yawRot[16] = {
          cos(angle), 0.0f, sin(angle), 0.0f,
-         0.0f, 1.0f, 0.0f, 0.0f,
+         0.0f,       1.0f, 0.0f,       0.0f,
         -sin(angle), 0.0f, cos(angle), 0.0f,
-         0.0f, 0.0f, 0.0f, 1.0f
+         0.0f,       0.0f, 0.0f,       1.0f
     };
 
-    // Save the original translation values
-    float tx = matrix[3];
-    float ty = matrix[7];
-    float tz = matrix[11];
+    // Create a temporary matrix to hold the new rotation.
+    float newRot[16] = {0};
 
-    // Remove the translation values
-    matrix[3]  = 0.0f;  
-    matrix[7]  = 0.0f;
-    matrix[11] = 0.0f;
+    // Multiply the yaw rotation by the current rotation part.
+    // Since the rotation is stored in the upper 3x3 block, we multiply the full matrices
+    // but only update the corresponding 3x3 part.
+    multiply(yawRot, 4, 4, matrix, 4, 4, newRot);
 
-    // Apply the rotation
-    float tempMatrix[16] = {0};
-    multiply(matrix, 4, 4, rotMatrix, 4, 4, tempMatrix);
+    // Update only the rotation portion (indices 0,1,2; 4,5,6; 8,9,10) of the original matrix.
+    matrix[0] = newRot[0];
+    matrix[1] = newRot[1];
+    matrix[2] = newRot[2];
 
-    // Restore translation values
-    tempMatrix[3]  = tx;
-    tempMatrix[7]  = ty;
-    tempMatrix[11] = tz;
+    matrix[4] = newRot[4];
+    matrix[5] = newRot[5];
+    matrix[6] = newRot[6];
 
-    // Copy back the result
-    for (int i = 0; i < 16; i++) {
-        matrix[i] = tempMatrix[i];
-    }
+    matrix[8] = newRot[8];
+    matrix[9] = newRot[9];
+    matrix[10] = newRot[10];
+
+    // Leave indices 3, 7, and 11 (translation) unchanged.
 }
+
 
 void pitch(float angle, float *matrix) { // for rotating around itself
     float rotMatrix[16] = {
@@ -120,28 +121,36 @@ void pitch(float angle, float *matrix) { // for rotating around itself
          0.0f, sin(angle), cos(angle), 0.0f,
          0.0f, 0.0f, 0.0f, 1
     };
-    float translate[16] = {
-         1.0f, 0.0f, 0.0f, -matrix[3],
-         0.0f, 1.0f, 0.0f, -matrix[7],
-         0.0f, 0.0f, 1.0f, -matrix[11],
-         0.0f, 0.0f, 0.0f, 1
-    };
-    float translateback[16] = {
-         1.0f, 0.0f, 0.0f, matrix[3],
-         0.0f, 1.0f, 0.0f, matrix[7],
-         0.0f, 0.0f, 1.0f, matrix[11],
-         0.0f, 0.0f, 0.0f, 1
-    };
-    multiply(matrix, 4, 4, translate, 4, 4, matrix);
-    multiply(matrix, 4, 4, rotMatrix, 4, 4, matrix);
-    multiply(matrix, 4, 4, translateback, 4, 4, matrix);
+
+    // Create a temporary matrix to hold the new rotation.
+    float newRot[16] = {0};
+
+    // Multiply the yaw rotation by the current rotation part.
+    // Since the rotation is stored in the upper 3x3 block, we multiply the full matrices
+    // but only update the corresponding 3x3 part.
+    multiply(rotMatrix, 4, 4, matrix, 4, 4, newRot);
+
+    // Update only the rotation portion (indices 0,1,2; 4,5,6; 8,9,10) of the original matrix.
+    matrix[0] = newRot[0];
+    matrix[1] = newRot[1];
+    matrix[2] = newRot[2];
+
+    matrix[4] = newRot[4];
+    matrix[5] = newRot[5];
+    matrix[6] = newRot[6];
+
+    matrix[8] = newRot[8];
+    matrix[9] = newRot[9];
+    matrix[10] = newRot[10];
+
+    // Leave indices 3, 7, and 11 (translation) unchanged.
 }
 
 
 float camera[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, -10.0f,
+        0.0f, 0.0f, 1.0f, -100.0f,
         0.0f, 0.0f, 0.0f, 1
 };
 float cameraspeed[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -154,7 +163,7 @@ void cameraMovement(float *camera, float *speed, float ms) {
     };
     float transSpeed[3] = {speed[0], speed[1], speed[2]};
     printf("transSpeed: %f %f %f\n", transSpeed[0], transSpeed[1], transSpeed[2]);
-    multiply(transSpeed, 1, 3, cameraRotation, 3, 3, transSpeed); // in world coords
+    multiply(cameraRotation, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
     printf("transSpeedAbs: %f %f %f\n", transSpeed[0], transSpeed[1], transSpeed[2]);
     yaw(speed[3] * ms, camera);
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
@@ -307,38 +316,37 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                     snprintf(msg, sizeof(msg), "Key Pressed: %c\n", virtualKey);
                     printf(msg);
                     if (virtualKey == 'Z') {
-                        cameraspeed[0] = 0.1f;
-                        printf("Z pressed\n");
-                    }
-                    if (virtualKey == 'S') {
-                        cameraspeed[0] = -0.1f;
-                    }
-                    if (virtualKey == 'Q') {
-                        cameraspeed[2] = 0.1f;
-                    }
-                    if (virtualKey == 'D') {
                         cameraspeed[2] = -0.1f;
                     }
+                    if (virtualKey == 'S') {
+                        cameraspeed[2] = 0.1f;
+                    }
+                    if (virtualKey == 'Q') {
+                        cameraspeed[0] = -0.1f;
+                    }
+                    if (virtualKey == 'D') {
+                        cameraspeed[0] = 0.1f;
+                    }
                     if (virtualKey == 'E') {
-                        cameraspeed[3] = 0.01f;
+                        cameraspeed[3] = -0.01f;
                     }
                     if (virtualKey == 'A') {
-                        cameraspeed[3] = -0.01f;
+                        cameraspeed[3] = 0.01f;
                     }
                 }
                 else if (!isPressed) {
                     if (virtualKey == 'Z') {
-                        cameraspeed[0] = 0.0f;
+                        cameraspeed[2] = 0.0f;
                         printf("Z released\n");
                     }
                     if (virtualKey == 'S') {
-                        cameraspeed[0] = 0.0f;
+                        cameraspeed[2] = 0.0f;
                     }
                     if (virtualKey == 'Q') {
-                        cameraspeed[1] = 0.0f;
+                        cameraspeed[0] = 0.0f;
                     }
                     if (virtualKey == 'D') {
-                        cameraspeed[1] = 0.0f;
+                        cameraspeed[0] = 0.0f;
                     }
                     if (virtualKey == 'E') {
                         cameraspeed[3] = 0.0f;
@@ -426,10 +434,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // Add a projection matrix (a 4x4 matrix).  
     float view[16] = {
-         1.0/(tan(fov/2.0)*1.6), 0.0f, 0.0f, 0.0f,
-         0.0f, 1.0/tan(fov/2.0), 0.0f, 0.0f,
-         0.0f, 0.0f, (nearClip+farClip)/(nearClip-farClip), (2*farClip*nearClip)/(nearClip-farClip),
-         0.0f, 0.0f, -1, 1
+    1.0 / (tan(fov / 2.0) * AR), 0.0f,  0.0f,                               0.0f,
+    0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
+    0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
+    0.0f,  0.0f, -1.0f,                               0.0f
     };
     int viewOffset = wgpuAddUniform(pipelineA, view, sizeof(view));
 
@@ -445,6 +453,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     QueryPerformanceCounter(&current_tick_count);
     long current_cycle_count = read_cycle_count();
     float ms_last_60_frames[60] = {0}; int ms_index = 0; int avg_count = 60; float count = 0.0;
+    float ms_last_frame = 1.0f;
     // Main loop
     while (g_Running) {
         MSG msg;
@@ -492,7 +501,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             int cycles_last_frame = (int) cycles_elapsed / 1000000; // million cycles per frame
             current_cycle_count = new_cycle_count;
 
-            float ms_last_frame = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
+            ms_last_frame = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
             int fps = ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
             // todo: render in bitmap font to screen instead of printf IO
             char perf_output_string[256];
