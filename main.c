@@ -8,7 +8,7 @@
 
 extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
 extern int   wgpuCreatePipeline(const char *shaderPath);
-extern int   wgpuCreateMesh(int pipelineID, const Vertex *vertices, int vertexCount);
+extern int   wgpuCreateMesh(int pipelineID, struct Mesh mesh);
 extern int   wgpuAddUniform(int pipelineID, const void* data, int dataSize);
 extern void  wgpuSetUniformValue(int pipelineID, int uniformOffset, const void* data, int dataSize);
 extern int   wgpuAddTexture(int pipelineID, const char* texturePath);
@@ -160,6 +160,48 @@ void cameraMovement(float *camera, float *speed, float ms) {
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
     move(movit, camera);
 }
+typedef struct {
+    uint32_t vertexCount;
+    uint32_t indexCount;
+    uint32_t vertexArrayOffset;
+    uint32_t indexArrayOffset;
+} MeshHeader;
+struct Mesh read_mesh_binary(const char *binFilename) {
+    FILE *file = fopen(binFilename, "rb");
+    if (!file) {
+        fprintf(stderr, "Failed to open %s for reading\n", binFilename);
+        exit(1);
+    }
+    MeshHeader header;
+    fread(&header, sizeof(MeshHeader), 1, file);
+    struct Vertex *vertices_in = malloc(header.vertexCount * sizeof(struct Vertex));
+    if (!vertices_in) {
+        fprintf(stderr, "Memory allocation failed for vertices_in\n");
+        exit(1);
+    }
+    uint32_t *indices_in = malloc(header.indexCount * sizeof(uint32_t));
+    if (!indices_in) {
+        fprintf(stderr, "Memory allocation failed for indices_in\n");
+        exit(1);
+    }
+    fseek(file, header.vertexArrayOffset, SEEK_SET);
+    fread(vertices_in, sizeof(struct Vertex), header.vertexCount, file);
+    fseek(file, header.indexArrayOffset, SEEK_SET);
+    fread(indices_in, sizeof(uint32_t), header.indexCount, file);
+    fclose(file);
+    size_t fileSize = header.indexArrayOffset + header.indexCount * sizeof(uint32_t);
+    double fileSizeKB = fileSize / 1024.0;
+    printf("Size of struct Vertex: %zu bytes\n", sizeof(struct Vertex));
+    printf("Unique vertex count: %u\n", header.vertexCount);
+    printf("Index count: %u\n", header.indexCount);
+    printf("Expected binary file size: %.2f KB\n", fileSizeKB);
+    struct Instance *instances_in = malloc(sizeof(struct Instance) * 1);
+    struct Instance singleInstance = {.position = {0,0,0}};
+    *instances_in = singleInstance;
+    return (struct Mesh) {
+        .vertices=vertices_in, .indices=indices_in, .instances = instances_in,
+        .vertexCount=header.vertexCount, .indexCount=header.indexCount, .instanceCount = 1};
+}
 
 // todo: move this somewhere deep...
 #if defined(_MSC_VER)
@@ -251,6 +293,10 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 if (virtualKey == 0) virtualKey = MapVirtualKey(scanCode, 1);
                 if (virtualKey < MAX_KEYS) {
                     keyStates[virtualKey] = isPressed;
+                }
+                if (virtualKey == VK_ESCAPE) {
+                    g_Running = 0;
+                    return 0;
                 }
 
                 // Print active keys
@@ -354,6 +400,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // todo: use glsl instead of wgsl for C-style syntax
     int pipelineA = wgpuCreatePipeline("data/shaders/shader.wgsl");
 
+    // todo: material as abstraction for pipelines etc.
+    // todo: instanced drawing
     // struct Material {
 
     // };
@@ -362,18 +410,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // todo: use indices
     // todo: use obj file mesh -> first convert to C array on disk for faster loading
     // Note: vertices now include UV coordinates.
-    Vertex triVerts[] = {
-        { { -0.5f,  0.8f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.5f, -0.5f } },
-        { { -1.3f, -0.8f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { -0.5f, 1.0f } },
-        { {  0.3f, -0.8f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.5f, 1.0f } },
-    };
-    int meshA = wgpuCreateMesh(pipelineA, triVerts, 3);
-    Vertex triVerts2[] = {
-        {{ -0.5f,  0.8f, 0.25f }, { 1.0f, 0.0f, 0.0f }, { 0.5f, -0.5f }},
-        {{ -1.3f, -0.8f, 0.25f }, { 0.0f, 1.0f, 0.0f }, { -0.5f, 1.0f }},
-        {{  0.3f, -0.8f, 0.25f }, { 0.0f, 0.0f, 1.0f }, { 1.5f, 1.0f }},
-    };
-    int meshB = wgpuCreateMesh(pipelineA, triVerts2, 3);
+    struct Mesh triVerts = read_mesh_binary("data/models/meshes/teapot.bin");
+    int meshA = wgpuCreateMesh(pipelineA, triVerts);
     
     // Add uniforms. For example, add a brightness value (a float).
     float brightness = 1.0f;
@@ -406,7 +444,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     LARGE_INTEGER current_tick_count;
     QueryPerformanceCounter(&current_tick_count);
     long current_cycle_count = read_cycle_count();
-    float ms_last_frame = 1.0f;
+    float ms_last_60_frames[60] = {0}; int ms_index = 0; int avg_count = 60; float count = 0.0;
     // Main loop
     while (g_Running) {
         MSG msg;
@@ -430,9 +468,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         wgpuSetUniformValue(pipelineA, cameraOffset, &inv, sizeof(camera));
         
         // Actual frame rendering
+        // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure
+        // *info* forces the cpu to wait before pushing another frame, bringing the cpu speed down to the gpu speed
+        // *info* we can force the cpu to wait regardless by using the fence in wgpuEndFrame()
         wgpuStartFrame();
         wgpuDrawPipeline(pipelineA);
         wgpuEndFrame();
+        // todo: create a function that we can use as oneliner measuring timing here
+        // todo: -> game loop time -> cpu to gpu commands time -> gpu time -> total time (and see if those three add up to total or not)
 
         // Measure performance
         // todo: isolate out the exact time we spend inside the loop iteration itself to see the actual CPU time
@@ -449,13 +492,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             int cycles_last_frame = (int) cycles_elapsed / 1000000; // million cycles per frame
             current_cycle_count = new_cycle_count;
 
-            ms_last_frame = (float) (((float)(1000*ticks_elapsed)) / (float)ticks_per_second);
+            float ms_last_frame = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
             int fps = ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
             // todo: render in bitmap font to screen instead of printf IO
-            //printf("%.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
+            char perf_output_string[256];
+            printf("%4.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
+            count += ms_last_frame - ms_last_60_frames[ms_index];
+            ms_last_60_frames[ms_index] = ms_last_frame;
+            ms_index = (ms_index + 1) % avg_count;
+            if (ms_index % avg_count == 0) {
+                printf("Average frame timing last %d frames: %4.2fms \n", avg_count, count / (float) avg_count);
+            }
         }
     }
     
-    DestroyWindow(hwnd);
     return 0;
 }

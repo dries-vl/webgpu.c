@@ -11,15 +11,34 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>   // Added for uint32_t
+
 #include "wgpu.h"
 
 // -----------------------------------------------------------------------------
-// Update Vertex definition to include UV coordinates.
-typedef struct {
+// Vertex structure.
+struct Vertex {
+    float position[3]; // 12 bytes
+    float normal[3];   // 12 bytes
+    float uv[2];       // 8 bytes
+    char color[3];     // 3 bytes
+    char pad;          // 1 byte of padding so the total size is 36 bytes.
+};
+
+struct Instance {
     float position[3];
-    float color[3];
-    float uv[2]; // New: texture coordinates
-} Vertex;
+};
+
+// -----------------------------------------------------------------------------
+// New Mesh structure that includes indices.
+struct Mesh {
+    struct Vertex *vertices;
+    uint32_t *indices;
+    struct Instance *instances;
+    uint32_t vertexCount;
+    uint32_t indexCount;
+    uint32_t instanceCount;
+};
 
 // -----------------------------------------------------------------------------
 // Limits and capacities
@@ -46,14 +65,23 @@ typedef struct {
     int                textureCount;
 } PipelineData;
 
-// Mesh Data remains the same.
+// -----------------------------------------------------------------------------
+// Mesh Data now holds both a vertex buffer and an index buffer.
 typedef struct {
+    bool       used;
+    int        pipelineID;
+
     WGPUBuffer vertexBuffer;
     int        vertexCount;
-    int        pipelineID;
-    bool       used;
+
+    WGPUBuffer indexBuffer;   // NEW: index buffer for drawing with indices.
+    int        indexCount;
+
+    WGPUBuffer instanceBuffer;  // buffer with per-instance data
+    int        instanceCount;   // number of instances
 } MeshData;
 
+// -----------------------------------------------------------------------------
 // Global WebGPU context.
 typedef struct {
     WGPUInstance             instance;
@@ -145,7 +173,7 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         s_uniformBindGroupLayout = wgpuDeviceCreateBindGroupLayout(g_wgpu.device, &bglDesc);
     }
     
-        // 2) Create a texture bind group layout with 1 sampler + 16 textures
+    // 2) Create a texture bind group layout with 1 sampler + 16 textures
     {
         int totalEntries = 1 + MAX_TEXTURES; // binding0: sampler, binding1..16: textures
         WGPUBindGroupLayoutEntry *texEntries = calloc(totalEntries, sizeof(WGPUBindGroupLayoutEntry));
@@ -169,7 +197,7 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         free(texEntries);
     }
 
-    // 3) Create a 1×1 white texture for empty slots
+    // 3) Create a 1×1 white texture for empty texture slots
     {
         uint8_t whitePixel[4] = {255,255,255,255};
         WGPUTextureDescriptor td = {0};
@@ -209,52 +237,12 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         .width = width,
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
-        .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
+        .presentMode = WGPUPresentMode_Immediate // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(g_wgpu.surface, &g_wgpu.config);
 
     g_wgpu.initialized = true;
     printf("[webgpu.c] wgpuInit done.\n");
-}
-
-// -----------------------------------------------------------------------------
-// wgpuShutdown: Release resources.
-void wgpuShutdown(void) {
-    if (!g_wgpu.initialized) return;
-    for (int i = 0; i < MAX_MESHES; i++) {
-        if (g_wgpu.meshes[i].used) {
-            wgpuBufferRelease(g_wgpu.meshes[i].vertexBuffer);
-            g_wgpu.meshes[i].used = false;
-        }
-    }
-    for (int i = 0; i < MAX_PIPELINES; i++) {
-        if (g_wgpu.pipelines[i].used) {
-            wgpuRenderPipelineRelease(g_wgpu.pipelines[i].pipeline);
-            if (g_wgpu.pipelines[i].uniformBindGroup)
-                wgpuBindGroupRelease(g_wgpu.pipelines[i].uniformBindGroup);
-            if (g_wgpu.pipelines[i].uniformBuffer)
-                wgpuBufferRelease(g_wgpu.pipelines[i].uniformBuffer);
-            // --- Release texture resources ---
-            if (g_wgpu.pipelines[i].textureBindGroup)
-                wgpuBindGroupRelease(g_wgpu.pipelines[i].textureBindGroup);
-            if (g_wgpu.pipelines[i].textureSampler)
-                wgpuSamplerRelease(g_wgpu.pipelines[i].textureSampler);
-            for (int j = 0; j < g_wgpu.pipelines[i].textureCount; j++) {
-                wgpuTextureViewRelease(g_wgpu.pipelines[i].textureViews[j]);
-                wgpuTextureRelease(g_wgpu.pipelines[i].textureObjects[j]);
-            }
-            g_wgpu.pipelines[i].used = false;
-        }
-    }
-    if (s_uniformBindGroupLayout) { wgpuBindGroupLayoutRelease(s_uniformBindGroupLayout); s_uniformBindGroupLayout = NULL; }
-    if (s_textureBindGroupLayout) { wgpuBindGroupLayoutRelease(s_textureBindGroupLayout); s_textureBindGroupLayout = NULL; }
-    if (g_wgpu.queue) { wgpuQueueRelease(g_wgpu.queue); g_wgpu.queue = NULL; }
-    if (g_wgpu.device) { wgpuDeviceRelease(g_wgpu.device); g_wgpu.device = NULL; }
-    if (g_wgpu.adapter) { wgpuAdapterRelease(g_wgpu.adapter); g_wgpu.adapter = NULL; }
-    if (g_wgpu.surface) { wgpuSurfaceRelease(g_wgpu.surface); g_wgpu.surface = NULL; }
-    if (g_wgpu.instance) { wgpuInstanceRelease(g_wgpu.instance); g_wgpu.instance = NULL; }
-    g_wgpu.initialized = false;
-    printf("[webgpu.c] wgpuShutdown done.\n");
 }
 
 // -----------------------------------------------------------------------------
@@ -302,22 +290,40 @@ int wgpuCreatePipeline(const char* shaderPath) {
     rpDesc.vertex.module = shaderModule;
     rpDesc.vertex.entryPoint = "vs_main";
     // --- Update vertex attributes to include UV ---
-    WGPUVertexAttribute attributes[3] = {0};
-    attributes[0].format = WGPUVertexFormat_Float32x3;
-    attributes[0].offset = 0;
-    attributes[0].shaderLocation = 0;
-    attributes[1].format = WGPUVertexFormat_Float32x3;
-    attributes[1].offset = sizeof(float) * 3;
-    attributes[1].shaderLocation = 1;
-    attributes[2].format = WGPUVertexFormat_Float32x2;
-    attributes[2].offset = sizeof(float) * 6;
-    attributes[2].shaderLocation = 2;
-    WGPUVertexBufferLayout vbl = {0};
-    vbl.arrayStride = sizeof(Vertex);
-    vbl.attributeCount = 3;
-    vbl.attributes = attributes;
-    rpDesc.vertex.bufferCount = 1;
-    rpDesc.vertex.buffers = &vbl;
+    WGPUVertexAttribute vertexAttributes[3] = {0};
+    vertexAttributes[0].format = WGPUVertexFormat_Float32x3;
+    vertexAttributes[0].offset = 0;
+    vertexAttributes[0].shaderLocation = 0;
+    vertexAttributes[1].format = WGPUVertexFormat_Float32x3;
+    vertexAttributes[1].offset = sizeof(float) * 3;
+    vertexAttributes[1].shaderLocation = 1;
+    vertexAttributes[2].format = WGPUVertexFormat_Float32x2;
+    vertexAttributes[2].offset = sizeof(float) * 6;
+    vertexAttributes[2].shaderLocation = 2;
+
+    WGPUVertexBufferLayout vertexBufferLayout = {0};
+    vertexBufferLayout.arrayStride = sizeof(struct Vertex);
+    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
+    vertexBufferLayout.attributeCount = 3;
+    vertexBufferLayout.attributes = vertexAttributes;
+
+    // --- New: instance buffer layout (for a per-instance offset) ---
+    WGPUVertexAttribute instanceAttribute = {0};
+    instanceAttribute.format = WGPUVertexFormat_Float32x3;  // For example, a vec3 offset.
+    instanceAttribute.offset = 0;
+    instanceAttribute.shaderLocation = 3;  // New location; make sure your shader reads from location 3.
+
+    WGPUVertexBufferLayout instanceBufferLayout = {0};
+    instanceBufferLayout.arrayStride = sizeof(float) * 3;  // Size of your instance data.
+    instanceBufferLayout.stepMode = WGPUVertexStepMode_Instance;
+    instanceBufferLayout.attributeCount = 1;
+    instanceBufferLayout.attributes = &instanceAttribute;
+
+    // --- Two vertex buffer layouts ---
+    WGPUVertexBufferLayout vertexBufferLayouts[2] = { vertexBufferLayout, instanceBufferLayout };
+
+    rpDesc.vertex.bufferCount = 2;
+    rpDesc.vertex.buffers = vertexBufferLayouts;
     
     // Fragment stage.
     WGPUFragmentState fragState = {0};
@@ -413,9 +419,10 @@ int wgpuCreatePipeline(const char* shaderPath) {
 
 // -----------------------------------------------------------------------------
 // wgpuCreateMesh: Create a mesh for a given pipeline.
-int wgpuCreateMesh(int pipelineID, const Vertex *vertices, int vertexCount) {
+// Now receives a Mesh struct containing vertices, indices, and their counts.
+int wgpuCreateMesh(int pipelineID, struct Mesh mesh) {
     if (!g_wgpu.initialized) {
-        fprintf(stderr, "[webgpu.c] wgpuCreateMesh called before init!\n");
+        fprintf(stderr, "[webgpu.c] wgpuCreateInstancedMesh called before init!\n");
         return -1;
     }
     if (pipelineID < 0 || pipelineID >= MAX_PIPELINES || !g_wgpu.pipelines[pipelineID].used) {
@@ -434,17 +441,42 @@ int wgpuCreateMesh(int pipelineID, const Vertex *vertices, int vertexCount) {
         fprintf(stderr, "[webgpu.c] No more mesh slots!\n");
         return -1;
     }
-    size_t dataSize = sizeof(Vertex) * vertexCount;
-    WGPUBufferDescriptor bufDesc = {0};
-    bufDesc.size = dataSize;
-    bufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
-    WGPUBuffer buffer = wgpuDeviceCreateBuffer(g_wgpu.device, &bufDesc);
-    assert(buffer);
-    wgpuQueueWriteBuffer(g_wgpu.queue, buffer, 0, vertices, dataSize);
-    g_wgpu.meshes[meshID].vertexBuffer = buffer;
-    g_wgpu.meshes[meshID].vertexCount = vertexCount;
+    // Create vertex buffer (same as in wgpuCreateMesh)
+    size_t vertexDataSize = sizeof(struct Vertex) * mesh.vertexCount;
+    WGPUBufferDescriptor vertexBufDesc = {0};
+    vertexBufDesc.size = vertexDataSize;
+    vertexBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
+    WGPUBuffer vertexBuffer = wgpuDeviceCreateBuffer(g_wgpu.device, &vertexBufDesc);
+    assert(vertexBuffer);
+    wgpuQueueWriteBuffer(g_wgpu.queue, vertexBuffer, 0, mesh.vertices, vertexDataSize);
+    g_wgpu.meshes[meshID].vertexBuffer = vertexBuffer;
+    g_wgpu.meshes[meshID].vertexCount = mesh.vertexCount;
+    
+    // Create index buffer
+    size_t indexDataSize = sizeof(uint32_t) * mesh.indexCount;
+    WGPUBufferDescriptor indexBufDesc = {0};
+    indexBufDesc.size = indexDataSize;
+    indexBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Index;
+    WGPUBuffer indexBuffer = wgpuDeviceCreateBuffer(g_wgpu.device, &indexBufDesc);
+    assert(indexBuffer);
+    wgpuQueueWriteBuffer(g_wgpu.queue, indexBuffer, 0, mesh.indices, indexDataSize);
+    g_wgpu.meshes[meshID].indexBuffer = indexBuffer;
+    g_wgpu.meshes[meshID].indexCount = mesh.indexCount;
+    
+    // Create instance buffer
+    size_t instanceDataSize = sizeof(struct Instance) * mesh.instanceCount;
+    WGPUBufferDescriptor instBufDesc = {0};
+    instBufDesc.size = instanceDataSize;
+    instBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
+    WGPUBuffer instanceBuffer = wgpuDeviceCreateBuffer(g_wgpu.device, &instBufDesc);
+    assert(instanceBuffer);
+    wgpuQueueWriteBuffer(g_wgpu.queue, instanceBuffer, 0, mesh.instances, instanceDataSize);
+    g_wgpu.meshes[meshID].instanceBuffer = instanceBuffer;
+    g_wgpu.meshes[meshID].instanceCount = mesh.instanceCount;
+    
     g_wgpu.meshes[meshID].pipelineID = pipelineID;
-    printf("[webgpu.c] Created mesh %d with %d vertices for pipeline %d\n", meshID, vertexCount, pipelineID);
+    printf("[webgpu.c] Created instanced mesh %d with %d vertices, %d indices, and %d instances for pipeline %d\n",
+           meshID, mesh.vertexCount, mesh.indexCount, mesh.instanceCount, pipelineID);
     return meshID;
 }
 
@@ -601,18 +633,51 @@ void wgpuDrawPipeline(int pipelineID) {
     // Set the render pipeline.
     wgpuRenderPassEncoderSetPipeline(g_currentPass, pd->pipeline);
     
-    // Draw every mesh belonging to this pipeline.
+    // Draw every mesh belonging to this pipeline using indices.
     for (int i = 0; i < MAX_MESHES; i++) {
         if (g_wgpu.meshes[i].used && g_wgpu.meshes[i].pipelineID == pipelineID) {
+            // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count.
             wgpuRenderPassEncoderSetVertexBuffer(g_currentPass, 0, g_wgpu.meshes[i].vertexBuffer, 0, WGPU_WHOLE_SIZE);
-            wgpuRenderPassEncoderDraw(g_currentPass, g_wgpu.meshes[i].vertexCount, 1, 0, 0);
-        }
+            wgpuRenderPassEncoderSetVertexBuffer(g_currentPass, 1, g_wgpu.meshes[i].instanceBuffer, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderSetIndexBuffer(g_currentPass, g_wgpu.meshes[i].indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderDrawIndexed(g_currentPass, g_wgpu.meshes[i].indexCount, g_wgpu.meshes[i].instanceCount, 0, 0, 0);        }
     }
+}
+
+// Callback that sets our flag when the GPU has finished processing
+void fenceCallback(WGPUQueue inQueue, void* userdata, WGPUQueueWorkDoneStatus status) {
+    bool *done = (bool*)userdata;
+    *done = true;
+}
+// Simple fence/wait function that blocks until the GPU is done with submitted work.
+void fenceAndWait(WGPUQueue queue) {
+    volatile bool workDone = false;
+
+    // Request notification when the GPU work is done.
+    wgpuQueueOnSubmittedWorkDone(queue, fenceCallback, (void*)&workDone);
+
+    // Busy-wait until the flag is set.
+    // (In a production app you might want to sleep briefly or use a more sophisticated wait.)
+    LARGE_INTEGER query_perf_result;
+	QueryPerformanceFrequency(&query_perf_result);
+	long ticks_per_second = query_perf_result.QuadPart;
+    LARGE_INTEGER current_tick_count;
+    QueryPerformanceCounter(&current_tick_count);
+    while (!workDone) {
+        wgpuDevicePoll(g_wgpu.device, false, NULL);
+        Sleep(0);
+    }
+    LARGE_INTEGER new_tick_count;
+    QueryPerformanceCounter(&new_tick_count);
+    long ticks_elapsed = new_tick_count.QuadPart - current_tick_count.QuadPart;
+    current_tick_count = new_tick_count;
+    float ms_last_frame = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
+    printf("Waited on gpu for %4.2fms\n", ms_last_frame);
 }
 
 // -----------------------------------------------------------------------------
 // wgpuEndFrame: End the frame, submit commands, and present.
-void wgpuEndFrame(void) {
+void wgpuEndFrame() {
     if (!g_currentPass)
         return;
     wgpuRenderPassEncoderEnd(g_currentPass);
@@ -622,6 +687,12 @@ void wgpuEndFrame(void) {
     WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(g_currentEncoder, &cmdDesc);
     wgpuCommandEncoderRelease(g_currentEncoder);
     wgpuQueueSubmit(g_wgpu.queue, 1, &cmdBuf);
+
+    // todo: can we use the fence somehow in main loop to reduce latency on inputs etc. (?)
+    // todo: does this reduce latency (?)
+    // OPTIONAL DEBUG CODE, just to see fps timings etc.
+    fenceAndWait(g_wgpu.queue);
+
     wgpuCommandBufferRelease(cmdBuf);
     wgpuSurfacePresent(g_wgpu.surface);
     wgpuTextureViewRelease(g_currentView);
