@@ -112,8 +112,6 @@ void yaw(float angle, float *matrix) {
 
     // Leave indices 3, 7, and 11 (translation) unchanged.
 }
-
-
 void pitch(float angle, float *matrix) { // for rotating around itself
     float rotMatrix[16] = {
          1.0f, 0.0f, 0.0f, 0.0f,
@@ -162,9 +160,7 @@ void cameraMovement(float *camera, float *speed, float ms) {
         camera[8], camera[9], camera[10]
     };
     float transSpeed[3] = {speed[0], speed[1], speed[2]};
-    printf("transSpeed: %f %f %f\n", transSpeed[0], transSpeed[1], transSpeed[2]);
     multiply(cameraRotation, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
-    printf("transSpeedAbs: %f %f %f\n", transSpeed[0], transSpeed[1], transSpeed[2]);
     yaw(speed[3] * ms, camera);
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
     move(movit, camera);
@@ -328,10 +324,10 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                         cameraspeed[0] = 0.1f;
                     }
                     if (virtualKey == 'E') {
-                        cameraspeed[3] = -0.01f;
+                        cameraspeed[3] = -0.003f;
                     }
                     if (virtualKey == 'A') {
-                        cameraspeed[3] = 0.01f;
+                        cameraspeed[3] = 0.003f;
                     }
                 }
                 else if (!isPressed) {
@@ -505,7 +501,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             int fps = ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
             // todo: render in bitmap font to screen instead of printf IO
             char perf_output_string[256];
-            printf("%4.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
+            //printf("%4.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
             count += ms_last_frame - ms_last_60_frames[ms_index];
             ms_last_60_frames[ms_index] = ms_last_frame;
             ms_index = (ms_index + 1) % avg_count;
