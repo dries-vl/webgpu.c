@@ -24,19 +24,26 @@ struct Vertex {
     char color[3];     // 3 bytes
     char pad;          // 1 byte of padding so the total size is 36 bytes.
 };
-
 struct Instance {
     float position[3];
+};
+struct vert2 {
+    float position[2];
+    float uv[2];
+};
+struct char_instance {
+    int i_pos;
+    int i_char;
 };
 
 // -----------------------------------------------------------------------------
 // New Mesh structure that includes indices.
 struct Mesh {
-    struct Vertex *vertices;
     uint32_t *indices;
-    struct Instance *instances;
-    uint32_t vertexCount;
+    void *vertices;
+    void *instances;
     uint32_t indexCount;
+    uint32_t vertexCount;
     uint32_t instanceCount;
 };
 
@@ -245,9 +252,48 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
     printf("[webgpu.c] wgpuInit done.\n");
 }
 
+static const WGPUVertexBufferLayout STANDARD_VERTEX_LAYOUT[2] = {
+    {   .arrayStride = sizeof(struct Vertex),
+        .stepMode = WGPUVertexStepMode_Vertex,
+        .attributeCount = 3,
+        .attributes = (const WGPUVertexAttribute[]) {
+            { .format = WGPUVertexFormat_Float32x3, .offset = 0,                 .shaderLocation = 0 },
+            { .format = WGPUVertexFormat_Float32x3, .offset = sizeof(float) * 3, .shaderLocation = 1 },
+            { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 6, .shaderLocation = 2 }}},
+    {   .arrayStride = sizeof(struct Instance),
+        .stepMode = WGPUVertexStepMode_Instance,
+        .attributeCount = 1,
+        .attributes = (const WGPUVertexAttribute[]) {
+            { .format = WGPUVertexFormat_Float32x3, .offset = 0, .shaderLocation = 3 }}}
+};
+
+static const WGPUVertexBufferLayout HUD_VERTEX_LAYOUT[2] = {
+    {   .arrayStride = sizeof(struct vert2),
+        .stepMode = WGPUVertexStepMode_Vertex,
+        .attributeCount = 2,
+        .attributes = (const WGPUVertexAttribute[]) {
+            { .format = WGPUVertexFormat_Float32x2, .offset = 0,                 .shaderLocation = 0 },
+            { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 2, .shaderLocation = 1 }}},
+    {   .arrayStride = sizeof(struct char_instance),
+        .stepMode = WGPUVertexStepMode_Instance,
+        .attributeCount = 2,
+        .attributes = (const WGPUVertexAttribute[]) {
+            { .format = WGPUVertexFormat_Sint32,   .offset = 0,                 .shaderLocation = 2 },
+            { .format = WGPUVertexFormat_Sint32,   .offset = sizeof(int),       .shaderLocation = 3 }}}
+};
+
+struct Material {
+    int use_alpha;
+    int use_textures;
+    int use_uniforms;
+    int pixel_art;
+    const WGPUVertexBufferLayout *vertex_layout;
+    const char* shader; // todo: pre-compile
+};
+
 // -----------------------------------------------------------------------------
 // wgpuCreatePipeline: Create a render pipeline plus a generic uniform and texture bindgroup.
-int wgpuCreatePipeline(const char* shaderPath) {
+int wgpuCreatePipeline(struct Material material) {
     if (!g_wgpu.initialized) {
         fprintf(stderr, "[webgpu.c] wgpuCreatePipeline called before init!\n");
         return -1;
@@ -267,9 +313,9 @@ int wgpuCreatePipeline(const char* shaderPath) {
         return -1;
     }
     
-    WGPUShaderModule shaderModule = loadWGSL(g_wgpu.device, shaderPath);
+    WGPUShaderModule shaderModule = loadWGSL(g_wgpu.device, material.shader);
     if (!shaderModule) {
-        fprintf(stderr, "[webgpu.c] Failed to load shader: %s\n", shaderPath);
+        fprintf(stderr, "[webgpu.c] Failed to load shader: %s\n", material.shader);
         g_wgpu.pipelines[pipelineID].used = false;
         return -1;
     }
@@ -289,41 +335,9 @@ int wgpuCreatePipeline(const char* shaderPath) {
     // Vertex stage.
     rpDesc.vertex.module = shaderModule;
     rpDesc.vertex.entryPoint = "vs_main";
-    // --- Update vertex attributes to include UV ---
-    WGPUVertexAttribute vertexAttributes[3] = {0};
-    vertexAttributes[0].format = WGPUVertexFormat_Float32x3;
-    vertexAttributes[0].offset = 0;
-    vertexAttributes[0].shaderLocation = 0;
-    vertexAttributes[1].format = WGPUVertexFormat_Float32x3;
-    vertexAttributes[1].offset = sizeof(float) * 3;
-    vertexAttributes[1].shaderLocation = 1;
-    vertexAttributes[2].format = WGPUVertexFormat_Float32x2;
-    vertexAttributes[2].offset = sizeof(float) * 6;
-    vertexAttributes[2].shaderLocation = 2;
-
-    WGPUVertexBufferLayout vertexBufferLayout = {0};
-    vertexBufferLayout.arrayStride = sizeof(struct Vertex);
-    vertexBufferLayout.stepMode = WGPUVertexStepMode_Vertex;
-    vertexBufferLayout.attributeCount = 3;
-    vertexBufferLayout.attributes = vertexAttributes;
-
-    // --- New: instance buffer layout (for a per-instance offset) ---
-    WGPUVertexAttribute instanceAttribute = {0};
-    instanceAttribute.format = WGPUVertexFormat_Float32x3;  // For example, a vec3 offset.
-    instanceAttribute.offset = 0;
-    instanceAttribute.shaderLocation = 3;  // New location; make sure your shader reads from location 3.
-
-    WGPUVertexBufferLayout instanceBufferLayout = {0};
-    instanceBufferLayout.arrayStride = sizeof(float) * 3;  // Size of your instance data.
-    instanceBufferLayout.stepMode = WGPUVertexStepMode_Instance;
-    instanceBufferLayout.attributeCount = 1;
-    instanceBufferLayout.attributes = &instanceAttribute;
-
-    // --- Two vertex buffer layouts ---
-    WGPUVertexBufferLayout vertexBufferLayouts[2] = { vertexBufferLayout, instanceBufferLayout };
 
     rpDesc.vertex.bufferCount = 2;
-    rpDesc.vertex.buffers = vertexBufferLayouts;
+    rpDesc.vertex.buffers = material.vertex_layout;
     
     // Fragment stage.
     WGPUFragmentState fragState = {0};
@@ -333,6 +347,21 @@ int wgpuCreatePipeline(const char* shaderPath) {
     WGPUColorTargetState colorTarget = {0};
     colorTarget.format = g_wgpu.config.format;
     colorTarget.writeMask = WGPUColorWriteMask_All;
+    // --- enable alpha blending ---
+    if (material.use_alpha > 0) {
+        colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
+            .color = (WGPUBlendComponent){
+                .srcFactor = WGPUBlendFactor_SrcAlpha,
+                .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
+                .operation = WGPUBlendOperation_Add,
+            },
+            .alpha = (WGPUBlendComponent){
+                .srcFactor = WGPUBlendFactor_One,
+                .dstFactor = WGPUBlendFactor_Zero,
+                .operation = WGPUBlendOperation_Add,
+            }
+        }};
+    }
     fragState.targets = &colorTarget;
     rpDesc.fragment = &fragState;
     
@@ -369,8 +398,11 @@ int wgpuCreatePipeline(const char* shaderPath) {
     // Create a sampler
     PipelineData *pd = &g_wgpu.pipelines[pipelineID];
     WGPUSamplerDescriptor samplerDesc = {0};
-    samplerDesc.minFilter = WGPUFilterMode_Linear;
-    samplerDesc.magFilter = WGPUFilterMode_Linear;
+    samplerDesc.minFilter = material.pixel_art ? WGPUFilterMode_Nearest : WGPUFilterMode_Linear;
+    samplerDesc.magFilter = material.pixel_art ? WGPUFilterMode_Nearest : WGPUFilterMode_Linear;
+    samplerDesc.mipmapFilter = material.pixel_art ? WGPUMipmapFilterMode_Nearest : WGPUMipmapFilterMode_Linear;
+    samplerDesc.lodMinClamp = 0;
+    samplerDesc.lodMaxClamp = 0;
     samplerDesc.maxAnisotropy = 1;
     samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
     samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
@@ -413,7 +445,7 @@ int wgpuCreatePipeline(const char* shaderPath) {
     wgpuShaderModuleRelease(shaderModule);
     wgpuPipelineLayoutRelease(pipelineLayout);
     
-    printf("[webgpu.c] Created pipeline %d from shader: %s\n", pipelineID, shaderPath);
+    printf("[webgpu.c] Created pipeline %d from shader: %s\n", pipelineID, material.shader);
     return pipelineID;
 }
 

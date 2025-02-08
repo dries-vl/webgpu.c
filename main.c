@@ -7,7 +7,7 @@
 #include <math.h>
 
 extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
-extern int   wgpuCreatePipeline(const char *shaderPath);
+extern int   wgpuCreatePipeline(struct Material material);
 extern int   wgpuCreateMesh(int pipelineID, struct Mesh mesh);
 extern int   wgpuAddUniform(int pipelineID, const void* data, int dataSize);
 extern void  wgpuSetUniformValue(int pipelineID, int uniformOffset, const void* data, int dataSize);
@@ -173,7 +173,7 @@ struct Mesh read_mesh_binary(const char *binFilename) {
     printf("Index count: %u\n", header.indexCount);
     printf("Expected binary file size: %.2f KB\n", fileSizeKB);
     struct Instance *instances_in = malloc(sizeof(struct Instance) * 1);
-    struct Instance singleInstance = {.position = {0,0,0}};
+    struct Instance singleInstance = {0};
     *instances_in = singleInstance;
     return (struct Mesh) {
         .vertices=vertices_in, .indices=indices_in, .instances = instances_in,
@@ -304,6 +304,8 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
     return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
+#define WINDOW_WIDTH 1200
+#define WINDOW_HEIGHT 800
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
@@ -316,54 +318,90 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.lpszClassName = "WgpuWindowClass";
     RegisterClassEx(&wc);
-    
+
     HWND hwnd = CreateWindowEx(
         0, wc.lpszClassName, "Generic Uniform & Texture Demo",
-        WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-        800, 600, NULL, NULL, hInstance, NULL
+        WS_POPUP | WS_VISIBLE,  // WS_POPUP makes it borderless
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        WINDOW_WIDTH, WINDOW_HEIGHT, NULL, NULL, hInstance, NULL
     );
     assert(hwnd);
+
+    RECT screen;
+    GetClientRect(GetDesktopWindow(), &screen);
+
+    int width = WINDOW_WIDTH;
+    int height = WINDOW_HEIGHT;
+    int x = (screen.right - width) / 2;
+    int y = (screen.bottom - height) / 2;
+
+    SetWindowPos(hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_SHOWWINDOW);
 
     load_raw_input_functions();
     InitializeRawInput();
     
-    wgpuInit(hInstance, hwnd, 800, 600);
+    wgpuInit(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
     
     // Create a pipeline.
     // The shader (shader.wgsl) must declare a uniform block (group0) and texture struct (group1).
     // todo: use precompiled shader for faster loading
     // todo: use glsl instead of wgsl for C-style syntax
-    int pipelineA = wgpuCreatePipeline("data/shaders/shader.wgsl");
-
-    // todo: material as abstraction for pipelines etc.
-    // todo: instanced drawing
-    // struct Material {
-
-    // };
+    struct Material basic_material = (struct Material) { 
+        .vertex_layout=STANDARD_VERTEX_LAYOUT, .shader="data/shaders/shader.wgsl",
+        .use_alpha=0, .use_textures=1, .use_uniforms=1, .pixel_art=0};
+    int basic_pipeline_id = wgpuCreatePipeline(basic_material);
     
     // Create a mesh.
-    // todo: use indices
-    // todo: use obj file mesh -> first convert to C array on disk for faster loading
     // Note: vertices now include UV coordinates.
-    struct Mesh triVerts = read_mesh_binary("data/models/meshes/teapot.bin");
-    int meshA = wgpuCreateMesh(pipelineA, triVerts);
+    struct Mesh teapot_mesh = read_mesh_binary("data/models/meshes/teapot.bin");
+    int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, teapot_mesh);
+
+    // todo: add HUD with bitmap font for fps printouts instead of console
+    struct vert2 quad_vertices[4] = {
+        quad_vertices[0] = (struct vert2) {.position={0.0, 1.0}, .uv={0.0, 1.0}},
+        quad_vertices[1] = (struct vert2) {.position={1.0, 1.0}, .uv={1.0, 1.0}},
+        quad_vertices[2] = (struct vert2) {.position={0.0, 0.0}, .uv={0.0, 0.0}},
+        quad_vertices[3] = (struct vert2) {.position={1.0, 0.0}, .uv={1.0, 0.0}}
+    };
+    uint32_t quad_indices[6] = {0,1,2, 1,2,3};
+    // todo: use a function with char* to add to the instances during loop
+    struct char_instance quad_instances[3] = {
+        (struct char_instance) {.i_pos={0}, .i_char='f'},
+        (struct char_instance) {.i_pos={1}, .i_char='p'},
+        (struct char_instance) {.i_pos={2}, .i_char='s'}
+    };
+    struct Mesh quad_mesh = (struct Mesh) {
+        .indexCount = 6,
+        .indices = quad_indices,
+        .vertexCount = 4,
+        .vertices = quad_vertices,
+        .instanceCount = 3,
+        .instances = quad_instances
+    };
+    struct Material hud_material = (struct Material) {
+        .vertex_layout=HUD_VERTEX_LAYOUT, .shader="data/shaders/hud.wgsl", 
+        .use_alpha=1, .use_textures=1, .use_uniforms=0, .pixel_art=0};
+    int hud_pipeline_id = wgpuCreatePipeline(hud_material);
+    int quad_mesh_id = wgpuCreateMesh(hud_pipeline_id, quad_mesh);
+    // todo: load in uncompressed bmp textures as fast as possible instead of decompressing png at startup
+    int font_atlas_texture_slot = wgpuAddTexture(hud_pipeline_id, "data/textures/font_atlas.png");
     
     // Add uniforms. For example, add a brightness value (a float).
     float brightness = 1.0f;
-    int brightnessOffset = wgpuAddUniform(pipelineA, &brightness, sizeof(float));
+    int brightnessOffset = wgpuAddUniform(basic_pipeline_id, &brightness, sizeof(float));
 
     // Optionally, add a time uniform.
     float timeVal = 0.0f;
-    int timeOffset = wgpuAddUniform(pipelineA, &timeVal, sizeof(float));
+    int timeOffset = wgpuAddUniform(basic_pipeline_id, &timeVal, sizeof(float));
     
     // Add a camera transform (a 4x4 matrix).  
     float camera[16] = {
          1.0f, 0.0f, 0.0f, 0.0f,
          0.0f, 1.0f, 0.0f, 0.0f,
          0.0f, 0.0f, 1.0f, -500.0f,
-         0.0f, 0.0f, 0.0f, 1
+         0.0f, 0.0f, 0.0f, 1.0f
     };
-    int cameraOffset = wgpuAddUniform(pipelineA, camera, sizeof(camera));
+    int cameraOffset = wgpuAddUniform(basic_pipeline_id, camera, sizeof(camera));
     
     // Add a projection matrix (a 4x4 matrix).  
     float view[16] = {
@@ -372,11 +410,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
          0.0f, 0.0f, (nearClip+farClip)/(nearClip-farClip), (2*farClip*nearClip)/(nearClip-farClip),
          0.0f, 0.0f, -1, 1
     };
-    int viewOffset = wgpuAddUniform(pipelineA, view, sizeof(view));
+    int viewOffset = wgpuAddUniform(basic_pipeline_id, view, sizeof(view));
 
     // --- Add a texture to the pipeline ---
-    int texSlot1 = wgpuAddTexture(pipelineA, "data/textures/texture_1.png");
-    int texSlot2 = wgpuAddTexture(pipelineA, "data/textures/texture_2.png");
+    int texSlot1 = wgpuAddTexture(basic_pipeline_id, "data/textures/texture_1.png");
+    int texSlot2 = wgpuAddTexture(basic_pipeline_id, "data/textures/texture_2.png");
     
     // Variables to keep track of performance
     LARGE_INTEGER query_perf_result;
@@ -404,15 +442,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         pitch(0.001f, camera);
         float inv[16];
         inverseViewMatrix(camera, inv);
-        wgpuSetUniformValue(pipelineA, timeOffset, &timeVal, sizeof(float));
-        wgpuSetUniformValue(pipelineA, cameraOffset, &inv, sizeof(camera));
+        wgpuSetUniformValue(basic_pipeline_id, timeOffset, &timeVal, sizeof(float));
+        wgpuSetUniformValue(basic_pipeline_id, cameraOffset, &inv, sizeof(camera));
         
         // Actual frame rendering
         // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure
         // *info* forces the cpu to wait before pushing another frame, bringing the cpu speed down to the gpu speed
         // *info* we can force the cpu to wait regardless by using the fence in wgpuEndFrame()
         wgpuStartFrame();
-        wgpuDrawPipeline(pipelineA);
+        wgpuDrawPipeline(basic_pipeline_id);
+        wgpuDrawPipeline(hud_pipeline_id);
         wgpuEndFrame();
         // todo: create a function that we can use as oneliner measuring timing here
         // todo: -> game loop time -> cpu to gpu commands time -> gpu time -> total time (and see if those three add up to total or not)
@@ -441,7 +480,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             ms_last_60_frames[ms_index] = ms_last_frame;
             ms_index = (ms_index + 1) % avg_count;
             if (ms_index % avg_count == 0) {
-                printf("Average frame timing last %d frames: %4.2fms \n", avg_count, count / (float) avg_count);
+                printf("\n Average frame timing last %d frames: %4.2fms \n", avg_count, count / (float) avg_count);
             }
         }
     }
