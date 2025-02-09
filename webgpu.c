@@ -676,7 +676,10 @@ void wgpuDrawPipeline(int pipelineID) {
         if (g_wgpu.meshes[i].used && g_wgpu.meshes[i].pipelineID == pipelineID) {
             // For pipeline where we need to update the instance data every frame, we need to write it to gpu memory again
             if (pd->material->update_instances) {
-                size_t instanceDataSize = sizeof(struct Instance) * g_wgpu.meshes[i].instanceCount; // todo !!!
+                printf("instances gpu: %d\n", g_wgpu.meshes[i].instanceCount);
+                printf("instances cpu: %d\n", g_wgpu.meshes[i].mesh->instanceCount);
+                g_wgpu.meshes[i].instanceCount = g_wgpu.meshes[i].mesh->instanceCount;
+                size_t instanceDataSize = sizeof(struct Instance) * g_wgpu.meshes[i].instanceCount;
                 wgpuQueueWriteBuffer(g_wgpu.queue, g_wgpu.meshes[i].instanceBuffer, 0, g_wgpu.meshes[i].mesh->instances, instanceDataSize);
             }
             // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count.

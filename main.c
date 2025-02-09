@@ -393,21 +393,21 @@ void set_fullscreen(HWND hwnd, int width, int height, int refreshRate) {
 #define CHAR_WIDTH_SCREEN 48 * 2
 #define CHAR_HEIGHT_SCREEN 24 * 2
 #define MAX_CHAR_ON_SCREEN 48 * 24 * 2
-// todo: problem: the zeroed buffer gets drawn as instances, and all of them to index one -> character top-left (!)
-// todo: maybe create new buffer every frame?
 struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {0};
 struct Mesh quad_mesh = {0};
 int screen_chars_index = 0;
+int current_screen_char = 0;
 void print_on_screen(char *str) {
     for (int i = 0; str[i] != '\0'; i++) {
         if (i >= CHAR_WIDTH_SCREEN) break;
         if (str[i] == '\n') {
-            screen_chars_index = (screen_chars_index / CHAR_WIDTH_SCREEN + 1) * CHAR_WIDTH_SCREEN;
+            current_screen_char = (screen_chars_index / CHAR_WIDTH_SCREEN + 1) * CHAR_WIDTH_SCREEN;
             continue;
         }
-        printf("%d", screen_chars_index);
-        screen_chars[screen_chars_index] = (struct char_instance) {.i_pos={screen_chars_index}, .i_char=(int) str[i]};
+        screen_chars[screen_chars_index] = (struct char_instance) {.i_pos={current_screen_char}, .i_char=(int) str[i]};
         screen_chars_index++;
+        current_screen_char++;
+        quad_mesh.instanceCount = screen_chars_index;
     }
 }
 
@@ -573,6 +573,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         // todo: create a central place for things that need to happen to initialize every frame iteration correctly
         // Set the printed chars to 0 to reset the text in the HUD
         screen_chars_index = 0;
+        current_screen_char = 0;
+        quad_mesh.instanceCount = screen_chars_index;
         memset(screen_chars, 0, sizeof(screen_chars));
 
         // todo: way to not have any of the debug HUD and fps and timing code at all when not in debug mode
