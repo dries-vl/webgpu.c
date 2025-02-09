@@ -38,7 +38,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     var output: VertexOutput;
     output.pos = vec4<f32>(input.position + input.instanceOffset, 1.0) * uniforms.camera;
     output.pos = output.pos * uniforms.view;
-    output.pos.z = 0.5f;
+    output.pos.z = 0.5f; // todo: this might just be the cause of the incorrect ordering of faces / culling issues
     output.color = color;
     output.uv = input.uv;
     return output;

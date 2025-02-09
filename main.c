@@ -499,26 +499,6 @@ void set_fullscreen(HWND hwnd, int width, int height, int refreshRate) {
     SetWindowPos(hwnd, HWND_TOP, 0, 0, width, height, SWP_FRAMECHANGED);
 }
 
-#define CHAR_WIDTH_SCREEN (48 * 2) // todo: avoid difference with same const in shader code...
-#define CHAR_HEIGHT_SCREEN (24 * 2)
-#define MAX_CHAR_ON_SCREEN (48 * 24 * 2)
-struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {0};
-struct Mesh quad_mesh = {0};
-int screen_chars_index = 0;
-int current_screen_char = 0;
-void print_on_screen(char *str) {
-    for (int i = 0; str[i] != '\0'; i++) {
-        if (i >= CHAR_WIDTH_SCREEN) break;
-        if (str[i] == '\n') {
-            current_screen_char = ((current_screen_char / CHAR_WIDTH_SCREEN) + 1) * CHAR_WIDTH_SCREEN;
-            continue;
-        }
-        screen_chars[screen_chars_index] = (struct char_instance) {.i_pos={current_screen_char}, .i_char=(int) str[i]};
-        screen_chars_index++;
-        current_screen_char++;
-        quad_mesh.instanceCount = screen_chars_index;
-    }
-}
 struct debug_info {
     LARGE_INTEGER query_perf_result;
 	long ticks_per_second;
@@ -652,6 +632,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     wgpuInit(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
     print_time_since_startup("Init wgpu");
+
+    // todo: create a 'floor' quad mesh to use as orientation and for shadows etc.
+    // todo: lighting
+    // todo: cubemap sky
+    // todo: LOD: how to most efficiently swap out the mesh with a lower/higher res one? swap instances with other pipeline (?)
+    // todo: character mesh
+    // todo: animate the character mesh (skeleton?)
     
     // todo: use precompiled shader for faster loading
     // todo: use glsl instead of wgsl for C-style syntax
