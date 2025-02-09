@@ -7,8 +7,8 @@
 #include <math.h>
 
 extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
-extern int   wgpuCreatePipeline(struct Material material);
-extern int   wgpuCreateMesh(int pipelineID, struct Mesh mesh);
+extern int   wgpuCreatePipeline(struct Material *material);
+extern int   wgpuCreateMesh(int pipelineID, struct Mesh *mesh);
 extern int   wgpuAddUniform(int pipelineID, const void* data, int dataSize);
 extern void  wgpuSetUniformValue(int pipelineID, int uniformOffset, const void* data, int dataSize);
 extern int   wgpuAddTexture(int pipelineID, const char* texturePath);
@@ -390,6 +390,27 @@ void set_fullscreen(HWND hwnd, int width, int height, int refreshRate) {
     SetWindowPos(hwnd, HWND_TOP, 0, 0, width, height, SWP_FRAMECHANGED);
 }
 
+#define CHAR_WIDTH_SCREEN 48 * 2
+#define CHAR_HEIGHT_SCREEN 24 * 2
+#define MAX_CHAR_ON_SCREEN 48 * 24 * 2
+// todo: problem: the zeroed buffer gets drawn as instances, and all of them to index one -> character top-left (!)
+// todo: maybe create new buffer every frame?
+struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {0};
+struct Mesh quad_mesh = {0};
+int screen_chars_index = 0;
+void print_on_screen(char *str) {
+    for (int i = 0; str[i] != '\0'; i++) {
+        if (i >= CHAR_WIDTH_SCREEN) break;
+        if (str[i] == '\n') {
+            screen_chars_index = (screen_chars_index / CHAR_WIDTH_SCREEN + 1) * CHAR_WIDTH_SCREEN;
+            continue;
+        }
+        printf("%d", screen_chars_index);
+        screen_chars[screen_chars_index] = (struct char_instance) {.i_pos={screen_chars_index}, .i_char=(int) str[i]};
+        screen_chars_index++;
+    }
+}
+
 typedef HRESULT (WINAPI *SetProcessDpiAwareness_t)(int);
 #define PROCESS_PER_MONITOR_DPI_AWARE 2  // Define missing constant
 #define WINDOW_WIDTH 1920
@@ -453,13 +474,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // todo: use glsl instead of wgsl for C-style syntax
     struct Material basic_material = (struct Material) { 
         .vertex_layout=STANDARD_VERTEX_LAYOUT, .shader="data/shaders/shader.wgsl",
-        .use_alpha=0, .use_textures=1, .use_uniforms=1, .pixel_art=0};
-    int basic_pipeline_id = wgpuCreatePipeline(basic_material);
+        .use_alpha=0, .use_textures=1, .use_uniforms=1, .update_instances=0};
+    int basic_pipeline_id = wgpuCreatePipeline(&basic_material);
     
     // Create a mesh.
     // Note: vertices now include UV coordinates.
     struct Mesh teapot_mesh = read_mesh_binary("data/models/meshes/teapot.bin");
-    int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, teapot_mesh);
+    int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
 
     // todo: add HUD with bitmap font for fps printouts instead of console
     struct vert2 quad_vertices[4] = {
@@ -469,25 +490,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         quad_vertices[3] = (struct vert2) {.position={1.0, 0.0}, .uv={1.0, 0.0}}
     };
     uint32_t quad_indices[6] = {0,1,2, 1,2,3};
-    // todo: use a function with char* to add to the instances during loop
-    struct char_instance quad_instances[3] = {
-        (struct char_instance) {.i_pos={0}, .i_char='f'},
-        (struct char_instance) {.i_pos={1}, .i_char='p'},
-        (struct char_instance) {.i_pos={2}, .i_char='s'}
-    };
-    struct Mesh quad_mesh = (struct Mesh) {
-        .indexCount = 6,
-        .indices = quad_indices,
-        .vertexCount = 4,
-        .vertices = quad_vertices,
-        .instanceCount = 3,
-        .instances = quad_instances
-    };
+    quad_mesh.indexCount = 6;
+    quad_mesh.indices = quad_indices;
+    quad_mesh.vertexCount = 4;
+    quad_mesh.vertices = quad_vertices;
+    quad_mesh.instanceCount = MAX_CHAR_ON_SCREEN;
+    quad_mesh.instances = screen_chars;
     struct Material hud_material = (struct Material) {
         .vertex_layout=HUD_VERTEX_LAYOUT, .shader="data/shaders/hud.wgsl", 
-        .use_alpha=1, .use_textures=1, .use_uniforms=0, .pixel_art=0};
-    int hud_pipeline_id = wgpuCreatePipeline(hud_material);
-    int quad_mesh_id = wgpuCreateMesh(hud_pipeline_id, quad_mesh);
+        .use_alpha=1, .use_textures=1, .use_uniforms=0, .update_instances=1
+    };
+    int hud_pipeline_id = wgpuCreatePipeline(&hud_material);
+    int quad_mesh_id = wgpuCreateMesh(hud_pipeline_id, &quad_mesh);
     // todo: load in uncompressed textures as fast as possible (as binary array?) instead of decompressing png at startup
     int font_atlas_texture_slot = wgpuAddTexture(hud_pipeline_id, "data/textures/font_atlas.png");
     int aspect_ratio_uniform = wgpuAddUniform(hud_pipeline_id, &aspect_ratio, sizeof(float));
@@ -537,7 +551,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             DispatchMessage(&msg);
         }
         if (!g_Running) break;
-        
+
         // Update uniforms
         timeVal += 0.016f; // pretend 16ms per frame
         //yaw(0.001f * ms_last_frame, camera);
@@ -555,10 +569,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         wgpuDrawPipeline(basic_pipeline_id);
         wgpuDrawPipeline(hud_pipeline_id);
         wgpuEndFrame();
+        
+        // todo: create a central place for things that need to happen to initialize every frame iteration correctly
+        // Set the printed chars to 0 to reset the text in the HUD
+        screen_chars_index = 0;
+        memset(screen_chars, 0, sizeof(screen_chars));
+
+        // todo: way to not have any of the debug HUD and fps and timing code at all when not in debug mode
         // todo: create a function that we can use as oneliner measuring timing here
         // todo: -> game loop time -> cpu to gpu commands time -> gpu time -> total time (and see if those three add up to total or not)
-
-        // Measure performance
         // todo: isolate out the exact time we spend inside the loop iteration itself to see the actual CPU time
         // todo: use this cpu time to measure how much time we lose waiting on the GPU (?) ~eg. know if the GPU is the bottleneck or not
         // todo: isolate out the exact time from StartFrame to EndFrame to know how much CPU time gets spent on setting up gpu commands; draw calls etc.
@@ -577,13 +596,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             int fps = ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
             // todo: render in bitmap font to screen instead of printf IO
             char perf_output_string[256];
-            //printf("%4.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
+            snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
+            printf(perf_output_string);
+            print_on_screen(perf_output_string);
             count += ms_last_frame - ms_last_60_frames[ms_index];
             ms_last_60_frames[ms_index] = ms_last_frame;
             ms_index = (ms_index + 1) % avg_count;
-            if (ms_index % avg_count == 0) {
-                printf("\n Average frame timing last %d frames: %4.2fms \n", avg_count, count / (float) avg_count);
-            }
+            char perf_avg_string[256];
+            snprintf(perf_avg_string, sizeof(perf_avg_string), "Average frame timing last %d frames: %4.2fms\n", avg_count, count / (float) avg_count);
+            print_on_screen(perf_avg_string);
         }
     }
     

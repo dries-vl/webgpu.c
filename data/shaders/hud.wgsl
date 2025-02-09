@@ -21,15 +21,15 @@ struct VertexOutput {
 const char_scale = vec2(1.0 / 16.0, 1 / 8.0);
 const columns = 16;  // glyphs per row in atlas
 const rows = 8;      // total rows in atlas
-const text_columns = 48; // nr of characters that fit across screen-width
+const text_columns = 48; // nr of characters that fit across screen-width // todo: avoid difference with same const in cpu code...
 const text_rows = 24; // nr of characters that fit across screen-height
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     // calculate the position of this character
-    var pos_col = input.i_pos % text_columns;
-    var pos_row = input.i_pos / text_columns;
-    var pos = vec2<f32>(f32(pos_col) / f32((text_columns + 4) / 2) / uniforms.aspect_ratio, f32(pos_row) / f32(text_rows / 2));
+    var pos_col = input.i_pos % (text_columns * 2);
+    var pos_row = input.i_pos / (text_columns * 2);
+    var pos = vec2<f32>(f32(pos_col) / f32((text_columns + 4) / 2) / uniforms.aspect_ratio, -f32(pos_row) / f32(text_rows / 2)); // + 4 for slight kerning fix
     // calculate the uv at which this character starts in the font atlas
     var col: i32 = input.i_char % columns;
     var row: i32 = input.i_char / columns;
