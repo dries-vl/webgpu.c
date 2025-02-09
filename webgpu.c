@@ -41,6 +41,7 @@ struct Mesh {
     uint32_t indexCount;
     uint32_t vertexCount;
     uint32_t instanceCount;
+    struct Material *material;
 };
 
 // -----------------------------------------------------------------------------
@@ -367,7 +368,7 @@ int wgpuCreatePipeline(struct Material *material) {
     rpDesc.fragment = &fragState;
     
     WGPUPrimitiveState prim = {0};
-    prim.topology = WGPUPrimitiveTopology_TriangleList;
+    prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
     ms.count = 1;
@@ -476,8 +477,9 @@ int wgpuCreateMesh(int pipelineID, struct Mesh *mesh) {
         fprintf(stderr, "[webgpu.c] No more mesh slots!\n");
         return -1;
     }
+    mesh->material = g_wgpu.pipelines[pipelineID].material;
     // Create vertex buffer (same as in wgpuCreateMesh)
-    size_t vertexDataSize = sizeof(struct Vertex) * mesh->vertexCount; // todo !!!
+    size_t vertexDataSize = mesh->material->vertex_layout[0].arrayStride * mesh->vertexCount;
     WGPUBufferDescriptor vertexBufDesc = {0};
     vertexBufDesc.size = vertexDataSize;
     vertexBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
@@ -499,7 +501,7 @@ int wgpuCreateMesh(int pipelineID, struct Mesh *mesh) {
     g_wgpu.meshes[meshID].indexCount = mesh->indexCount;
     
     // Create instance buffer
-    size_t instanceDataSize = sizeof(struct Instance) * mesh->instanceCount; // todo !!!
+    size_t instanceDataSize = mesh->material->vertex_layout[1].arrayStride * mesh->instanceCount;
     WGPUBufferDescriptor instBufDesc = {0};
     instBufDesc.size = instanceDataSize;
     instBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
@@ -710,7 +712,7 @@ void wgpuDrawPipeline(int pipelineID) {
         return;
     
     PipelineData* pd = &g_wgpu.pipelines[pipelineID];
-    // Write CPU–side uniform data to GPU. // todo: does every material need this?
+    // Write CPU–side uniform data to GPU. // todo: does every material need to update uniforms every frame?
     wgpuQueueWriteBuffer(g_wgpu.queue, pd->uniformBuffer, 0, pd->uniformData, UNIFORM_BUFFER_CAPACITY);
     // Bind uniform bind group (group 0).
     wgpuRenderPassEncoderSetBindGroup(g_currentPass, 0, pd->uniformBindGroup, 0, NULL);
@@ -725,7 +727,7 @@ void wgpuDrawPipeline(int pipelineID) {
             // For pipeline where we need to update the instance data every frame, we need to write it to gpu memory again
             if (pd->material->update_instances) {
                 g_wgpu.meshes[i].instanceCount = g_wgpu.meshes[i].mesh->instanceCount;
-                size_t instanceDataSize = sizeof(struct Instance) * g_wgpu.meshes[i].instanceCount;
+                size_t instanceDataSize = pd->material->vertex_layout[1].arrayStride * g_wgpu.meshes[i].instanceCount;
                 wgpuQueueWriteBuffer(g_wgpu.queue, g_wgpu.meshes[i].instanceBuffer, 0, g_wgpu.meshes[i].mesh->instances, instanceDataSize);
             }
             // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count.

@@ -23,12 +23,23 @@ struct VertexOutput {
 };
 
 @vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
+fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+
+    let corner_id = vertex_index % 3u;  // Identifies the triangle corner (0,1,2)
+    var color: vec3<f32>;
+    if (corner_id == 0u) {
+        color = vec3<f32>(1.0, 0.0, 0.0);  // Red for first vertex
+    } else if (corner_id == 1u) {
+        color = vec3<f32>(0.0, 1.0, 0.0);  // Green for second vertex
+    } else {
+        color = vec3<f32>(0.0, 0.0, 1.0);  // Blue for third vertex
+    }
+
     var output: VertexOutput;
     output.pos = vec4<f32>(input.position * 100.0 + input.instanceOffset, 1.0) * uniforms.camera;
     output.pos = output.pos * uniforms.view;
     output.pos.z = 0.5f;
-    // output.color.y = output.pos.z;
+    output.color = color;
     output.uv = input.uv;
     return output;
 }
@@ -45,9 +56,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the texture using the uv coordinates.
     var texColor1 = textureSample(texture0, textureSampler, in.uv + vec2(0.5, 0.5));
     var texColor2 = textureSample(texture1, textureSampler, in.uv + vec2(0.5, 0.5));
-    // for (var i: i32 = 0; i < 10000; i = i + 1) {
-    //     texColor2 += textureSample(texture1, textureSampler, in.pos.xy + vec2<f32>(f32(i), f32(i)));
-    // }
-    // Multiply texture color by vertex color.
-    return vec4<f32>((texColor1.rgb + texColor2.rgb) / 2.0, 1.0);
+    var color = vec3(0.5, 0.5, 0.5);
+    if (in.color.x < 0.1 || in.color.y < 0.1 || in.color.z < 0.1) {
+        color = vec3(0.0);
+    }
+    return vec4<f32>(color, 1.0);
 }

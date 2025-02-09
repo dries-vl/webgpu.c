@@ -15,7 +15,7 @@ typedef struct {
     float normal[3];   // 12 bytes
     float uv[2];       // 8 bytes
     char color[3];     // 3 bytes
-    char pad;          // 1 byte padding -> total 36 bytes
+    char pad;          // 1 byte padding => total 36 bytes
 } Vertex;
 
 // --- Binary file header ---
@@ -54,10 +54,11 @@ int vertex_equal(const Vertex *a, const Vertex *b) {
             memcmp(a->color, b->color, 3) == 0);
 }
 
-// In this design we want one unique vertex per "v" line (in order).
-// For each vertex, we fill in the texture coordinate from the vt array if available;
-// if not, we default to {1,1}. (Normals are taken from the vn array if available,
-// otherwise default to {0,0,0}.)
+// --- In this design we want one unique vertex per "v" line (in order).
+// For each vertex, fill in position from the v line,
+// uv from vt if available (otherwise default to {1,1}),
+// normal from vn if available (otherwise {0,0,0}),
+// and default color {0,0,0}.
 void build_unique_vertices() {
     for (int i = 1; i < v_def_count; i++) {
         uniqueVertices[i-1].position[0] = temp_vertices[i][0];
@@ -67,7 +68,7 @@ void build_unique_vertices() {
             uniqueVertices[i-1].uv[0] = temp_uvs[i][0];
             uniqueVertices[i-1].uv[1] = temp_uvs[i][1];
         } else {
-            uniqueVertices[i-1].uv[0] = 1.0f;  // default to 1/1 as requested
+            uniqueVertices[i-1].uv[0] = 1.0f;  // default value
             uniqueVertices[i-1].uv[1] = 1.0f;
         }
         if (vn_def_count > i) {
@@ -85,34 +86,33 @@ void build_unique_vertices() {
     uniqueVertexCount = v_def_count - 1;
 }
 
-// In the second pass we read the face lines and build the indices array.
-// For each face line, we extract the vertex indices (the number before the first '/')
-// and then we reverse the order for each face to correct the winding.
+// In the second pass we read face lines and build the indices array.
+// Here we extract the vertex index from each face token.
+// (We ignore the texture and normal indices for the purpose of indexing.)
 void process_face_line_indices(const char *line) {
     char buffer[MAX_LINE];
     strncpy(buffer, line, MAX_LINE);
     buffer[MAX_LINE - 1] = '\0';
     
     // Tokenize the line.
-    // The first token should be "f".
-    char *token = strtok(buffer, " \t\r\n");
-    int faceIndices[10]; // support up to 10 vertices per face (usually 3)
+    char *token = strtok(buffer, " \t\r\n"); // should be "f"
+    int faceIndices[10]; // support up to 10 vertices per face
     int count = 0;
     while ((token = strtok(NULL, " \t\r\n")) != NULL) {
         // The vertex index is the substring before the first '/'
         char *slash = strchr(token, '/');
         if (slash) *slash = '\0';
         int vi = atoi(token);
-        // Convert OBJ's 1-based index to 0-based.
-        faceIndices[count++] = vi - 1;
+        faceIndices[count++] = vi - 1; // convert to 0-based
     }
-    // Reverse the order to fix winding.
+    // Reverse the order of the indices for this face to fix winding.
+    // (This is our initial reversal; we will later reassign positions.)
     if (count == 3) {
         indices[indexCount++] = faceIndices[2];
         indices[indexCount++] = faceIndices[1];
         indices[indexCount++] = faceIndices[0];
     } else {
-        // For polygons with more than 3 vertices, use fan triangulation in reversed order.
+        // Fan triangulation (reversed).
         for (int i = 1; i < count - 1; i++) {
             indices[indexCount++] = faceIndices[count - 1];
             indices[indexCount++] = faceIndices[i];
@@ -137,13 +137,12 @@ void process_faces_in_file(const char *filename) {
     fclose(file);
 }
 
-// First pass: read the OBJ definitions (v, vt, vn) from the file.
+// First pass: read the OBJ definitions (v, vt, vn).
 void read_obj_definitions(const char *filename) {
     FILE *file = fopen(filename, "r");
     if (!file)
         return;
     
-    // Allocate temporary arrays (using 1-based indexing).
     temp_vertices = malloc(MAX_VERTICES * sizeof(*temp_vertices));
     temp_uvs = malloc(MAX_VERTICES * sizeof(*temp_uvs));
     temp_normals = malloc(MAX_VERTICES * sizeof(*temp_normals));
@@ -191,7 +190,60 @@ void read_obj_definitions(const char *filename) {
     fclose(file);
 }
 
-// Write the binary file (header, unique vertices, indices) to disk.
+// --- Reorder indices so that each vertex (from the original unique list)
+// always appears in the same triangle slot (0, 1, or 2).
+// If an original vertex appears in different slots in different triangles,
+// we duplicate it so that each final vertex always occupies one fixed slot.
+void reorder_indices() {
+    // Allocate a mapping table: mapping[original_vertex][slot] = new vertex index.
+    int (*mapping)[3] = malloc(uniqueVertexCount * 3 * sizeof(int));
+    if (!mapping) {
+        fprintf(stderr, "Mapping allocation failed\n");
+        exit(1);
+    }
+    for (int i = 0; i < uniqueVertexCount; i++) {
+        mapping[i][0] = mapping[i][1] = mapping[i][2] = -1;
+    }
+    
+    // Allocate temporary arrays for final vertices and final indices.
+    // Worst-case: every index gets its own copy.
+    Vertex *finalVertices = malloc(MAX_VERTICES * 3 * sizeof(Vertex));
+    if (!finalVertices) {
+        fprintf(stderr, "Final vertices allocation failed\n");
+        exit(1);
+    }
+    uint32_t *finalIndices = malloc(indexCount * sizeof(uint32_t));
+    if (!finalIndices) {
+        fprintf(stderr, "Final indices allocation failed\n");
+        exit(1);
+    }
+    
+    int newVertexCount = 0;
+    // Process each triangle in the current indices array.
+    // We assume indices array length is a multiple of 3.
+    for (int i = 0; i < indexCount; i += 3) {
+        for (int slot = 0; slot < 3; slot++) {
+            int origIndex = indices[i + slot]; // original index in [0, uniqueVertexCount-1]
+            if (mapping[origIndex][slot] == -1) {
+                mapping[origIndex][slot] = newVertexCount;
+                finalVertices[newVertexCount] = uniqueVertices[origIndex]; // copy vertex
+                newVertexCount++;
+            }
+            finalIndices[i + slot] = mapping[origIndex][slot];
+        }
+    }
+    
+    uniqueVertexCount = newVertexCount;
+    // Copy final vertices and indices back into global arrays.
+    memcpy(uniqueVertices, finalVertices, uniqueVertexCount * sizeof(Vertex));
+    memcpy(indices, finalIndices, indexCount * sizeof(uint32_t));
+    
+    free(mapping);
+    free(finalVertices);
+    free(finalIndices);
+}
+
+// Write the binary mesh file.
 void write_mesh_binary(const char *binFilename) {
     MeshHeader header;
     header.vertexCount = uniqueVertexCount;
@@ -237,7 +289,7 @@ void read_mesh_binary(const char *binFilename) {
     size_t fileSize = header.indexArrayOffset + header.indexCount * sizeof(uint32_t);
     double fileSizeKB = fileSize / 1024.0;
     printf("Size of struct Vertex: %zu bytes\n", sizeof(Vertex));
-    printf("Unique vertex count: %u\n", header.vertexCount);
+    printf("Final vertex count: %u\n", header.vertexCount);
     printf("Index count: %u\n", header.indexCount);
     printf("Expected binary file size: %.2f KB\n", fileSizeKB);
     free(vertices_in);
@@ -246,7 +298,6 @@ void read_mesh_binary(const char *binFilename) {
 
 // Given an OBJ filename (with path), produce a binary filename in the "meshes" folder.
 void make_bin_filename(const char *objFilename, char *binFilename, size_t size) {
-    // Extract the base file name.
     const char *base = strrchr(objFilename, '\\');
     if (!base)
         base = strrchr(objFilename, '/');
@@ -288,20 +339,23 @@ void process_directory(const char *dirPath) {
                 uniqueVertexCount = 0;
                 indexCount = 0;
                 
-                // First pass: read definitions.
+                // First pass: read v, vt, vn definitions.
                 read_obj_definitions(fullPath);
-                // Build unique vertices exactly in the order of v lines.
+                // Build unique vertices from v definitions.
                 build_unique_vertices();
-                // Second pass: process face lines to build the index array.
+                // Second pass: process face lines to build indices.
                 process_faces_in_file(fullPath);
+                // Now reorder indices so that each original vertex always appears
+                // in the same slot (first, second, or third) in every triangle.
+                reorder_indices();
                 
-                // Create the binary filename.
+                // Build output binary filename.
                 char binBase[MAX_PATH_LEN];
                 make_bin_filename(fullPath, binBase, sizeof(binBase));
-                // We want only the base name in the output folder.
+                // Extract only the base name.
                 const char *baseName = strrchr(binBase, '\\');
                 if (baseName)
-                    baseName++; // skip the backslash
+                    baseName++;
                 else
                     baseName = binBase;
                 char finalBinFilename[MAX_PATH_LEN];
