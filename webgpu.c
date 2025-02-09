@@ -374,6 +374,7 @@ int wgpuCreatePipeline(struct Material *material) {
     ms.mask = 0xFFFFFFFF;
     rpDesc.multisample = ms;
     
+    // todo: this has exception when running with windows compiler...
     WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(g_wgpu.device, &rpDesc);
     g_wgpu.pipelines[pipelineID].pipeline = pipeline;
     
@@ -737,7 +738,7 @@ void wgpuDrawPipeline(int pipelineID) {
 }
 
 // Callback that sets our flag when the GPU has finished processing
-void fenceCallback(WGPUQueue inQueue, void* userdata, WGPUQueueWorkDoneStatus status) {
+void fenceCallback(WGPUQueueWorkDoneStatus status, WGPU_NULLABLE void * userdata) {
     bool *done = (bool*)userdata;
     *done = true;
 }
@@ -771,7 +772,7 @@ float fenceAndWait(WGPUQueue queue) {
 // wgpuEndFrame: End the frame, submit commands, and present.
 float wgpuEndFrame() {
     if (!g_currentPass)
-        return;
+        return 0.0;
     wgpuRenderPassEncoderEnd(g_currentPass);
     wgpuRenderPassEncoderRelease(g_currentPass);
     g_currentPass = NULL;

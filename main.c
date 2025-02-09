@@ -20,8 +20,8 @@ static bool g_Running = true;
 float fov = 3.14f / 4.0f; // 45 degrees
 float farClip = 2000.0f;
 float nearClip = 1.0f;
-#define WINDOW_WIDTH 1200 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
-#define WINDOW_HEIGHT 800
+#define WINDOW_WIDTH 1920 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
+#define WINDOW_HEIGHT 1080
 float AR = (float)WINDOW_HEIGHT / (float)WINDOW_WIDTH; // Aspect ratio
 
 struct Vector3 {
@@ -275,6 +275,7 @@ HRESULT InitializeRawInput()
         MessageBox(NULL, "Failed to register raw input devices!", "Error", MB_ICONEXCLAMATION | MB_OK);
         return E_FAIL;
     }
+    return 0;
 }
 
 #define MAX_KEYS 256
@@ -468,13 +469,16 @@ void draw_debug_info() {
     snprintf(perf_avg_string, sizeof(perf_avg_string), "Average frame timing last %d frames: %4.2fms\n", debug_info.avg_count, debug_info.count / (float) debug_info.avg_count);
     print_on_screen(perf_avg_string);
 }
-void print_time_since_startup(LARGE_INTEGER tick_count_at_startup, long ticks_per_second) {
+static long ticks_per_second;
+static LARGE_INTEGER tick_count_at_startup;
+void print_time_since_startup(char *str) {
     LARGE_INTEGER new_tick_count;
     QueryPerformanceCounter(&new_tick_count);
     long ticks_elapsed = new_tick_count.QuadPart - tick_count_at_startup.QuadPart;
     tick_count_at_startup = new_tick_count;
     float ms_since_startup = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
-    
+    printf(str);
+    printf("\nStartup time: -----------------------------------------------------------------------------------------> %4.2fms\n", ms_since_startup);
 }
 
 typedef HRESULT (WINAPI *SetProcessDpiAwareness_t)(int);
@@ -483,11 +487,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 {
     (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
 
-    // ----- TEMP TO CHECK STARTUP SPEED -----
+    // ----- TO CHECK STARTUP SPEED -----
     LARGE_INTEGER query_perf_result;
 	QueryPerformanceFrequency(&query_perf_result);
-	long ticks_per_second = query_perf_result.QuadPart;
-    LARGE_INTEGER tick_count_at_startup;
+	ticks_per_second = query_perf_result.QuadPart;
     QueryPerformanceCounter(&tick_count_at_startup);
     // ----------------------------------------
 
@@ -535,13 +538,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     SetWindowPos(hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_SHOWWINDOW);
 
-    // ----- TIME TO SET UP WINDOW -----
-    // ----------------------------------
+    print_time_since_startup("Setup window");
 
     load_raw_input_functions();
     InitializeRawInput();
+    print_time_since_startup("Load raw input dll");
     
     wgpuInit(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
+    print_time_since_startup("Init wgpu");
     
     // todo: use precompiled shader for faster loading
     // todo: use glsl instead of wgsl for C-style syntax
@@ -549,6 +553,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         .vertex_layout=STANDARD_VERTEX_LAYOUT, .shader="data/shaders/shader.wgsl",
         .use_alpha=0, .use_textures=1, .use_uniforms=1, .update_instances=0};
     int basic_pipeline_id = wgpuCreatePipeline(&basic_material);
+
+    print_time_since_startup("Create basic pipeline");
     
     struct Mesh teapot_mesh = read_mesh_binary("data/models/meshes/teapot.bin");
     struct Instance instance1 = {0.0f, 0.0f, 0.0f};
@@ -556,6 +562,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     struct Instance instances[2] = {instance1, instance2};
     set_instances(&teapot_mesh, instances, 2);
     int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
+    print_time_since_startup("Load teapot binary mesh");
     
     struct Mesh ground_mesh = read_mesh_binary("data/models/meshes/ground.bin");
     int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
@@ -579,7 +586,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     };
     int hud_pipeline_id = wgpuCreatePipeline(&hud_material);
     int quad_mesh_id = wgpuCreateMesh(hud_pipeline_id, &quad_mesh);
-    // todo: load in uncompressed textures and font atlasses as fast as possible (as binary array?) instead of decompressing png at startup
+    print_time_since_startup("Create HUD pipeline");
+
     int font_atlas_texture_slot = wgpuAddTexture(hud_pipeline_id, "data/textures/bin/font_atlas.bin");
     int aspect_ratio_uniform = wgpuAddUniform(hud_pipeline_id, &aspect_ratio, sizeof(float));
     
@@ -601,6 +609,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // --- Add a texture to the pipeline ---
     int texSlot1 = wgpuAddTexture(basic_pipeline_id, "data/textures/bin/texture_1.bin");
     int texSlot2 = wgpuAddTexture(basic_pipeline_id, "data/textures/bin/texture_2.bin");
+
+    
+    print_time_since_startup("Add textures and uniforms");
     
     // Main loop
     init_debug_info();
