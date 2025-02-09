@@ -208,6 +208,12 @@ struct Mesh read_mesh_binary(const char *binFilename) {
         .vertexCount=header.vertexCount, .indexCount=header.indexCount, .instanceCount = 1};
 }
 
+void set_instances(struct Mesh *mesh, struct Instance *instances, int instanceCount) {
+    free(mesh->instances);
+    mesh->instances = instances;
+    mesh->instanceCount = instanceCount;
+}
+
 // todo: move this somewhere deep...
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -306,34 +312,29 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 
                 // Print active keys
                 if (isPressed) {
-                    printf("%d\n", virtualKey);
-                    printf("%d\n", flags);
                     char msg[32];
-                    snprintf(msg, sizeof(msg), "Key Pressed: %c\n", virtualKey);
-                    printf(msg);
                     if (virtualKey == 'Z') {
-                        cameraspeed[2] = -0.1f;
+                        cameraspeed[2] = -0.2f;
                     }
                     if (virtualKey == 'S') {
-                        cameraspeed[2] = 0.1f;
+                        cameraspeed[2] = 0.2f;
                     }
                     if (virtualKey == 'Q') {
-                        cameraspeed[0] = -0.1f;
+                        cameraspeed[0] = -0.2f;
                     }
                     if (virtualKey == 'D') {
-                        cameraspeed[0] = 0.1f;
+                        cameraspeed[0] = 0.2f;
                     }
                     if (virtualKey == 'E') {
-                        cameraspeed[3] = -0.003f;
+                        cameraspeed[3] = -0.004f;
                     }
                     if (virtualKey == 'A') {
-                        cameraspeed[3] = 0.003f;
+                        cameraspeed[3] = 0.004f;
                     }
                 }
                 else if (!isPressed) {
                     if (virtualKey == 'Z') {
                         cameraspeed[2] = 0.0f;
-                        printf("Z released\n");
                     }
                     if (virtualKey == 'S') {
                         cameraspeed[2] = 0.0f;
@@ -460,7 +461,6 @@ void draw_debug_info() {
     char perf_output_string[256];
     snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s,  %4.2fgpu-ms/f\n", debug_info.ms_last_frame, fps, debug_info.ms_waited_on_gpu);
     print_on_screen(perf_output_string);
-    printf(perf_output_string);
     debug_info.count += debug_info.ms_last_frame - debug_info.ms_last_60_frames[debug_info.ms_index];
     debug_info.ms_last_60_frames[debug_info.ms_index] = debug_info.ms_last_frame;
     debug_info.ms_index = (debug_info.ms_index + 1) % debug_info.avg_count;
@@ -551,7 +551,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int basic_pipeline_id = wgpuCreatePipeline(&basic_material);
     
     struct Mesh teapot_mesh = read_mesh_binary("data/models/meshes/teapot.bin");
+    struct Instance instance1 = {0.0f, 0.0f, 0.0f};
+    struct Instance instance2 = {0.0f, 80.0f, 0.0f};
+    struct Instance instances[2] = {instance1, instance2};
+    set_instances(&teapot_mesh, instances, 2);
     int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
+    
+    struct Mesh ground_mesh = read_mesh_binary("data/models/meshes/ground.bin");
+    int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
 
     struct vert2 quad_vertices[4] = {
         quad_vertices[0] = (struct vert2) {.position={0.0, 1.0}, .uv={0.0, 1.0}},
