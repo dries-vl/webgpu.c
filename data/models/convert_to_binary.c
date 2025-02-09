@@ -35,8 +35,10 @@ int indexCount = 0;
 // Temporary storage for OBJ definitions.
 float (*temp_vertices)[3] = NULL;
 float (*temp_normals)[3] = NULL;
+float (*temp_uvs)[2] = NULL;  // Added temporary UV array.
 int v_def_count = 1;   // OBJ indices start at 1.
 int vn_def_count = 1;
+int vt_def_count = 1;  // OBJ indices for texture coordinates also start at 1.
 
 // Compare two Vertex structs for equality.
 int vertex_equal(const Vertex *a, const Vertex *b) {
@@ -61,24 +63,51 @@ int find_vertex(const Vertex *v) {
     return -1;
 }
 
-// Process a face line of the form: "f v//vn v//vn v//vn"
+// Process a face line that can be either:
+// "f v/vt/vn v/vt/vn v/vt/vn"   or   "f v//vn v//vn v//vn"
 void process_face_line(const char *line) {
-    int vIdx[3], vnIdx[3];
-    if (sscanf(line, "f %d//%d %d//%d %d//%d",
-               &vIdx[0], &vnIdx[0],
-               &vIdx[1], &vnIdx[1],
-               &vIdx[2], &vnIdx[2]) != 6)
-    {
-        return;
+    int vIdx[3], vtIdx[3], vnIdx[3];
+    int matches = sscanf(line,
+                         "f %d/%d/%d %d/%d/%d %d/%d/%d",
+                         &vIdx[0], &vtIdx[0], &vnIdx[0],
+                         &vIdx[1], &vtIdx[1], &vnIdx[1],
+                         &vIdx[2], &vtIdx[2], &vnIdx[2]);
+    if (matches == 9) {
+        // Successfully read vertex, texture, and normal indices.
+    } else {
+        // Try reading the format with missing texture coordinates.
+        matches = sscanf(line,
+                         "f %d//%d %d//%d %d//%d",
+                         &vIdx[0], &vnIdx[0],
+                         &vIdx[1], &vnIdx[1],
+                         &vIdx[2], &vnIdx[2]);
+        if (matches != 6) {
+            // If we can’t parse either format, exit or handle error.
+            return;
+        }
+        // Set default texture coordinate indices.
+        vtIdx[0] = vtIdx[1] = vtIdx[2] = 0; // Default value (indicating no UV data).
     }
+
+    // Process each vertex of the face.
     for (int i = 0; i < 3; i++) {
         Vertex temp;
+        // Copy the vertex position from your temporary vertex array.
         temp.position[0] = temp_vertices[vIdx[i]][0];
         temp.position[1] = temp_vertices[vIdx[i]][1];
         temp.position[2] = temp_vertices[vIdx[i]][2];
-        // No UV info is provided; default to 0.
-        temp.uv[0] = 0;
-        temp.uv[1] = 0;
+
+        // Set texture coordinate.
+        if (vtIdx[i] != 0 && vtIdx[i] < vt_def_count) {
+            temp.uv[0] = temp_uvs[vtIdx[i]][0];
+            temp.uv[1] = temp_uvs[vtIdx[i]][1];
+        } else {
+            // If the texture coordinate index is 0 (or invalid), use a default.
+            temp.uv[0] = 0;
+            temp.uv[1] = 0;
+        }
+
+        // Set the normal from the normals array.
         if (vnIdx[i] < vn_def_count) {
             temp.normal[0] = temp_normals[vnIdx[i]][0];
             temp.normal[1] = temp_normals[vnIdx[i]][1];
@@ -86,6 +115,7 @@ void process_face_line(const char *line) {
         } else {
             temp.normal[0] = temp.normal[1] = temp.normal[2] = 0;
         }
+
         // Default color to 0 (all zeros).
         memset(temp.color, 0, 3);
         temp.pad = 0; // ensure pad is set
@@ -100,7 +130,7 @@ void process_face_line(const char *line) {
             found = uniqueVertexCount;
             uniqueVertexCount++;
         }
-        indices[indexCount++] = (uint32_t) found;
+        indices[indexCount++] = (uint32_t)found;
     }
 }
 
@@ -114,17 +144,22 @@ void parse_obj_file(const char *filename) {
     // Allocate temporary arrays.
     temp_vertices = malloc(MAX_VERTICES * sizeof(*temp_vertices));
     temp_normals  = malloc(MAX_VERTICES * sizeof(*temp_normals));
-    if (!temp_vertices || !temp_normals) {
+    temp_uvs      = malloc(MAX_VERTICES * sizeof(*temp_uvs));  // Allocate UV array.
+    if (!temp_vertices || !temp_normals || !temp_uvs) {
         fprintf(stderr, "Memory allocation failed for temporary arrays.\n");
         fclose(file);
         free(temp_vertices);
         free(temp_normals);
+        free(temp_uvs);
         exit(1);
     }
     memset(temp_vertices, 0, MAX_VERTICES * sizeof(*temp_vertices));
     memset(temp_normals, 0, MAX_VERTICES * sizeof(*temp_normals));
+    memset(temp_uvs, 0, MAX_VERTICES * sizeof(*temp_uvs));
+
     v_def_count = 1;
     vn_def_count = 1;
+    vt_def_count = 1;
 
     while (fgets(line, sizeof(line), file)) {
         char *pline = line;
@@ -145,6 +180,13 @@ void parse_obj_file(const char *filename) {
                        &temp_normals[vn_def_count][2]);
                 vn_def_count++;
             }
+        } else if (strncmp(pline, "vt ", 3) == 0) {  // Added texture coordinate support.
+            if (vt_def_count < MAX_VERTICES) {
+                sscanf(pline, "vt %f %f",
+                       &temp_uvs[vt_def_count][0],
+                       &temp_uvs[vt_def_count][1]);
+                vt_def_count++;
+            }
         } else if (pline[0] == 'f') {
             process_face_line(pline);
         }
@@ -152,6 +194,7 @@ void parse_obj_file(const char *filename) {
     fclose(file);
     free(temp_vertices);
     free(temp_normals);
+    free(temp_uvs);
 }
 
 // Write the binary mesh file (header, vertices, indices) to disk.

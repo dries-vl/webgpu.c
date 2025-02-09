@@ -12,7 +12,7 @@ REM Ensure the "debug" folder exists
 if not exist "debug" mkdir "debug"
 cd debug
 
-cl -FC -Zi "..\main.c" "..\wgpu_native.dll.lib" user32.lib
+cl -FC -Zi -Ox -GL -Gw -GS- -fp:fast -favor:INTEL64 "..\main.c" "..\wgpu_native.dll.lib" user32.lib
 
 if %ERRORLEVEL% neq 0 (
     echo Compilation failed.
