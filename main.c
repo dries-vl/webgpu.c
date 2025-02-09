@@ -20,8 +20,8 @@ static bool g_Running = true;
 float fov = 3.14f / 4.0f; // 45 degrees
 float farClip = 2000.0f;
 float nearClip = 1.0f;
-#define WINDOW_WIDTH 1200 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
-#define WINDOW_HEIGHT 800
+#define WINDOW_WIDTH 1920 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
+#define WINDOW_HEIGHT 1080
 float AR = (float)WINDOW_HEIGHT / (float)WINDOW_WIDTH; // Aspect ratio
 
 struct Vector3 {
@@ -482,8 +482,6 @@ void print_time_since_startup(char *str) {
 
 typedef HRESULT (WINAPI *SetProcessDpiAwareness_t)(int);
 #define PROCESS_PER_MONITOR_DPI_AWARE 2
-#define WINDOW_WIDTH 1920 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
-#define WINDOW_HEIGHT 1080
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
