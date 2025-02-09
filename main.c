@@ -22,7 +22,8 @@ float farClip = 2000.0f;
 float nearClip = 1.0f;
 #define WINDOW_WIDTH 1920 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
 #define WINDOW_HEIGHT 1080
-float AR = (float)WINDOW_HEIGHT / (float)WINDOW_WIDTH; // Aspect ratio
+float AR = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT; // Aspect ratio
+float cameraRotation[2] = {0.0f, 0.0f}; // yaw, pitch
 
 struct Vector3 {
     float x, y, z;
@@ -143,6 +144,33 @@ void pitch(float angle, float *matrix) { // for rotating around itself
     matrix[10] = newRot[10];
 
     // Leave indices 3, 7, and 11 (translation) unchanged.
+}
+
+void absolute_yaw(float angle, float *matrix){
+    float yawRot[16] = {
+        cos(angle + cameraRotation[0]), 0.0f, sin(angle + cameraRotation[0]), 0.0f,
+        0.0f,       1.0f, 0.0f,       0.0f,
+       -sin(angle + cameraRotation[0]), 0.0f, cos(angle + cameraRotation[0]), 0.0f,
+        0.0f,       0.0f, 0.0f,       1.0f
+    };
+    matrix[0] = yawRot[0];
+    matrix[2] = yawRot[2];
+    matrix[8] = yawRot[8];
+    matrix[10] = yawRot[10];
+    cameraRotation[0] += angle;
+}
+void absolute_pitch(float angle, float *matrix){
+    float rotMatrix[16] = {
+         1.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, cos(angle + cameraRotation[1]), -sin(angle + cameraRotation[1]), 0.0f,
+         0.0f, sin(angle + cameraRotation[1]), cos(angle + cameraRotation[1]), 0.0f,
+         0.0f, 0.0f, 0.0f, 1
+    };
+    matrix[5] = rotMatrix[5];
+    matrix[6] = rotMatrix[6];
+    matrix[9] = rotMatrix[9];
+    matrix[10] = rotMatrix[10];
+    cameraRotation[1] += angle;
 }
 
 float camera[16] = {
@@ -326,12 +354,6 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                     if (virtualKey == 'D') {
                         cameraspeed[0] = 0.2f;
                     }
-                    if (virtualKey == 'E') {
-                        cameraspeed[3] = -0.004f;
-                    }
-                    if (virtualKey == 'A') {
-                        cameraspeed[3] = 0.004f;
-                    }
                 }
                 else if (!isPressed) {
                     if (virtualKey == 'Z') {
@@ -346,12 +368,6 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                     if (virtualKey == 'D') {
                         cameraspeed[0] = 0.0f;
                     }
-                    if (virtualKey == 'E') {
-                        cameraspeed[3] = 0.0f;
-                    }
-                    if (virtualKey == 'A') {
-                        cameraspeed[3] = 0.0f;
-                    }
                 }
             }
             else if (raw->header.dwType == RIM_TYPEMOUSE)
@@ -361,6 +377,8 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 LONG dy = raw->data.mouse.lLastY;
                 USHORT buttonFlags = raw->data.mouse.usButtonFlags;
                 // Handle mouse movement and button clicks
+                absolute_yaw(-dx * 0.001f, camera);
+                absolute_pitch(-dy * 0.001f, camera);
             }
             free(lpb); // Free allocated memory
             break;
