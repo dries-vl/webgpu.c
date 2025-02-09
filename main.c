@@ -22,7 +22,15 @@ float farClip = 2000.0f;
 float nearClip = 1.0f;
 #define WINDOW_WIDTH 1920 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
 #define WINDOW_HEIGHT 1080
-float AR = (float)WINDOW_HEIGHT / (float)WINDOW_WIDTH; // Aspect ratio
+float AR = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT; // Aspect ratio
+float cameraRotation[2] = {0.0f, 0.0f}; // yaw, pitch
+struct ButtonState {
+    int left;
+    int right;
+    int forward;
+    int backward;
+};
+struct ButtonState buttonState = {0, 0, 0, 0};
 
 struct Vector3 {
     float x, y, z;
@@ -145,25 +153,82 @@ void pitch(float angle, float *matrix) { // for rotating around itself
     // Leave indices 3, 7, and 11 (translation) unchanged.
 }
 
+void absolute_yaw(float angle, float *matrix){
+    float yawRot[16] = {
+        cos(angle + cameraRotation[0]), 0.0f, sin(angle + cameraRotation[0]), 0.0f,
+        0.0f,       1.0f, 0.0f,       0.0f,
+       -sin(angle + cameraRotation[0]), 0.0f, cos(angle + cameraRotation[0]), 0.0f,
+        0.0f,       0.0f, 0.0f,       1.0f
+    };
+    float pitchRot[16] = {
+         1.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, cos(cameraRotation[1]), -sin(cameraRotation[1]), 0.0f,
+         0.0f, sin(cameraRotation[1]), cos(cameraRotation[1]), 0.0f,
+         0.0f, 0.0f, 0.0f, 1
+    };
+    float rotMatrix[16] = {0};
+    multiply(yawRot, 4, 4, pitchRot, 4, 4, rotMatrix);
+    matrix[0] = rotMatrix[0];
+    matrix[1] = rotMatrix[1];
+    matrix[2] = rotMatrix[2];
+    matrix[4] = rotMatrix[4];
+    matrix[5] = rotMatrix[5];
+    matrix[6] = rotMatrix[6];
+    matrix[8] = rotMatrix[8];
+    matrix[9] = rotMatrix[9];
+    matrix[10] = rotMatrix[10];
+    cameraRotation[0] += angle;
+}
+void absolute_pitch(float angle, float *matrix){
+    float pitchRot[16] = {
+         1.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, cos(angle + cameraRotation[1]), -sin(angle + cameraRotation[1]), 0.0f,
+         0.0f, sin(angle + cameraRotation[1]), cos(angle + cameraRotation[1]), 0.0f,
+         0.0f, 0.0f, 0.0f, 1
+    };
+    float yawRot[16] = {
+        cos(cameraRotation[0]), 0.0f, sin(cameraRotation[0]), 0.0f,
+        0.0f,       1.0f, 0.0f,       0.0f,
+       -sin(cameraRotation[0]), 0.0f, cos(cameraRotation[0]), 0.0f,
+        0.0f,       0.0f, 0.0f,       1.0f
+    };
+    float rotMatrix[16] = {0};
+    multiply(yawRot, 4, 4, pitchRot, 4, 4, rotMatrix);
+    matrix[0] = rotMatrix[0];
+    matrix[1] = rotMatrix[1];
+    matrix[2] = rotMatrix[2];
+    matrix[4] = rotMatrix[4];
+    matrix[5] = rotMatrix[5];
+    matrix[6] = rotMatrix[6];
+    matrix[8] = rotMatrix[8];
+    matrix[9] = rotMatrix[9];
+    matrix[10] = rotMatrix[10];
+    cameraRotation[1] += angle;
+}
+
 float camera[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 1.0f, -100.0f,
         0.0f, 0.0f, 0.0f, 1
 };
-float cameraspeed[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-
-void cameraMovement(float *camera, float *speed, float ms) {
+float cameraSpeed[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // not used anymore
+float movementSpeed = 0.5f;
+void cameraMovement(float *camera, float speed, float ms) {
     float cameraRotation[9] = {
         camera[0], camera[1], camera[2],
         camera[4], camera[5], camera[6],
         camera[8], camera[9], camera[10]
     };
-    float transSpeed[3] = {speed[0], speed[1], speed[2]};
+    float xSpeed = speed * ms * (buttonState.right - buttonState.left);
+    float ySpeed = 0;
+    float zSpeed = speed * ms * -(buttonState.forward - buttonState.backward);
+    float transSpeed[3] = {xSpeed, ySpeed, zSpeed};
     multiply(cameraRotation, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
-    yaw(speed[3] * ms, camera);
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
     move(movit, camera);
+    printf("movit: %f %f %f\n", movit.x, movit.y, movit.z);
+    printf("camera: %f %f %f\n", camera[3], camera[7], camera[11]);
 }
 typedef struct {
     uint32_t vertexCount;
@@ -315,30 +380,30 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 if (isPressed) {
                     char msg[32];
                     if (virtualKey == 'Z' || virtualKey == VK_UP) {
-                        cameraspeed[2] = -0.5f;
+                        buttonState.forward = 1;
                     }
                     if (virtualKey == 'S' || virtualKey == VK_DOWN) {
-                        cameraspeed[2] = 0.5f;
+                        buttonState.backward = 1;
                     }
                     if (virtualKey == 'Q' || virtualKey == VK_LEFT) {
-                        cameraspeed[0] = -0.5f;
+                        buttonState.left = 1;
                     }
                     if (virtualKey == 'D' || virtualKey == VK_RIGHT) {
-                        cameraspeed[0] = 0.5f;
+                        buttonState.right = 1;
                     }
                 }
                 else if (!isPressed) {
                     if (virtualKey == 'Z' || virtualKey == VK_UP) {
-                        cameraspeed[2] = 0.0f;
+                        buttonState.forward = 0;
                     }
                     if (virtualKey == 'S' || virtualKey == VK_DOWN) {
-                        cameraspeed[2] = 0.0f;
+                        buttonState.backward = 0;
                     }
                     if (virtualKey == 'Q' || virtualKey == VK_LEFT) {
-                        cameraspeed[0] = 0.0f;
+                        buttonState.left = 0;
                     }
                     if (virtualKey == 'D' || virtualKey == VK_RIGHT) {
-                        cameraspeed[0] = 0.0f;
+                        buttonState.right = 0;
                     }
                 }
             }
@@ -349,6 +414,8 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 LONG dy = raw->data.mouse.lLastY;
                 USHORT buttonFlags = raw->data.mouse.usButtonFlags;
                 // Handle mouse movement and button clicks
+                absolute_yaw(-dx * 0.001f, camera);
+                absolute_pitch(-dy * 0.001f, camera);
             }
             free(lpb); // Free allocated memory
             break;
@@ -630,12 +697,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         // Update uniforms
         timeVal += 0.016f; // pretend 16ms per frame
         //yaw(0.001f * ms_last_frame, camera);
-        cameraMovement(camera, cameraspeed, debug_info.ms_last_frame);
+        cameraMovement(camera, movementSpeed, debug_info.ms_last_frame);
         float inv[16];
         inverseViewMatrix(camera, inv);
         wgpuSetUniformValue(basic_pipeline_id, timeOffset, &timeVal, sizeof(float));
         wgpuSetUniformValue(basic_pipeline_id, cameraOffset, &inv, sizeof(camera));
-        
+
         // Actual frame rendering
         // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure
         // *info* forces the cpu to wait before pushing another frame, bringing the cpu speed down to the gpu speed
