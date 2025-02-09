@@ -227,8 +227,8 @@ void cameraMovement(float *camera, float speed, float ms) {
     multiply(cameraRotation, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
     move(movit, camera);
-    printf("movit: %f %f %f\n", movit.x, movit.y, movit.z);
-    printf("camera: %f %f %f\n", camera[3], camera[7], camera[11]);
+    // printf("movit: %f %f %f\n", movit.x, movit.y, movit.z);
+    // printf("camera: %f %f %f\n", camera[3], camera[7], camera[11]);
 }
 typedef struct {
     uint32_t vertexCount;
@@ -414,8 +414,8 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 LONG dy = raw->data.mouse.lLastY;
                 USHORT buttonFlags = raw->data.mouse.usButtonFlags;
                 // Handle mouse movement and button clicks
-                absolute_yaw(-dx * 0.001f, camera);
-                absolute_pitch(-dy * 0.001f, camera);
+                absolute_yaw(-dx * 0.002f, camera);
+                absolute_pitch(-dy * 0.002f, camera);
             }
             free(lpb); // Free allocated memory
             break;
@@ -458,9 +458,9 @@ void set_fullscreen(HWND hwnd, int width, int height, int refreshRate) {
     SetWindowPos(hwnd, HWND_TOP, 0, 0, width, height, SWP_FRAMECHANGED);
 }
 
-#define CHAR_WIDTH_SCREEN 48 * 2 // todo: avoid difference with same const in shader code...
-#define CHAR_HEIGHT_SCREEN 24 * 2
-#define MAX_CHAR_ON_SCREEN 48 * 24 * 2
+#define CHAR_WIDTH_SCREEN (48 * 2) // todo: avoid difference with same const in shader code...
+#define CHAR_HEIGHT_SCREEN (24 * 2)
+#define MAX_CHAR_ON_SCREEN (48 * 24 * 2)
 struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {0};
 struct Mesh quad_mesh = {0};
 int screen_chars_index = 0;
@@ -469,7 +469,7 @@ void print_on_screen(char *str) {
     for (int i = 0; str[i] != '\0'; i++) {
         if (i >= CHAR_WIDTH_SCREEN) break;
         if (str[i] == '\n') {
-            current_screen_char = (screen_chars_index / CHAR_WIDTH_SCREEN + 1) * CHAR_WIDTH_SCREEN;
+            current_screen_char = ((current_screen_char / CHAR_WIDTH_SCREEN) + 1) * CHAR_WIDTH_SCREEN;
             continue;
         }
         screen_chars[screen_chars_index] = (struct char_instance) {.i_pos={current_screen_char}, .i_char=(int) str[i]};
@@ -621,18 +621,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     print_time_since_startup("Create basic pipeline");
     
-    struct Mesh teapot_mesh = read_mesh_binary("data/models/meshes/teapot.bin");
+    struct Mesh teapot_mesh = read_mesh_binary("data/models/bin/teapot.bin");
     struct Instance instance1 = {0.0f, 0.0f, 0.0f};
     struct Instance instance2 = {0.0f, 80.0f, 0.0f};
     struct Instance instances[2] = {instance1, instance2};
     set_instances(&teapot_mesh, instances, 2);
-    // int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
+    int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
     print_time_since_startup("Load teapot binary mesh");
     
-    struct Mesh ground_mesh = read_mesh_binary("data/models/meshes/ground.bin");
+    struct Mesh ground_mesh = read_mesh_binary("data/models/bin/ground.bin");
     struct Instance ground = {0.0f, 0.0f, 0.0f};
     set_instances(&ground_mesh, &ground, 1);
-    int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
+    // int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
 
     struct vert2 quad_vertices[4] = {
         quad_vertices[0] = (struct vert2) {.position={0.0, 1.0}, .uv={0.0, 1.0}},

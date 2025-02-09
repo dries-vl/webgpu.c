@@ -36,7 +36,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     }
 
     var output: VertexOutput;
-    output.pos = vec4<f32>(input.position * 100.0 + input.instanceOffset, 1.0) * uniforms.camera;
+    output.pos = vec4<f32>(input.position + input.instanceOffset, 1.0) * uniforms.camera;
     output.pos = output.pos * uniforms.view;
     output.pos.z = 0.5f;
     output.color = color;
