@@ -35,6 +35,26 @@ struct ButtonState buttonState = {0, 0, 0, 0};
 struct Vector3 {
     float x, y, z;
 };
+#define CHAR_WIDTH_SCREEN (48 * 2) // todo: avoid difference with same const in shader code...
+#define CHAR_HEIGHT_SCREEN (24 * 2)
+#define MAX_CHAR_ON_SCREEN (48 * 24 * 2)
+struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {0};
+struct Mesh quad_mesh = {0};
+int screen_chars_index = 0;
+int current_screen_char = 0;
+void print_on_screen(char *str) {
+    for (int i = 0; str[i] != '\0'; i++) {
+        if (i >= CHAR_WIDTH_SCREEN) break;
+        if (str[i] == '\n') {
+            current_screen_char = ((current_screen_char / CHAR_WIDTH_SCREEN) + 1) * CHAR_WIDTH_SCREEN;
+            continue;
+        }
+        screen_chars[screen_chars_index] = (struct char_instance) {.i_pos={current_screen_char}, .i_char=(int) str[i]};
+        screen_chars_index++;
+        current_screen_char++;
+        quad_mesh.instanceCount = screen_chars_index;
+    }
+}
 void multiply(const float *a, int row1, int col1, const float *b, int row2, int col2, float *d) {
     assert(col1 == row2); // Ensure valid matrix dimensions
 
@@ -209,27 +229,45 @@ void absolute_pitch(float angle, float *matrix){
 float camera[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, -100.0f,
+        0.0f, 0.0f, 1.0f, -300.0f,
         0.0f, 0.0f, 0.0f, 1
 };
-float cameraSpeed[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // not used anymore
+struct Speed {
+    float x;
+    float y;
+    float z;
+    float yaw;
+    float pitch;
+    float roll;
+};
+struct Speed cameraSpeed = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // only y-speed used
 float movementSpeed = 0.5f;
 void cameraMovement(float *camera, float speed, float ms) {
-    float cameraRotation[9] = {
-        camera[0], camera[1], camera[2],
-        camera[4], camera[5], camera[6],
-        camera[8], camera[9], camera[10]
+    float yawRot[16] = {
+        cos(cameraRotation[0]), 0.0f, sin(cameraRotation[0]),
+        0.0f,       1.0f, 0.0f,
+       -sin(cameraRotation[0]), 0.0f, cos(cameraRotation[0])
     };
     float xSpeed = speed * ms * (buttonState.right - buttonState.left);
-    float ySpeed = 0;
+    float ySpeed = cameraSpeed.y * ms;
     float zSpeed = speed * ms * -(buttonState.forward - buttonState.backward);
     float transSpeed[3] = {xSpeed, ySpeed, zSpeed};
-    multiply(cameraRotation, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
+    multiply(yawRot, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
     move(movit, camera);
-    // printf("movit: %f %f %f\n", movit.x, movit.y, movit.z);
-    // printf("camera: %f %f %f\n", camera[3], camera[7], camera[11]);
 }
+void applyGravity(struct Speed *speed, float *pos, float ms) { // gravity as velocity instead of acceleration
+    float gravity = 9.81f * 0.001f;
+    float gravitySpeed = gravity * ms;
+    if (pos[1] > 0.0f){
+        speed->y -= gravitySpeed;
+        // if (pos[1] < 0.0f) {pos[1] = 0.0f;}; // this doesn't work
+    }
+    else { // some sort of hit the ground / collision detection
+        speed->y = 0.0f;
+    }
+}
+
 typedef struct {
     uint32_t vertexCount;
     uint32_t indexCount;
@@ -390,6 +428,9 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                     }
                     if (virtualKey == 'D' || virtualKey == VK_RIGHT) {
                         buttonState.right = 1;
+                    }
+                    if (virtualKey == ' ' || virtualKey == VK_SPACE) {
+                        cameraSpeed.y = 2.5f;
                     }
                 }
                 else if (!isPressed) {
@@ -698,6 +739,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         timeVal += 0.016f; // pretend 16ms per frame
         //yaw(0.001f * ms_last_frame, camera);
         cameraMovement(camera, movementSpeed, debug_info.ms_last_frame);
+        float cameraLocation[3] = {camera[3], camera[7], camera[11]};
+        applyGravity(&cameraSpeed, cameraLocation, debug_info.ms_last_frame);
+        camera[7] = cameraLocation[1];
         float inv[16];
         inverseViewMatrix(camera, inv);
         wgpuSetUniformValue(basic_pipeline_id, timeOffset, &timeVal, sizeof(float));
