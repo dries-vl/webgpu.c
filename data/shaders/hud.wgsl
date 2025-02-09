@@ -53,5 +53,5 @@ var font_atlas: texture_2d<f32>;
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var font_uv = in.char_uv + in.uv * char_scale;
     var color = textureSample(font_atlas, tex_sampler, font_uv);
-    return vec4<f32>(color.rgb, 1.0);
+    return vec4<f32>(color.rgb, (color.r+color.g+color.b) / 3.0);
 }

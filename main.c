@@ -561,11 +561,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     struct Instance instance2 = {0.0f, 80.0f, 0.0f};
     struct Instance instances[2] = {instance1, instance2};
     set_instances(&teapot_mesh, instances, 2);
-    int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
+    // int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
     print_time_since_startup("Load teapot binary mesh");
     
     struct Mesh ground_mesh = read_mesh_binary("data/models/meshes/ground.bin");
-    struct Instance ground = {100.0f, 0.0f, 100.0f};
+    struct Instance ground = {0.0f, 0.0f, 0.0f};
     set_instances(&ground_mesh, &ground, 1);
     int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
 

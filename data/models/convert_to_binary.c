@@ -9,16 +9,16 @@
 #define MAX_LINE 256
 #define MAX_PATH_LEN 1024
 
-// Vertex structure with optimal field ordering (total 36 bytes).
+// --- Vertex structure (36 bytes total) ---
 typedef struct {
     float position[3]; // 12 bytes
     float normal[3];   // 12 bytes
     float uv[2];       // 8 bytes
     char color[3];     // 3 bytes
-    char pad;          // 1 byte of padding so the total size is 36 bytes.
+    char pad;          // 1 byte padding -> total 36 bytes
 } Vertex;
 
-// Header stored in the binary file.
+// --- Binary file header ---
 typedef struct {
     uint32_t vertexCount;
     uint32_t indexCount;
@@ -33,12 +33,13 @@ uint32_t indices[MAX_VERTICES * 3];
 int indexCount = 0;
 
 // Temporary storage for OBJ definitions.
+// We use 1-based indexing so that index 0 is unused.
 float (*temp_vertices)[3] = NULL;
+float (*temp_uvs)[2] = NULL;
 float (*temp_normals)[3] = NULL;
-float (*temp_uvs)[2] = NULL;  // Added temporary UV array.
-int v_def_count = 1;   // OBJ indices start at 1.
-int vn_def_count = 1;
-int vt_def_count = 1;  // OBJ indices for texture coordinates also start at 1.
+int v_def_count = 1;   // Count of "v" lines (starting at 1)
+int vt_def_count = 1;  // Count of "vt" lines (starting at 1)
+int vn_def_count = 1;  // Count of "vn" lines (starting at 1)
 
 // Compare two Vertex structs for equality.
 int vertex_equal(const Vertex *a, const Vertex *b) {
@@ -53,114 +54,112 @@ int vertex_equal(const Vertex *a, const Vertex *b) {
             memcmp(a->color, b->color, 3) == 0);
 }
 
-// Search for an existing vertex equal to v in uniqueVertices.
-// Returns its index if found, or -1 if not.
-int find_vertex(const Vertex *v) {
-    for (int i = 0; i < uniqueVertexCount; i++) {
-        if (vertex_equal(v, &uniqueVertices[i]))
-            return i;
+// In this design we want one unique vertex per "v" line (in order).
+// For each vertex, we fill in the texture coordinate from the vt array if available;
+// if not, we default to {1,1}. (Normals are taken from the vn array if available,
+// otherwise default to {0,0,0}.)
+void build_unique_vertices() {
+    for (int i = 1; i < v_def_count; i++) {
+        uniqueVertices[i-1].position[0] = temp_vertices[i][0];
+        uniqueVertices[i-1].position[1] = temp_vertices[i][1];
+        uniqueVertices[i-1].position[2] = temp_vertices[i][2];
+        if (vt_def_count > i) {
+            uniqueVertices[i-1].uv[0] = temp_uvs[i][0];
+            uniqueVertices[i-1].uv[1] = temp_uvs[i][1];
+        } else {
+            uniqueVertices[i-1].uv[0] = 1.0f;  // default to 1/1 as requested
+            uniqueVertices[i-1].uv[1] = 1.0f;
+        }
+        if (vn_def_count > i) {
+            uniqueVertices[i-1].normal[0] = temp_normals[i][0];
+            uniqueVertices[i-1].normal[1] = temp_normals[i][1];
+            uniqueVertices[i-1].normal[2] = temp_normals[i][2];
+        } else {
+            uniqueVertices[i-1].normal[0] = 0;
+            uniqueVertices[i-1].normal[1] = 0;
+            uniqueVertices[i-1].normal[2] = 0;
+        }
+        memset(uniqueVertices[i-1].color, 0, 3);
+        uniqueVertices[i-1].pad = 0;
     }
-    return -1;
+    uniqueVertexCount = v_def_count - 1;
 }
 
-// Process a face line that can be either:
-// "f v/vt/vn v/vt/vn v/vt/vn"   or   "f v//vn v//vn v//vn"
-void process_face_line(const char *line) {
-    int vIdx[3], vtIdx[3], vnIdx[3];
-    int matches = sscanf(line,
-                         "f %d/%d/%d %d/%d/%d %d/%d/%d",
-                         &vIdx[0], &vtIdx[0], &vnIdx[0],
-                         &vIdx[1], &vtIdx[1], &vnIdx[1],
-                         &vIdx[2], &vtIdx[2], &vnIdx[2]);
-    if (matches == 9) {
-        // Successfully read vertex, texture, and normal indices.
+// In the second pass we read the face lines and build the indices array.
+// For each face line, we extract the vertex indices (the number before the first '/')
+// and then we reverse the order for each face to correct the winding.
+void process_face_line_indices(const char *line) {
+    char buffer[MAX_LINE];
+    strncpy(buffer, line, MAX_LINE);
+    buffer[MAX_LINE - 1] = '\0';
+    
+    // Tokenize the line.
+    // The first token should be "f".
+    char *token = strtok(buffer, " \t\r\n");
+    int faceIndices[10]; // support up to 10 vertices per face (usually 3)
+    int count = 0;
+    while ((token = strtok(NULL, " \t\r\n")) != NULL) {
+        // The vertex index is the substring before the first '/'
+        char *slash = strchr(token, '/');
+        if (slash) *slash = '\0';
+        int vi = atoi(token);
+        // Convert OBJ's 1-based index to 0-based.
+        faceIndices[count++] = vi - 1;
+    }
+    // Reverse the order to fix winding.
+    if (count == 3) {
+        indices[indexCount++] = faceIndices[2];
+        indices[indexCount++] = faceIndices[1];
+        indices[indexCount++] = faceIndices[0];
     } else {
-        // Try reading the format with missing texture coordinates.
-        matches = sscanf(line,
-                         "f %d//%d %d//%d %d//%d",
-                         &vIdx[0], &vnIdx[0],
-                         &vIdx[1], &vnIdx[1],
-                         &vIdx[2], &vnIdx[2]);
-        if (matches != 6) {
-            // If we can’t parse either format, exit or handle error.
-            return;
+        // For polygons with more than 3 vertices, use fan triangulation in reversed order.
+        for (int i = 1; i < count - 1; i++) {
+            indices[indexCount++] = faceIndices[count - 1];
+            indices[indexCount++] = faceIndices[i];
+            indices[indexCount++] = faceIndices[i - 1];
         }
-        // Set default texture coordinate indices.
-        vtIdx[0] = vtIdx[1] = vtIdx[2] = 0; // Default value (indicating no UV data).
-    }
-
-    // Process each vertex of the face.
-    for (int i = 0; i < 3; i++) {
-        Vertex temp;
-        // Copy the vertex position from your temporary vertex array.
-        temp.position[0] = temp_vertices[vIdx[i]][0];
-        temp.position[1] = temp_vertices[vIdx[i]][1];
-        temp.position[2] = temp_vertices[vIdx[i]][2];
-
-        // Set texture coordinate.
-        if (vtIdx[i] != 0 && vtIdx[i] < vt_def_count) {
-            temp.uv[0] = temp_uvs[vtIdx[i]][0];
-            temp.uv[1] = temp_uvs[vtIdx[i]][1];
-        } else {
-            // If the texture coordinate index is 0 (or invalid), use a default.
-            temp.uv[0] = 0;
-            temp.uv[1] = 0;
-        }
-
-        // Set the normal from the normals array.
-        if (vnIdx[i] < vn_def_count) {
-            temp.normal[0] = temp_normals[vnIdx[i]][0];
-            temp.normal[1] = temp_normals[vnIdx[i]][1];
-            temp.normal[2] = temp_normals[vnIdx[i]][2];
-        } else {
-            temp.normal[0] = temp.normal[1] = temp.normal[2] = 0;
-        }
-
-        // Default color to 0 (all zeros).
-        memset(temp.color, 0, 3);
-        temp.pad = 0; // ensure pad is set
-
-        int found = find_vertex(&temp);
-        if (found == -1) {
-            if (uniqueVertexCount >= MAX_VERTICES) {
-                fprintf(stderr, "Unique vertex buffer overflow!\n");
-                exit(1);
-            }
-            uniqueVertices[uniqueVertexCount] = temp;
-            found = uniqueVertexCount;
-            uniqueVertexCount++;
-        }
-        indices[indexCount++] = (uint32_t)found;
     }
 }
 
-// Parse an OBJ file.
-void parse_obj_file(const char *filename) {
+// Process all face lines in the OBJ file (second pass).
+void process_faces_in_file(const char *filename) {
     FILE *file = fopen(filename, "r");
     if (!file)
         return;
-
     char line[MAX_LINE];
-    // Allocate temporary arrays.
+    while (fgets(line, sizeof(line), file)) {
+        char *pline = line;
+        while (*pline == ' ' || *pline == '\t') pline++;
+        if (pline[0] == 'f') {
+            process_face_line_indices(pline);
+        }
+    }
+    fclose(file);
+}
+
+// First pass: read the OBJ definitions (v, vt, vn) from the file.
+void read_obj_definitions(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file)
+        return;
+    
+    // Allocate temporary arrays (using 1-based indexing).
     temp_vertices = malloc(MAX_VERTICES * sizeof(*temp_vertices));
-    temp_normals  = malloc(MAX_VERTICES * sizeof(*temp_normals));
-    temp_uvs      = malloc(MAX_VERTICES * sizeof(*temp_uvs));  // Allocate UV array.
-    if (!temp_vertices || !temp_normals || !temp_uvs) {
+    temp_uvs = malloc(MAX_VERTICES * sizeof(*temp_uvs));
+    temp_normals = malloc(MAX_VERTICES * sizeof(*temp_normals));
+    if (!temp_vertices || !temp_uvs || !temp_normals) {
         fprintf(stderr, "Memory allocation failed for temporary arrays.\n");
         fclose(file);
-        free(temp_vertices);
-        free(temp_normals);
-        free(temp_uvs);
         exit(1);
     }
     memset(temp_vertices, 0, MAX_VERTICES * sizeof(*temp_vertices));
-    memset(temp_normals, 0, MAX_VERTICES * sizeof(*temp_normals));
     memset(temp_uvs, 0, MAX_VERTICES * sizeof(*temp_uvs));
-
+    memset(temp_normals, 0, MAX_VERTICES * sizeof(*temp_normals));
     v_def_count = 1;
-    vn_def_count = 1;
     vt_def_count = 1;
-
+    vn_def_count = 1;
+    
+    char line[MAX_LINE];
     while (fgets(line, sizeof(line), file)) {
         char *pline = line;
         while (*pline == ' ' || *pline == '\t') pline++;
@@ -172,6 +171,13 @@ void parse_obj_file(const char *filename) {
                        &temp_vertices[v_def_count][2]);
                 v_def_count++;
             }
+        } else if (strncmp(pline, "vt ", 3) == 0) {
+            if (vt_def_count < MAX_VERTICES) {
+                sscanf(pline, "vt %f %f",
+                       &temp_uvs[vt_def_count][0],
+                       &temp_uvs[vt_def_count][1]);
+                vt_def_count++;
+            }
         } else if (strncmp(pline, "vn ", 3) == 0) {
             if (vn_def_count < MAX_VERTICES) {
                 sscanf(pline, "vn %f %f %f",
@@ -180,24 +186,12 @@ void parse_obj_file(const char *filename) {
                        &temp_normals[vn_def_count][2]);
                 vn_def_count++;
             }
-        } else if (strncmp(pline, "vt ", 3) == 0) {  // Added texture coordinate support.
-            if (vt_def_count < MAX_VERTICES) {
-                sscanf(pline, "vt %f %f",
-                       &temp_uvs[vt_def_count][0],
-                       &temp_uvs[vt_def_count][1]);
-                vt_def_count++;
-            }
-        } else if (pline[0] == 'f') {
-            process_face_line(pline);
         }
     }
     fclose(file);
-    free(temp_vertices);
-    free(temp_normals);
-    free(temp_uvs);
 }
 
-// Write the binary mesh file (header, vertices, indices) to disk.
+// Write the binary file (header, unique vertices, indices) to disk.
 void write_mesh_binary(const char *binFilename) {
     MeshHeader header;
     header.vertexCount = uniqueVertexCount;
@@ -216,7 +210,7 @@ void write_mesh_binary(const char *binFilename) {
     fclose(file);
 }
 
-// Read back the binary mesh file and print summary info.
+// Read back the binary file and print summary info.
 void read_mesh_binary(const char *binFilename) {
     FILE *file = fopen(binFilename, "rb");
     if (!file) {
@@ -257,7 +251,7 @@ void make_bin_filename(const char *objFilename, char *binFilename, size_t size) 
     if (!base)
         base = strrchr(objFilename, '/');
     if (base)
-        base++; // skip separator
+        base++;
     else
         base = objFilename;
     snprintf(binFilename, size, "%s", base);
@@ -290,13 +284,29 @@ void process_directory(const char *dirPath) {
         } else {
             char *ext = strrchr(findFileData.cFileName, '.');
             if (ext && (_stricmp(ext, ".obj") == 0)) {
+                // Reset global state.
                 uniqueVertexCount = 0;
                 indexCount = 0;
-                parse_obj_file(fullPath);
+                
+                // First pass: read definitions.
+                read_obj_definitions(fullPath);
+                // Build unique vertices exactly in the order of v lines.
+                build_unique_vertices();
+                // Second pass: process face lines to build the index array.
+                process_faces_in_file(fullPath);
+                
+                // Create the binary filename.
                 char binBase[MAX_PATH_LEN];
-                make_bin_filename(findFileData.cFileName, binBase, sizeof(binBase));
+                make_bin_filename(fullPath, binBase, sizeof(binBase));
+                // We want only the base name in the output folder.
+                const char *baseName = strrchr(binBase, '\\');
+                if (baseName)
+                    baseName++; // skip the backslash
+                else
+                    baseName = binBase;
                 char finalBinFilename[MAX_PATH_LEN];
-                snprintf(finalBinFilename, sizeof(finalBinFilename), "meshes\\%s", binBase);
+                snprintf(finalBinFilename, sizeof(finalBinFilename), "meshes\\%s", baseName);
+                
                 write_mesh_binary(finalBinFilename);
                 printf("Processed %s -> %s\n", fullPath, finalBinFilename);
                 read_mesh_binary(finalBinFilename);
@@ -308,7 +318,6 @@ void process_directory(const char *dirPath) {
 }
 
 int main(void) {
-    // Create the output folder "meshes" if it doesn't exist.
     _mkdir("meshes");
     process_directory(".");
     return 0;

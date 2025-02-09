@@ -25,7 +25,7 @@ struct VertexOutput {
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.pos = vec4<f32>(input.position + input.instanceOffset, 1.0) * uniforms.camera;
+    output.pos = vec4<f32>(input.position * 100.0 + input.instanceOffset, 1.0) * uniforms.camera;
     output.pos = output.pos * uniforms.view;
     output.pos.z = 0.5f;
     // output.color.y = output.pos.z;
