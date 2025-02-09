@@ -311,46 +311,34 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                     return 0;
                 }
 
-                // Print active keys
+                // Print active keys; side up forward yaw pitch roll
                 if (isPressed) {
                     char msg[32];
-                    if (virtualKey == 'Z') {
-                        cameraspeed[2] = -0.2f;
+                    if (virtualKey == 'Z' || virtualKey == VK_UP) {
+                        cameraspeed[2] = -0.5f;
                     }
-                    if (virtualKey == 'S') {
-                        cameraspeed[2] = 0.2f;
+                    if (virtualKey == 'S' || virtualKey == VK_DOWN) {
+                        cameraspeed[2] = 0.5f;
                     }
-                    if (virtualKey == 'Q') {
-                        cameraspeed[0] = -0.2f;
+                    if (virtualKey == 'Q' || virtualKey == VK_LEFT) {
+                        cameraspeed[0] = -0.5f;
                     }
-                    if (virtualKey == 'D') {
-                        cameraspeed[0] = 0.2f;
-                    }
-                    if (virtualKey == 'E') {
-                        cameraspeed[3] = -0.004f;
-                    }
-                    if (virtualKey == 'A') {
-                        cameraspeed[3] = 0.004f;
+                    if (virtualKey == 'D' || virtualKey == VK_RIGHT) {
+                        cameraspeed[0] = 0.5f;
                     }
                 }
                 else if (!isPressed) {
-                    if (virtualKey == 'Z') {
+                    if (virtualKey == 'Z' || virtualKey == VK_UP) {
                         cameraspeed[2] = 0.0f;
                     }
-                    if (virtualKey == 'S') {
+                    if (virtualKey == 'S' || virtualKey == VK_DOWN) {
                         cameraspeed[2] = 0.0f;
                     }
-                    if (virtualKey == 'Q') {
+                    if (virtualKey == 'Q' || virtualKey == VK_LEFT) {
                         cameraspeed[0] = 0.0f;
                     }
-                    if (virtualKey == 'D') {
+                    if (virtualKey == 'D' || virtualKey == VK_RIGHT) {
                         cameraspeed[0] = 0.0f;
-                    }
-                    if (virtualKey == 'E') {
-                        cameraspeed[3] = 0.0f;
-                    }
-                    if (virtualKey == 'A') {
-                        cameraspeed[3] = 0.0f;
                     }
                 }
             }
@@ -363,6 +351,15 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 // Handle mouse movement and button clicks
             }
             free(lpb); // Free allocated memory
+            break;
+        }
+        case WM_MOUSEMOVE: {
+            // Reset cursor to center every frame
+            RECT rect;
+            GetClientRect(hWnd, &rect);
+            POINT center = { (rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2 };
+            ClientToScreen(hWnd, &center);
+            SetCursorPos(center.x, center.y);
             break;
         }
         case WM_CLOSE:
@@ -537,6 +534,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int y = (screen.bottom - height) / 2;
 
     SetWindowPos(hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_SHOWWINDOW);
+    ShowCursor(FALSE);
 
     print_time_since_startup("Setup window");
 
