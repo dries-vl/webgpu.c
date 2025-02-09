@@ -1,9 +1,5 @@
 // webgpu.c
 // ----------------------------
-// NOTE: This file now uses stb_image to load PNG files.
-#define STBI_NO_SIMD  // Disable SSE/AVX intrinsics (doesn't work with TCC)
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
 
 #include <windows.h>
 #include <assert.h>
@@ -563,6 +559,60 @@ void wgpuSetUniformValue(int pipelineID, int offset, const void* data, int dataS
 }
 
 // -----------------------------------------------------------------------------
+typedef struct {
+    int width;
+    int height;
+} ImageHeader;
+typedef struct {
+    void* data;     // Pointer to RGBA pixel data
+    HANDLE mapping; // Handle to the file mapping
+} MappedTexture;
+MappedTexture load_binary_texture(const char* filename, int* out_width, int* out_height) {
+    MappedTexture result = {NULL, NULL}; // Initialize result struct
+
+    HANDLE hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        printf("Failed to open file: %s\n", filename);
+        return result;
+    }
+
+    HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+    CloseHandle(hFile); // Safe to close the file handle now
+    if (!hMapping) {
+        printf("Failed to create file mapping for: %s\n", filename);
+        return result;
+    }
+
+    void* file_data = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+    if (!file_data) {
+        printf("Failed to map file: %s\n", filename);
+        CloseHandle(hMapping);
+        return result;
+    }
+
+    // Read header
+    ImageHeader* header = (ImageHeader*)file_data;
+    *out_width = header->width;
+    *out_height = header->height;
+
+    // Set the mapped texture result
+    result.data = (unsigned char*)file_data + sizeof(ImageHeader);
+    result.mapping = hMapping; // Keep track of mapping handle for later cleanup
+
+    return result;
+}
+// Function to release the memory-mapped texture
+void free_binary_texture(MappedTexture* texture) {
+    if (texture->data) {
+        UnmapViewOfFile((unsigned char*)texture->data - sizeof(ImageHeader)); // Restore original mapping pointer
+    }
+    if (texture->mapping) {
+        CloseHandle(texture->mapping);
+    }
+    texture->data = NULL;
+    texture->mapping = NULL;
+}
 // wgpuAddTexture: Load a PNG file and add it to the pipeline’s texture bind group.
 int wgpuAddTexture(int pipelineID, const char* filename) {
     PipelineData* pd = &g_wgpu.pipelines[pipelineID];
@@ -570,16 +620,12 @@ int wgpuAddTexture(int pipelineID, const char* filename) {
         fprintf(stderr, "No more texture slots!\n");
         return -1;
     }
-    int slot = pd->textureCount; // e.g. 0 => binding=1, 1 => binding=2, etc.
+    int slot = pd->textureCount; // e.g. 0 => binding=1, etc.
 
-    // Load from disk using stb_image
-    int w,h,channels;
-    unsigned char* data = stbi_load(filename, &w, &h, &channels, STBI_rgb_alpha);
-    if (!data) {
-        fprintf(stderr, "Failed to load %s\n", filename);
-        return -1;
-    }
-    // Create texture
+    int w, h;
+    MappedTexture texture_data = load_binary_texture(filename, &w, &h);
+
+    // Create texture with the given dimensions and RGBA format.
     WGPUTextureDescriptor td = {0};
     td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
     td.dimension = WGPUTextureDimension_2D;
@@ -591,15 +637,16 @@ int wgpuAddTexture(int pipelineID, const char* filename) {
     td.sampleCount   = 1;
     WGPUTexture tex = wgpuDeviceCreateTexture(g_wgpu.device, &td);
 
-    // Upload data
+    // Upload the pixel data.
     WGPUImageCopyTexture ict = {0};
     ict.texture = tex;
     WGPUTextureDataLayout tdl = {0};
-    tdl.bytesPerRow   = 4 * w;
-    tdl.rowsPerImage  = h;
-    WGPUExtent3D ext = {(uint32_t)w,(uint32_t)h,1};
-    wgpuQueueWriteTexture(g_wgpu.queue, &ict, data, (size_t)(4*w*h), &tdl, &ext);
-    stbi_image_free(data);
+    tdl.bytesPerRow  = 4 * w; // 4 bytes per pixel (RGBA)
+    tdl.rowsPerImage = h;
+    WGPUExtent3D ext = { .width = (uint32_t)w, .height = (uint32_t)h, .depthOrArrayLayers = 1 };
+    wgpuQueueWriteTexture(g_wgpu.queue, &ict, texture_data.data, (size_t)(4 * w * h), &tdl, &ext);
+
+    free_binary_texture(&texture_data);
 
     // Create view
     WGPUTextureView view = wgpuTextureCreateView(tex, NULL);
@@ -676,8 +723,6 @@ void wgpuDrawPipeline(int pipelineID) {
         if (g_wgpu.meshes[i].used && g_wgpu.meshes[i].pipelineID == pipelineID) {
             // For pipeline where we need to update the instance data every frame, we need to write it to gpu memory again
             if (pd->material->update_instances) {
-                printf("instances gpu: %d\n", g_wgpu.meshes[i].instanceCount);
-                printf("instances cpu: %d\n", g_wgpu.meshes[i].mesh->instanceCount);
                 g_wgpu.meshes[i].instanceCount = g_wgpu.meshes[i].mesh->instanceCount;
                 size_t instanceDataSize = sizeof(struct Instance) * g_wgpu.meshes[i].instanceCount;
                 wgpuQueueWriteBuffer(g_wgpu.queue, g_wgpu.meshes[i].instanceBuffer, 0, g_wgpu.meshes[i].mesh->instances, instanceDataSize);
@@ -697,7 +742,7 @@ void fenceCallback(WGPUQueue inQueue, void* userdata, WGPUQueueWorkDoneStatus st
     *done = true;
 }
 // Simple fence/wait function that blocks until the GPU is done with submitted work.
-void fenceAndWait(WGPUQueue queue) {
+float fenceAndWait(WGPUQueue queue) {
     volatile bool workDone = false;
 
     // Request notification when the GPU work is done.
@@ -718,13 +763,13 @@ void fenceAndWait(WGPUQueue queue) {
     QueryPerformanceCounter(&new_tick_count);
     long ticks_elapsed = new_tick_count.QuadPart - current_tick_count.QuadPart;
     current_tick_count = new_tick_count;
-    float ms_last_frame = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
-    printf("Waited on gpu for %4.2fms\n", ms_last_frame);
+    float ms_waited_on_gpu = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
+    return ms_waited_on_gpu;
 }
 
 // -----------------------------------------------------------------------------
 // wgpuEndFrame: End the frame, submit commands, and present.
-void wgpuEndFrame() {
+float wgpuEndFrame() {
     if (!g_currentPass)
         return;
     wgpuRenderPassEncoderEnd(g_currentPass);
@@ -738,7 +783,7 @@ void wgpuEndFrame() {
     // todo: can we use the fence somehow in main loop to reduce latency on inputs etc. (?)
     // todo: does this reduce latency (?)
     // OPTIONAL DEBUG CODE, just to see fps timings etc.
-    fenceAndWait(g_wgpu.queue);
+    float ms_waited_on_gpu = fenceAndWait(g_wgpu.queue);
 
     wgpuCommandBufferRelease(cmdBuf);
     wgpuSurfacePresent(g_wgpu.surface);
@@ -746,6 +791,8 @@ void wgpuEndFrame() {
     g_currentView = NULL;
     wgpuTextureRelease(g_currentSurfaceTexture.texture);
     g_currentSurfaceTexture.texture = NULL;
+
+    return ms_waited_on_gpu;
 }
 
 // -----------------------------------------------------------------------------

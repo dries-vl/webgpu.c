@@ -6,4 +6,3 @@
 *.lib
 *.wasm
 *.ttf
-stb_image.h

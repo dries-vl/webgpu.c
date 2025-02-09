@@ -14,7 +14,7 @@ extern void  wgpuSetUniformValue(int pipelineID, int uniformOffset, const void* 
 extern int   wgpuAddTexture(int pipelineID, const char* texturePath);
 extern void  wgpuStartFrame();
 extern void  wgpuDrawPipeline(int pipelineID);
-extern void  wgpuEndFrame();
+extern float  wgpuEndFrame();
 
 static bool g_Running = true;
 float fov = 3.14f / 4.0f; // 45 degrees
@@ -390,7 +390,7 @@ void set_fullscreen(HWND hwnd, int width, int height, int refreshRate) {
     SetWindowPos(hwnd, HWND_TOP, 0, 0, width, height, SWP_FRAMECHANGED);
 }
 
-#define CHAR_WIDTH_SCREEN 48 * 2
+#define CHAR_WIDTH_SCREEN 48 * 2 // todo: avoid difference with same const in shader code...
 #define CHAR_HEIGHT_SCREEN 24 * 2
 #define MAX_CHAR_ON_SCREEN 48 * 24 * 2
 struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {0};
@@ -410,15 +410,87 @@ void print_on_screen(char *str) {
         quad_mesh.instanceCount = screen_chars_index;
     }
 }
+struct debug_info {
+    LARGE_INTEGER query_perf_result;
+	long ticks_per_second;
+    LARGE_INTEGER current_tick_count;
+    long current_cycle_count;
+    float ms_last_60_frames[60]; 
+    int ms_index; 
+    int avg_count; 
+    float count;
+    float ms_last_frame;
+    float ms_waited_on_gpu;
+};
+static struct debug_info debug_info = {0};
+void init_debug_info() {
+	QueryPerformanceFrequency(&debug_info.query_perf_result);
+	debug_info.ticks_per_second = debug_info.query_perf_result.QuadPart;
+    QueryPerformanceCounter(&debug_info.current_tick_count);
+    debug_info.current_cycle_count = read_cycle_count();
+    memset(debug_info.ms_last_60_frames, 0, sizeof(debug_info.ms_last_60_frames));
+    debug_info.ms_index = 0;
+    debug_info.avg_count = 60; 
+    debug_info.count = 0.0;
+    debug_info.ms_last_frame = 0.0f;
+    debug_info.ms_waited_on_gpu = 0.0f;
+}
+void draw_debug_info() {
+    // todo: way to not have any of the debug HUD and fps and timing code at all when not in debug mode
+    // todo: create a function that we can use as oneliner measuring timing here
+    // todo: -> game loop time -> cpu to gpu commands time -> gpu time -> total time (and see if those three add up to total or not)
+    // todo: isolate out the exact time we spend inside the loop iteration itself to see the actual CPU time
+    // todo: use this cpu time to measure how much time we lose waiting on the GPU (?) ~eg. know if the GPU is the bottleneck or not
+    // todo: isolate out the exact time from StartFrame to EndFrame to know how much CPU time gets spent on setting up gpu commands; draw calls etc.
+    LARGE_INTEGER new_tick_count;
+    QueryPerformanceCounter(&new_tick_count);
+    long ticks_elapsed = new_tick_count.QuadPart - debug_info.current_tick_count.QuadPart;
+    debug_info.current_tick_count = new_tick_count;
+
+    long new_cycle_count = read_cycle_count();
+    long cycles_elapsed = new_cycle_count - debug_info.current_cycle_count;
+    int cycles_last_frame = (int) cycles_elapsed / 1000000; // million cycles per frame
+    debug_info.current_cycle_count = new_cycle_count;
+
+    debug_info.ms_last_frame = ((float) (1000*ticks_elapsed) / (float) debug_info.ticks_per_second);
+    int fps = debug_info.ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
+    // todo: render in bitmap font to screen instead of printf IO
+    char perf_output_string[256];
+    snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s,  %4.2fgpu-ms/f\n", debug_info.ms_last_frame, fps, debug_info.ms_waited_on_gpu);
+    print_on_screen(perf_output_string);
+    printf(perf_output_string);
+    debug_info.count += debug_info.ms_last_frame - debug_info.ms_last_60_frames[debug_info.ms_index];
+    debug_info.ms_last_60_frames[debug_info.ms_index] = debug_info.ms_last_frame;
+    debug_info.ms_index = (debug_info.ms_index + 1) % debug_info.avg_count;
+    char perf_avg_string[256];
+    snprintf(perf_avg_string, sizeof(perf_avg_string), "Average frame timing last %d frames: %4.2fms\n", debug_info.avg_count, debug_info.count / (float) debug_info.avg_count);
+    print_on_screen(perf_avg_string);
+}
+void print_time_since_startup(LARGE_INTEGER tick_count_at_startup, long ticks_per_second) {
+    LARGE_INTEGER new_tick_count;
+    QueryPerformanceCounter(&new_tick_count);
+    long ticks_elapsed = new_tick_count.QuadPart - tick_count_at_startup.QuadPart;
+    tick_count_at_startup = new_tick_count;
+    float ms_since_startup = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
+    
+}
 
 typedef HRESULT (WINAPI *SetProcessDpiAwareness_t)(int);
-#define PROCESS_PER_MONITOR_DPI_AWARE 2  // Define missing constant
-#define WINDOW_WIDTH 1920
-#define WINDOW_HEIGHT 1080
+#define PROCESS_PER_MONITOR_DPI_AWARE 2
+#define WINDOW_WIDTH 1200 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
+#define WINDOW_HEIGHT 800
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
-    
+
+    // ----- TEMP TO CHECK STARTUP SPEED -----
+    LARGE_INTEGER query_perf_result;
+	QueryPerformanceFrequency(&query_perf_result);
+	long ticks_per_second = query_perf_result.QuadPart;
+    LARGE_INTEGER tick_count_at_startup;
+    QueryPerformanceCounter(&tick_count_at_startup);
+    // ----------------------------------------
+
     WNDCLASSEX wc = {0};
     wc.cbSize = sizeof(WNDCLASSEX);
     wc.style = CS_OWNDC;
@@ -463,13 +535,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     SetWindowPos(hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_SHOWWINDOW);
 
+    // ----- TIME TO SET UP WINDOW -----
+    // ----------------------------------
+
     load_raw_input_functions();
     InitializeRawInput();
     
     wgpuInit(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
     
-    // Create a pipeline.
-    // The shader (shader.wgsl) must declare a uniform block (group0) and texture struct (group1).
     // todo: use precompiled shader for faster loading
     // todo: use glsl instead of wgsl for C-style syntax
     struct Material basic_material = (struct Material) { 
@@ -477,12 +550,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         .use_alpha=0, .use_textures=1, .use_uniforms=1, .update_instances=0};
     int basic_pipeline_id = wgpuCreatePipeline(&basic_material);
     
-    // Create a mesh.
-    // Note: vertices now include UV coordinates.
     struct Mesh teapot_mesh = read_mesh_binary("data/models/meshes/teapot.bin");
     int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
 
-    // todo: add HUD with bitmap font for fps printouts instead of console
     struct vert2 quad_vertices[4] = {
         quad_vertices[0] = (struct vert2) {.position={0.0, 1.0}, .uv={0.0, 1.0}},
         quad_vertices[1] = (struct vert2) {.position={1.0, 1.0}, .uv={1.0, 1.0}},
@@ -502,19 +572,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     };
     int hud_pipeline_id = wgpuCreatePipeline(&hud_material);
     int quad_mesh_id = wgpuCreateMesh(hud_pipeline_id, &quad_mesh);
-    // todo: load in uncompressed textures as fast as possible (as binary array?) instead of decompressing png at startup
-    int font_atlas_texture_slot = wgpuAddTexture(hud_pipeline_id, "data/textures/font_atlas.png");
+    // todo: load in uncompressed textures and font atlasses as fast as possible (as binary array?) instead of decompressing png at startup
+    int font_atlas_texture_slot = wgpuAddTexture(hud_pipeline_id, "data/textures/bin/font_atlas.bin");
     int aspect_ratio_uniform = wgpuAddUniform(hud_pipeline_id, &aspect_ratio, sizeof(float));
     
-    // Add uniforms. For example, add a brightness value (a float).
     float brightness = 1.0f;
     int brightnessOffset = wgpuAddUniform(basic_pipeline_id, &brightness, sizeof(float));
-
-    // Optionally, add a time uniform.
     float timeVal = 0.0f;
     int timeOffset = wgpuAddUniform(basic_pipeline_id, &timeVal, sizeof(float));
-    
-    // Add a camera transform (a 4x4 matrix).  
     int cameraOffset = wgpuAddUniform(basic_pipeline_id, camera, sizeof(camera));
     
     // Add a projection matrix (a 4x4 matrix).  
@@ -527,19 +592,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int viewOffset = wgpuAddUniform(basic_pipeline_id, view, sizeof(view));
 
     // --- Add a texture to the pipeline ---
-    int texSlot1 = wgpuAddTexture(basic_pipeline_id, "data/textures/texture_1.png");
-    int texSlot2 = wgpuAddTexture(basic_pipeline_id, "data/textures/texture_2.png");
+    int texSlot1 = wgpuAddTexture(basic_pipeline_id, "data/textures/bin/texture_1.bin");
+    int texSlot2 = wgpuAddTexture(basic_pipeline_id, "data/textures/bin/texture_2.bin");
     
-    // Variables to keep track of performance
-    LARGE_INTEGER query_perf_result;
-	QueryPerformanceFrequency(&query_perf_result);
-	long ticks_per_second = query_perf_result.QuadPart;
-    LARGE_INTEGER current_tick_count;
-    QueryPerformanceCounter(&current_tick_count);
-    long current_cycle_count = read_cycle_count();
-    float ms_last_60_frames[60] = {0}; int ms_index = 0; int avg_count = 60; float count = 0.0;
-    float ms_last_frame = 1.0f;
     // Main loop
+    init_debug_info();
     while (g_Running) {
         MSG msg;
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -555,7 +612,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         // Update uniforms
         timeVal += 0.016f; // pretend 16ms per frame
         //yaw(0.001f * ms_last_frame, camera);
-        cameraMovement(camera, cameraspeed, ms_last_frame);
+        cameraMovement(camera, cameraspeed, debug_info.ms_last_frame);
         float inv[16];
         inverseViewMatrix(camera, inv);
         wgpuSetUniformValue(basic_pipeline_id, timeOffset, &timeVal, sizeof(float));
@@ -568,7 +625,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         wgpuStartFrame();
         wgpuDrawPipeline(basic_pipeline_id);
         wgpuDrawPipeline(hud_pipeline_id);
-        wgpuEndFrame();
+        debug_info.ms_waited_on_gpu = wgpuEndFrame();
         
         // todo: create a central place for things that need to happen to initialize every frame iteration correctly
         // Set the printed chars to 0 to reset the text in the HUD
@@ -577,37 +634,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         quad_mesh.instanceCount = screen_chars_index;
         memset(screen_chars, 0, sizeof(screen_chars));
 
-        // todo: way to not have any of the debug HUD and fps and timing code at all when not in debug mode
-        // todo: create a function that we can use as oneliner measuring timing here
-        // todo: -> game loop time -> cpu to gpu commands time -> gpu time -> total time (and see if those three add up to total or not)
-        // todo: isolate out the exact time we spend inside the loop iteration itself to see the actual CPU time
-        // todo: use this cpu time to measure how much time we lose waiting on the GPU (?) ~eg. know if the GPU is the bottleneck or not
-        // todo: isolate out the exact time from StartFrame to EndFrame to know how much CPU time gets spent on setting up gpu commands; draw calls etc.
-        {
-            LARGE_INTEGER new_tick_count;
-            QueryPerformanceCounter(&new_tick_count);
-            long ticks_elapsed = new_tick_count.QuadPart - current_tick_count.QuadPart;
-            current_tick_count = new_tick_count;
-
-            long new_cycle_count = read_cycle_count();
-            long cycles_elapsed = new_cycle_count - current_cycle_count;
-            int cycles_last_frame = (int) cycles_elapsed / 1000000; // million cycles per frame
-            current_cycle_count = new_cycle_count;
-
-            ms_last_frame = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
-            int fps = ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
-            // todo: render in bitmap font to screen instead of printf IO
-            char perf_output_string[256];
-            snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s,  %dmc/f\n", ms_last_frame, fps, cycles_last_frame);
-            printf(perf_output_string);
-            print_on_screen(perf_output_string);
-            count += ms_last_frame - ms_last_60_frames[ms_index];
-            ms_last_60_frames[ms_index] = ms_last_frame;
-            ms_index = (ms_index + 1) % avg_count;
-            char perf_avg_string[256];
-            snprintf(perf_avg_string, sizeof(perf_avg_string), "Average frame timing last %d frames: %4.2fms\n", avg_count, count / (float) avg_count);
-            print_on_screen(perf_avg_string);
-        }
+        draw_debug_info();
     }
     
     return 0;
