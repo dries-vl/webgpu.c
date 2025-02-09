@@ -20,7 +20,9 @@ static bool g_Running = true;
 float fov = 3.14f / 4.0f; // 45 degrees
 float farClip = 2000.0f;
 float nearClip = 1.0f;
-float AR = 800.0f / 600.0f; // aspect ratio
+#define WINDOW_WIDTH 1200
+#define WINDOW_HEIGHT 800
+float AR = (float)WINDOW_HEIGHT / (float)WINDOW_WIDTH; // Aspect ratio
 
 struct Vector3 {
     float x, y, z;
@@ -371,8 +373,6 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
     return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
-#define WINDOW_WIDTH 1200
-#define WINDOW_HEIGHT 800
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
