@@ -565,6 +565,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     print_time_since_startup("Load teapot binary mesh");
     
     struct Mesh ground_mesh = read_mesh_binary("data/models/meshes/ground.bin");
+    struct Instance ground = {100.0f, 0.0f, 100.0f};
+    set_instances(&ground_mesh, &ground, 1);
     int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
 
     struct vert2 quad_vertices[4] = {
