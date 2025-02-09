@@ -33,7 +33,6 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     return output;
 }
 
-// Group 1: Textures
 @group(1) @binding(0)
 var textureSampler: sampler;
 @group(1) @binding(1)
