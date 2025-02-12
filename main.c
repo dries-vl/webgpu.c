@@ -7,13 +7,13 @@
 #include <math.h>
 
 extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
-extern int   wgpuCreatePipeline(struct Material *material);
-extern int   wgpuCreateMesh(int pipelineID, struct Mesh *mesh);
-extern int   wgpuAddUniform(int pipelineID, const void* data, int dataSize);
-extern void  wgpuSetUniformValue(int pipelineID, int uniformOffset, const void* data, int dataSize);
-extern int   wgpuAddTexture(int pipelineID, const char* texturePath);
+extern int   wgpuCreateMaterial(struct Material *material);
+extern int   wgpuCreateMesh(int materialID, struct Mesh *mesh);
+extern int   wgpuAddUniform(int materialID, const void* data, int dataSize);
+extern void  wgpuSetUniformValue(int materialID, int uniformOffset, const void* data, int dataSize);
+extern int   wgpuAddTexture(int materialID, const char* texturePath);
 extern void  wgpuStartFrame();
-extern void  wgpuDrawPipeline(int pipelineID);
+extern void  wgpuDrawMaterial(int materialID);
 extern float  wgpuEndFrame();
 
 static bool g_Running = true;
@@ -636,7 +636,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // todo: create a 'floor' quad mesh to use as orientation and for shadows etc.
     // todo: lighting
     // todo: cubemap sky
-    // todo: LOD: how to most efficiently swap out the mesh with a lower/higher res one? swap instances with other pipeline (?)
+    // todo: LOD: how to most efficiently swap out the mesh with a lower/higher res one? swap instances with other material (?)
     // todo: character mesh
     // todo: animate the character mesh (skeleton?)
     
@@ -645,9 +645,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     struct Material basic_material = (struct Material) {
         .vertex_layout=STANDARD_LAYOUT, .shader="data/shaders/shader.wgsl", .texture_layout=STANDARD_FOUR_TEXTURES,
         .use_alpha=0, .use_textures=1, .use_uniforms=1, .update_instances=0};
-    int basic_pipeline_id = wgpuCreatePipeline(&basic_material);
+    int basic_material_id = wgpuCreateMaterial(&basic_material);
 
-    print_time_since_startup("Create basic pipeline");
+    print_time_since_startup("Create basic material");
 
     // create ground mesh
     struct Vertex ground_verts[4] = {0};
@@ -664,8 +664,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ground_mesh.vertices = ground_verts;
     ground_mesh.instanceCount = 1;
     ground_mesh.instances = (struct Instance[1]) {(struct Instance) {.position={0., 0., 0.}}};
-    // todo: manipulate bindgroups for textures to have one pipeline for meshes with a different texture
-    int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
+    // todo: manipulate bindgroups for textures to have one material for meshes with a different texture
+    int ground_mesh_id = wgpuCreateMesh(basic_material_id, &ground_mesh);
     int texSlot2 = wgpuAddTexture(ground_mesh_id, "data/textures/bin/texture_2.bin");
     
     // load teapot mesh
@@ -674,14 +674,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     struct Instance instance2 = {0.0f, 80.0f, 0.0f};
     struct Instance instances[2] = {instance1, instance2};
     set_instances(&teapot_mesh, instances, 2);
-    int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
+    int teapot_mesh_id = wgpuCreateMesh(basic_material_id, &teapot_mesh);
     print_time_since_startup("Load teapot binary mesh");
     
     // load cube mesh
     struct Mesh cube_mesh = read_mesh_binary("data/models/bin/ground.bin");
     struct Instance cube = {0.0f, 0.0f, 0.0f};
     set_instances(&cube_mesh, &cube, 1);
-    int cube_mesh_id = wgpuCreateMesh(basic_pipeline_id, &cube_mesh);
+    int cube_mesh_id = wgpuCreateMesh(basic_material_id, &cube_mesh);
 
     // create hud mesh
     struct vert2 quad_vertices[4] = {
@@ -701,18 +701,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         .vertex_layout=HUD_LAYOUT, .shader="data/shaders/hud.wgsl", .texture_layout=STANDARD_FOUR_TEXTURES,
         .use_alpha=1, .use_textures=1, .use_uniforms=1, .update_instances=1
     };
-    int hud_pipeline_id = wgpuCreatePipeline(&hud_material);
-    int quad_mesh_id = wgpuCreateMesh(hud_pipeline_id, &quad_mesh);
+    int hud_material_id = wgpuCreateMaterial(&hud_material);
+    int quad_mesh_id = wgpuCreateMesh(hud_material_id, &quad_mesh);
     int font_atlas_texture_slot = wgpuAddTexture(quad_mesh_id, "data/textures/bin/font_atlas.bin");
-    print_time_since_startup("Create HUD pipeline");
+    print_time_since_startup("Create HUD material");
 
     // add uniforms
-    int aspect_ratio_uniform = wgpuAddUniform(hud_pipeline_id, &aspect_ratio, sizeof(float));
+    int aspect_ratio_uniform = wgpuAddUniform(hud_material_id, &aspect_ratio, sizeof(float));
     float brightness = 1.0f;
-    int brightnessOffset = wgpuAddUniform(basic_pipeline_id, &brightness, sizeof(float));
+    int brightnessOffset = wgpuAddUniform(basic_material_id, &brightness, sizeof(float));
     float timeVal = 0.0f;
-    int timeOffset = wgpuAddUniform(basic_pipeline_id, &timeVal, sizeof(float));
-    int cameraOffset = wgpuAddUniform(basic_pipeline_id, camera, sizeof(camera));
+    int timeOffset = wgpuAddUniform(basic_material_id, &timeVal, sizeof(float));
+    int cameraOffset = wgpuAddUniform(basic_material_id, camera, sizeof(camera));
     
     // Add a projection matrix (a 4x4 matrix).  
     float view[16] = {
@@ -721,7 +721,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
     0.0f,  0.0f, -1.0f,                               0.0f
     };
-    int viewOffset = wgpuAddUniform(basic_pipeline_id, view, sizeof(view));
+    int viewOffset = wgpuAddUniform(basic_material_id, view, sizeof(view));
     
     print_time_since_startup("Add textures and uniforms");
     
@@ -748,16 +748,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         camera[7] = cameraLocation[1];
         float inv[16];
         inverseViewMatrix(camera, inv);
-        wgpuSetUniformValue(basic_pipeline_id, timeOffset, &timeVal, sizeof(float));
-        wgpuSetUniformValue(basic_pipeline_id, cameraOffset, &inv, sizeof(camera));
+        wgpuSetUniformValue(basic_material_id, timeOffset, &timeVal, sizeof(float));
+        wgpuSetUniformValue(basic_material_id, cameraOffset, &inv, sizeof(camera));
 
         // Actual frame rendering
         // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure
         // *info* forces the cpu to wait before pushing another frame, bringing the cpu speed down to the gpu speed
         // *info* we can force the cpu to wait regardless by using the fence in wgpuEndFrame()
         wgpuStartFrame();
-        wgpuDrawPipeline(basic_pipeline_id);
-        wgpuDrawPipeline(hud_pipeline_id);
+        wgpuDrawMaterial(basic_material_id);
+        wgpuDrawMaterial(hud_material_id);
         debug_info.ms_waited_on_gpu = wgpuEndFrame();
         
         // todo: create a central place for things that need to happen to initialize every frame iteration correctly

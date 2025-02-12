@@ -57,5 +57,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (in.color.x < 0.1 || in.color.y < 0.1 || in.color.z < 0.1) {
         color = vec3(0.0);
     }
-    return vec4<f32>(texColor1.rgb, 1.0);
+    return vec4<f32>(color.rgb, 1.0);
 }
