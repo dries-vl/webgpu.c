@@ -642,8 +642,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // todo: use precompiled shader for faster loading
     // todo: use glsl instead of wgsl for C-style syntax
-    struct Material basic_material = (struct Material) { 
-        .vertex_layout=STANDARD_VERTEX_LAYOUT, .shader="data/shaders/shader.wgsl",
+    struct Material basic_material = (struct Material) {
+        .vertex_layout=STANDARD_LAYOUT, .shader="data/shaders/shader.wgsl", .texture_layout=STANDARD_FOUR_TEXTURES,
         .use_alpha=0, .use_textures=1, .use_uniforms=1, .update_instances=0};
     int basic_pipeline_id = wgpuCreatePipeline(&basic_material);
 
@@ -698,7 +698,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     quad_mesh.instanceCount = MAX_CHAR_ON_SCREEN;
     quad_mesh.instances = screen_chars;
     struct Material hud_material = (struct Material) {
-        .vertex_layout=HUD_VERTEX_LAYOUT, .shader="data/shaders/hud.wgsl", 
+        .vertex_layout=HUD_LAYOUT, .shader="data/shaders/hud.wgsl", .texture_layout=STANDARD_FOUR_TEXTURES,
         .use_alpha=1, .use_textures=1, .use_uniforms=1, .update_instances=1
     };
     int hud_pipeline_id = wgpuCreatePipeline(&hud_material);
@@ -722,10 +722,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     0.0f,  0.0f, -1.0f,                               0.0f
     };
     int viewOffset = wgpuAddUniform(basic_pipeline_id, view, sizeof(view));
-
-    // --- Add a texture to the pipeline ---
-    // int texSlot1 = wgpuAddTexture(teapot_mesh_id, "data/textures/bin/texture_1.bin");
-
     
     print_time_since_startup("Add textures and uniforms");
     
