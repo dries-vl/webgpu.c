@@ -648,7 +648,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int basic_pipeline_id = wgpuCreatePipeline(&basic_material);
 
     print_time_since_startup("Create basic pipeline");
+
+    // create ground mesh
+    struct Vertex ground_verts[4] = {0};
+    // todo: use meters as basic measurement for everything
+    ground_verts[0] = (struct Vertex) {.position={-10000.0, -10.0, 10000.0}, .color={.5,.5,.5}, .normal={0}, .uv={-1.,1.}};
+    ground_verts[1] = (struct Vertex) {.position={10000.0, -10.0, 10000.0}, .color={.5,.5,.5}, .normal={0}, .uv={1.,1.}};
+    ground_verts[2] = (struct Vertex) {.position={-10000.0, -10.0, -10000.0}, .color={.5,.5,.5}, .normal={0}, .uv={-1.,-1.}};
+    ground_verts[3] = (struct Vertex) {.position={10000.0, -10.0, -10000.0}, .color={.5,.5,.5}, .normal={0}, .uv={1.,-1.}};
+    uint32_t ground_indices[6] = {0,1,2, 1,2,3};
+    struct Mesh ground_mesh = {0};
+    ground_mesh.indexCount = 6;
+    ground_mesh.indices = ground_indices;
+    ground_mesh.vertexCount = 4;
+    ground_mesh.vertices = ground_verts;
+    ground_mesh.instanceCount = 1;
+    ground_mesh.instances = (struct Instance[1]) {(struct Instance) {.position={0., 0., 0.}}};
+    // todo: manipulate bindgroups for textures to have one pipeline for meshes with a different texture
+    int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
+    int texSlot2 = wgpuAddTexture(ground_mesh_id, "data/textures/bin/texture_2.bin");
     
+    // load teapot mesh
     struct Mesh teapot_mesh = read_mesh_binary("data/models/bin/teapot.bin");
     struct Instance instance1 = {0.0f, 0.0f, 0.0f};
     struct Instance instance2 = {0.0f, 80.0f, 0.0f};
@@ -657,11 +677,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int teapot_mesh_id = wgpuCreateMesh(basic_pipeline_id, &teapot_mesh);
     print_time_since_startup("Load teapot binary mesh");
     
-    struct Mesh ground_mesh = read_mesh_binary("data/models/bin/ground.bin");
-    struct Instance ground = {0.0f, 0.0f, 0.0f};
-    set_instances(&ground_mesh, &ground, 1);
-    // int ground_mesh_id = wgpuCreateMesh(basic_pipeline_id, &ground_mesh);
+    // load cube mesh
+    struct Mesh cube_mesh = read_mesh_binary("data/models/bin/ground.bin");
+    struct Instance cube = {0.0f, 0.0f, 0.0f};
+    set_instances(&cube_mesh, &cube, 1);
+    int cube_mesh_id = wgpuCreateMesh(basic_pipeline_id, &cube_mesh);
 
+    // create hud mesh
     struct vert2 quad_vertices[4] = {
         quad_vertices[0] = (struct vert2) {.position={0.0, 1.0}, .uv={0.0, 1.0}},
         quad_vertices[1] = (struct vert2) {.position={1.0, 1.0}, .uv={1.0, 1.0}},
@@ -677,15 +699,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     quad_mesh.instances = screen_chars;
     struct Material hud_material = (struct Material) {
         .vertex_layout=HUD_VERTEX_LAYOUT, .shader="data/shaders/hud.wgsl", 
-        .use_alpha=1, .use_textures=1, .use_uniforms=0, .update_instances=1
+        .use_alpha=1, .use_textures=1, .use_uniforms=1, .update_instances=1
     };
     int hud_pipeline_id = wgpuCreatePipeline(&hud_material);
     int quad_mesh_id = wgpuCreateMesh(hud_pipeline_id, &quad_mesh);
+    int font_atlas_texture_slot = wgpuAddTexture(quad_mesh_id, "data/textures/bin/font_atlas.bin");
     print_time_since_startup("Create HUD pipeline");
 
-    int font_atlas_texture_slot = wgpuAddTexture(hud_pipeline_id, "data/textures/bin/font_atlas.bin");
+    // add uniforms
     int aspect_ratio_uniform = wgpuAddUniform(hud_pipeline_id, &aspect_ratio, sizeof(float));
-    
     float brightness = 1.0f;
     int brightnessOffset = wgpuAddUniform(basic_pipeline_id, &brightness, sizeof(float));
     float timeVal = 0.0f;
@@ -702,8 +724,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int viewOffset = wgpuAddUniform(basic_pipeline_id, view, sizeof(view));
 
     // --- Add a texture to the pipeline ---
-    int texSlot1 = wgpuAddTexture(basic_pipeline_id, "data/textures/bin/texture_1.bin");
-    int texSlot2 = wgpuAddTexture(basic_pipeline_id, "data/textures/bin/texture_2.bin");
+    // int texSlot1 = wgpuAddTexture(teapot_mesh_id, "data/textures/bin/texture_1.bin");
 
     
     print_time_since_startup("Add textures and uniforms");

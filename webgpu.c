@@ -51,27 +51,19 @@ struct Mesh {
 #define UNIFORM_BUFFER_CAPACITY   1024  // bytes per pipeline’s uniform buffer
 #define MAX_TEXTURES              16        // maximum textures per pipeline
 
-// -----------------------------------------------------------------------------
-// Pipeline Data: each pipeline now holds not only a uniform bind group but also a texture bind group.
 typedef struct {
     WGPURenderPipeline pipeline;
     bool               used;
-    struct Material    *material;
-    // Uniform system.
+    struct Material    *material; // todo: reorganize this to have only a material in main.c and no pipeline
+    // uniforms
     WGPUBuffer         uniformBuffer;
     WGPUBindGroup      uniformBindGroup;
     uint8_t            uniformData[UNIFORM_BUFFER_CAPACITY];
     int                uniformCurrentOffset;
-    // --- NEW TEXTURE DATA ---
-    WGPUBindGroup      textureBindGroup;
-    WGPUSampler        textureSampler;
-    WGPUTexture        textureObjects[MAX_TEXTURES];
-    WGPUTextureView    textureViews[MAX_TEXTURES];
-    int                textureCount;
+    // textures
+    WGPUSampler        textureSampler; // sampler for textures reused between meshes
 } PipelineData;
 
-// -----------------------------------------------------------------------------
-// Mesh Data now holds both a vertex buffer and an index buffer.
 typedef struct {
     bool       used;
     int        pipelineID;
@@ -79,12 +71,16 @@ typedef struct {
 
     WGPUBuffer vertexBuffer;
     int        vertexCount;
-
-    WGPUBuffer indexBuffer;   // NEW: index buffer for drawing with indices.
+    WGPUBuffer indexBuffer;
     int        indexCount;
-
     WGPUBuffer instanceBuffer;  // buffer with per-instance data
     int        instanceCount;   // number of instances
+    
+    // texture data
+    WGPUBindGroup      textureBindGroup;
+    WGPUTexture        textureObjects[MAX_TEXTURES];
+    WGPUTextureView    textureViews[MAX_TEXTURES];
+    int                textureCount; // keep track of max amount of textures allowed (set per pipeline)
 } MeshData;
 
 // -----------------------------------------------------------------------------
@@ -189,8 +185,9 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         texEntries[0].sampler.type = WGPUSamplerBindingType_Filtering;
 
         // 16 texture bindings
+        // todo: why is every texture hardcoded to be the same, what if we want another type?
         for (int i = 0; i < MAX_TEXTURES; i++) {
-            texEntries[i+1].binding = i + 1;  // i+1
+            texEntries[i+1].binding = i + 1;  // start at 1 because 0 is the sampler
             texEntries[i+1].visibility = WGPUShaderStage_Fragment;
             texEntries[i+1].texture.sampleType = WGPUTextureSampleType_Float;
             texEntries[i+1].texture.viewDimension = WGPUTextureViewDimension_2D;
@@ -203,9 +200,9 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         free(texEntries);
     }
 
-    // 3) Create a 1×1 white texture for empty texture slots
+    // 3) Create a 1×1 texture for empty texture slots
     {
-        uint8_t whitePixel[4] = {255,255,255,255};
+        uint8_t whitePixel[4] = {127,127,127,255};
         WGPUTextureDescriptor td = {0};
         td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
         td.dimension = WGPUTextureDimension_2D;
@@ -399,7 +396,6 @@ int wgpuCreatePipeline(struct Material *material) {
     g_wgpu.pipelines[pipelineID].uniformBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &uBgDesc);
     
     // Create a sampler
-    PipelineData *pd = &g_wgpu.pipelines[pipelineID];
     WGPUSamplerDescriptor samplerDesc = {0};
     samplerDesc.minFilter = WGPUFilterMode_Linear;
     samplerDesc.magFilter = WGPUFilterMode_Linear;
@@ -410,40 +406,7 @@ int wgpuCreatePipeline(struct Material *material) {
     samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
     samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
     samplerDesc.addressModeW = WGPUAddressMode_ClampToEdge;
-    pd->textureSampler = wgpuDeviceCreateSampler(g_wgpu.device, &samplerDesc);
-
-    // Initialize all textures to default
-    pd->textureCount = 0;
-    for (int i=0; i<MAX_TEXTURES; i++) {
-        pd->textureObjects[i] = NULL;  // will fill later
-        pd->textureViews[i]   = g_defaultTextureView;
-    }
-
-    // Create the initial texture bind group
-    {
-        // We'll have 1 + 16 = 17 entries
-        int totalEntries = 1 + MAX_TEXTURES;
-        WGPUBindGroupEntry *entries = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
-        // Sampler at binding=0
-        entries[0].binding = 0;
-        entries[0].sampler = pd->textureSampler;
-        // 16 textures at binding=1..16
-        for (int i=0; i<MAX_TEXTURES; i++) {
-            entries[i+1].binding = i + 1;
-            entries[i+1].textureView = pd->textureViews[i];
-        }
-
-        if (pd->textureBindGroup) {
-            wgpuBindGroupRelease(pd->textureBindGroup);
-        }
-        WGPUBindGroupDescriptor bgDesc = {0};
-        bgDesc.layout     = s_textureBindGroupLayout;
-        bgDesc.entryCount = totalEntries;
-        bgDesc.entries    = entries;
-        pd->textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
-
-        free(entries);
-    }
+    g_wgpu.pipelines[pipelineID].textureSampler = wgpuDeviceCreateSampler(g_wgpu.device, &samplerDesc);
     
     wgpuShaderModuleRelease(shaderModule);
     wgpuPipelineLayoutRelease(pipelineLayout);
@@ -510,6 +473,43 @@ int wgpuCreateMesh(int pipelineID, struct Mesh *mesh) {
     wgpuQueueWriteBuffer(g_wgpu.queue, instanceBuffer, 0, mesh->instances, instanceDataSize);
     g_wgpu.meshes[meshID].instanceBuffer = instanceBuffer;
     g_wgpu.meshes[meshID].instanceCount = mesh->instanceCount;
+
+    // Initialize all available textures to default
+    // todo: create a few pre-defined layouts; eg. one with 1 texture, one with two textures, one with 4 textures
+    // todo: similar to how there are pre-defined layouts for the vert/inst buffers that a material can choose from
+    // todo: we can then let each pipeline have a different texture setup
+    // todo: all pipelines are now locked to global s_textureBindGroupLayout that has 16 textures
+    g_wgpu.meshes[meshID].textureCount = 0; // todo: do this based on per-material instead of set global
+    for (int i=0; i<MAX_TEXTURES; i++) { // todo: to avoid having like 16 textures where most will have just one or two
+        g_wgpu.meshes[meshID].textureObjects[i] = g_defaultTexture;
+        g_wgpu.meshes[meshID].textureViews[i]   = g_defaultTextureView;
+    }
+
+    // Create the initial texture bind group
+    {
+        // We'll have 1 + 16 = 17 entries
+        int totalEntries = MAX_TEXTURES + 1; // entry 0 is the sampler
+        WGPUBindGroupEntry *entries = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
+        // Sampler at binding=0
+        entries[0].binding = 0;
+        entries[0].sampler = g_wgpu.pipelines[pipelineID].textureSampler;
+        // 16 textures at binding=1..16
+        for (int i=0; i<MAX_TEXTURES; i++) {
+            entries[i+1].binding = i + 1;
+            entries[i+1].textureView = g_wgpu.meshes[meshID].textureViews[i];
+        }
+
+        if (g_wgpu.meshes[meshID].textureBindGroup) {
+            wgpuBindGroupRelease(g_wgpu.meshes[meshID].textureBindGroup);
+        }
+        WGPUBindGroupDescriptor bgDesc = {0};
+        bgDesc.layout     = s_textureBindGroupLayout;
+        bgDesc.entryCount = totalEntries;
+        bgDesc.entries    = entries;
+        g_wgpu.meshes[meshID].textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
+
+        free(entries);
+    }
     
     g_wgpu.meshes[meshID].pipelineID = pipelineID;
     printf("[webgpu.c] Created instanced mesh %d with %d vertices, %d indices, and %d instances for pipeline %d\n",
@@ -617,13 +617,14 @@ void free_binary_texture(MappedTexture* texture) {
     texture->mapping = NULL;
 }
 // wgpuAddTexture: Load a PNG file and add it to the pipeline’s texture bind group.
-int wgpuAddTexture(int pipelineID, const char* filename) {
-    PipelineData* pd = &g_wgpu.pipelines[pipelineID];
-    if (pd->textureCount >= MAX_TEXTURES) {
+int wgpuAddTexture(int mesh_id, const char* filename) {
+    MeshData* md = &g_wgpu.meshes[mesh_id];
+    PipelineData* pd = &g_wgpu.pipelines[md->pipelineID];
+    if (md->textureCount >= MAX_TEXTURES) {
         fprintf(stderr, "No more texture slots!\n");
         return -1;
     }
-    int slot = pd->textureCount; // e.g. 0 => binding=1, etc.
+    int slot = md->textureCount; // e.g. 0 => binding=1, etc.
 
     int w, h;
     MappedTexture texture_data = load_binary_texture(filename, &w, &h);
@@ -654,33 +655,33 @@ int wgpuAddTexture(int pipelineID, const char* filename) {
     // Create view
     WGPUTextureView view = wgpuTextureCreateView(tex, NULL);
 
-    pd->textureObjects[slot] = tex;
-    pd->textureViews[slot]   = view;
-    pd->textureCount++;
+    md->textureObjects[slot] = tex;
+    md->textureViews[slot]   = view;
+    md->textureCount++;
 
     // Now rebuild the bind group
-    int totalEntries = 1 + MAX_TEXTURES;
+    int totalEntries = 1 + MAX_TEXTURES; // + 1 is the default white pixel one
     WGPUBindGroupEntry* e = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
     e[0].binding = 0;
     e[0].sampler = pd->textureSampler;
     for (int i=0; i<MAX_TEXTURES; i++) {
         e[i+1].binding = i+1;
-        e[i+1].textureView = (i < pd->textureCount) 
-                             ? pd->textureViews[i]
+        e[i+1].textureView = (i < md->textureCount) 
+                             ? md->textureViews[i]
                              : g_defaultTextureView;
     }
-    if (pd->textureBindGroup) {
-        wgpuBindGroupRelease(pd->textureBindGroup);
+    if (md->textureBindGroup) {
+        wgpuBindGroupRelease(md->textureBindGroup);
     }
     WGPUBindGroupDescriptor bgDesc = {0};
     bgDesc.layout     = s_textureBindGroupLayout;
     bgDesc.entryCount = totalEntries;
     bgDesc.entries    = e;
-    pd->textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
+    md->textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
     free(e);
 
-    printf("Added texture %s to pipeline %d at slot %d (binding=%d)\n",
-           filename, pipelineID, slot, slot+1);
+    printf("Added texture %s to mesh %d at slot %d (binding=%d)\n",
+           filename, mesh_id, slot, slot+1);
 
     return slot;
 }
@@ -716,8 +717,6 @@ void wgpuDrawPipeline(int pipelineID) {
     wgpuQueueWriteBuffer(g_wgpu.queue, pd->uniformBuffer, 0, pd->uniformData, UNIFORM_BUFFER_CAPACITY);
     // Bind uniform bind group (group 0).
     wgpuRenderPassEncoderSetBindGroup(g_currentPass, 0, pd->uniformBindGroup, 0, NULL);
-    // --- Bind texture bind group (group 1) ---
-    wgpuRenderPassEncoderSetBindGroup(g_currentPass, 1, pd->textureBindGroup, 0, NULL);
     // Set the render pipeline.
     wgpuRenderPassEncoderSetPipeline(g_currentPass, pd->pipeline);
     
@@ -730,6 +729,8 @@ void wgpuDrawPipeline(int pipelineID) {
                 size_t instanceDataSize = pd->material->vertex_layout[1].arrayStride * g_wgpu.meshes[i].instanceCount;
                 wgpuQueueWriteBuffer(g_wgpu.queue, g_wgpu.meshes[i].instanceBuffer, 0, g_wgpu.meshes[i].mesh->instances, instanceDataSize);
             }
+            // todo: some meshes could share the same textures so no need to switch always
+            wgpuRenderPassEncoderSetBindGroup(g_currentPass, 1, g_wgpu.meshes[i].textureBindGroup, 0, NULL); // group 1 for textures
             // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count.
             wgpuRenderPassEncoderSetVertexBuffer(g_currentPass, 0, g_wgpu.meshes[i].vertexBuffer, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderSetVertexBuffer(g_currentPass, 1, g_wgpu.meshes[i].instanceBuffer, 0, WGPU_WHOLE_SIZE);

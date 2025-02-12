@@ -48,17 +48,14 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
 var textureSampler: sampler;
 @group(1) @binding(1)
 var texture0: texture_2d<f32>;
-@group(1) @binding(2)
-var texture1: texture_2d<f32>;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the texture using the uv coordinates.
     var texColor1 = textureSample(texture0, textureSampler, in.uv + vec2(0.5, 0.5));
-    var texColor2 = textureSample(texture1, textureSampler, in.uv + vec2(0.5, 0.5));
-    var color = vec3(0.5, 0.5, 0.5);
+    var color = texColor1.rgb;
     if (in.color.x < 0.1 || in.color.y < 0.1 || in.color.z < 0.1) {
         color = vec3(0.0);
     }
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(texColor1.rgb, 1.0);
 }
