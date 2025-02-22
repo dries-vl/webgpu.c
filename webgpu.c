@@ -58,12 +58,16 @@ static struct game_data_gpu g_game_data_gpu = {0};
 // Default 1 pixel texture global to assign to every empty texture slot for new meshes
 static WGPUTexture      g_defaultTexture = NULL;
 static WGPUTextureView  g_defaultTextureView = NULL;
+// global depth texture
+WGPUDepthStencilState depthStencilState; 
+WGPURenderPassDepthStencilAttachment depthAttachment;
 // Current frame objects (global for simplicity)
 static WGPUSurfaceTexture    g_currentSurfaceTexture = {0};
 static WGPUTextureView       g_currentView = NULL;
 static WGPUCommandEncoder    g_currentEncoder = NULL;
 static WGPURenderPassEncoder g_currentPass = NULL;
 /* GLOBAL STATE OF THE WGPU BACKEND */
+
 
 // One standard uniform layout for all pipelines; ca. 1000 bytes of data
 static WGPUBindGroupLayout s_uniformBindGroupLayout = NULL;
@@ -191,6 +195,59 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
 
         // Create a view
         g_defaultTextureView = wgpuTextureCreateView(g_defaultTexture, NULL);
+    }
+
+    // Create a depth texture
+    {
+        WGPUTextureDescriptor depthTextureDesc = {
+            .usage = WGPUTextureUsage_RenderAttachment,
+            .dimension = WGPUTextureDimension_2D,
+            .size = { .width = width, .height = height, .depthOrArrayLayers = 1 },
+            .format = WGPUTextureFormat_Depth24Plus, // Or Depth32Float if supported
+            .mipLevelCount = 1,
+            .sampleCount = 1,
+            .nextInChain = NULL,
+        };
+        WGPUTexture depthTexture = wgpuDeviceCreateTexture(g_wgpu.device, &depthTextureDesc);
+        // 2. Create a texture view for the depth texture
+        WGPUTextureViewDescriptor depthViewDesc = {
+            .format = depthTextureDesc.format,
+            .dimension = WGPUTextureViewDimension_2D,
+            .baseMipLevel = 0,
+            .mipLevelCount = 1,
+            .baseArrayLayer = 0,
+            .arrayLayerCount = 1,
+            .nextInChain = NULL,
+        };
+        WGPUTextureView depthTextureView = wgpuTextureCreateView(depthTexture, &depthViewDesc);
+        // 3. Define the depth-stencil state for the pipeline
+        WGPUStencilFaceState defaultStencilState = {
+            .compare = WGPUCompareFunction_Always,  // Use a valid compare function
+            .failOp = WGPUStencilOperation_Keep,
+            .depthFailOp = WGPUStencilOperation_Keep,
+            .passOp = WGPUStencilOperation_Keep,
+        };
+        depthStencilState = (WGPUDepthStencilState){
+            .format = depthTextureDesc.format,
+            .depthWriteEnabled = true,
+            .depthCompare = WGPUCompareFunction_Less, // Pass fragments with lesser depth values
+            // For stencil operations (if unused, defaults are fine):
+            .stencilFront = defaultStencilState, // Properly initialized
+            .stencilBack = defaultStencilState,  // Same for the back face
+            .stencilReadMask = 0xFF,
+            .stencilWriteMask = 0xFF,
+            .depthBias = 0,
+            .depthBiasSlopeScale = 0.0f,
+            .depthBiasClamp = 0.0f,
+        };
+        // 4. depth attachment for render pass
+        depthAttachment = (WGPURenderPassDepthStencilAttachment){
+            .view = depthTextureView,
+            .depthLoadOp = WGPULoadOp_Clear,   // Clear depth at start of pass
+            .depthStoreOp = WGPUStoreOp_Store,  // Optionally store depth results
+            .depthClearValue = 1.0f,            // Clear value (far plane)
+            // Set stencil values if using stencil; otherwise, leave them out.
+        };
     }
 
     WGPUSurfaceCapabilities caps = {0};
@@ -352,12 +409,15 @@ int wgpuCreateMaterial(struct Material *material) {
     WGPUPrimitiveState prim = {0};
     prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe
     prim.cullMode = WGPUCullMode_Back;
-    prim.frontFace = WGPUFrontFace_CCW;
+    prim.frontFace = WGPUFrontFace_CW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
     ms.count = 1;
     ms.mask = 0xFFFFFFFF;
     rpDesc.multisample = ms;
+    // add depth texture
+    rpDesc.depthStencil = &depthStencilState;
+
     // todo: this has exception when running with windows compiler...
     WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(g_wgpu.device, &rpDesc);
     g_game_data_gpu.materials[materialID].pipeline = pipeline;
@@ -679,6 +739,7 @@ float wgpuDrawFrame(void) {
     WGPURenderPassDescriptor passDesc = {0};
     passDesc.colorAttachmentCount = 1;
     passDesc.colorAttachments = &colorAtt;
+    passDesc.depthStencilAttachment = &depthAttachment,
     g_currentPass = wgpuCommandEncoderBeginRenderPass(g_currentEncoder, &passDesc);
 
     // Loop through all materials and draw each one.

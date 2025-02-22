@@ -18,7 +18,7 @@ extern float wgpuDrawFrame(void);
 
 static bool g_Running = true;
 float fov = 3.14f / 4.0f; // 45 degrees
-float farClip = 2000.0f;
+float farClip = 20000000.0f;
 float nearClip = 1.0f;
 float cameraRotation[2] = {0.0f, 0.0f}; // yaw, pitch
 struct ButtonState {
@@ -234,7 +234,7 @@ struct Speed {
     float roll;
 };
 struct Speed cameraSpeed = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // only y-speed used
-float movementSpeed = 0.5f;
+float movementSpeed = 7.5f;
 void cameraMovement(float *camera, float speed, float ms) {
     float yawRot[16] = {
         cos(cameraRotation[0]), 0.0f, sin(cameraRotation[0]),
