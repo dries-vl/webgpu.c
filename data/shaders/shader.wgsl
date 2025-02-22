@@ -7,7 +7,6 @@ struct Uniforms {
 @group(0) @binding(0)
 var<uniform> uniforms : Uniforms;
 
-
 struct VertexInput {
     @location(0) position : vec3<f32>,
     @location(1) color : vec3<f32>,
@@ -36,7 +35,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     }
 
     var output: VertexOutput;
-    output.pos = vec4<f32>(input.position + input.instanceOffset, 1.0) * uniforms.camera;
+    output.pos = vec4<f32>(input.position * 100.0 + input.instanceOffset, 1.0) * uniforms.camera;
     output.pos = output.pos * uniforms.view;
     output.pos.z = 0.5f; // todo: this might just be the cause of the incorrect ordering of faces / culling issues
     output.color = color;
@@ -52,10 +51,10 @@ var texture0: texture_2d<f32>;
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the texture using the uv coordinates.
-    var texColor1 = textureSample(texture0, textureSampler, in.uv + vec2(0.5, 0.5));
-    var color = texColor1.rgb;
+    var tex_color = textureSample(texture0, textureSampler, in.uv);
+    var color = tex_color.rgb;
     if (in.color.x < 0.1 || in.color.y < 0.1 || in.color.z < 0.1) {
-        color = vec3(0.0);
+        color = color / 2.0;
     }
-    return vec4<f32>(color.rgb, 1.0);
+    return vec4<f32>(color, 1.0);
 }

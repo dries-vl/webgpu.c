@@ -1,28 +1,25 @@
+#include "game.c"
 #include "webgpu.c"
 
 #include <windows.h>
 #include <stdbool.h>
-#include <stdio.h>
 #include <assert.h>
 #include <math.h>
+#include <stdio.h>
 
+// todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
+// todo: remove windows.h entirely and just extern the functions we need, idem for dx12 stuff
 extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
 extern int   wgpuCreateMaterial(struct Material *material);
 extern int   wgpuCreateMesh(int materialID, struct Mesh *mesh);
-extern int   wgpuAddUniform(int materialID, const void* data, int dataSize);
-extern void  wgpuSetUniformValue(int materialID, int uniformOffset, const void* data, int dataSize);
-extern int   wgpuAddTexture(int materialID, const char* texturePath);
-extern void  wgpuStartFrame();
-extern void  wgpuDrawMaterial(int materialID);
-extern float  wgpuEndFrame();
+extern int   wgpuAddTexture(int mesh_id, const char* texturePath);
+// todo: add functions to remove meshes from the scene, and automatically remove materials/pipelines that have no meshes anymore (?)
+extern float wgpuDrawFrame(void);
 
 static bool g_Running = true;
 float fov = 3.14f / 4.0f; // 45 degrees
 float farClip = 2000.0f;
 float nearClip = 1.0f;
-#define WINDOW_WIDTH 1920 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
-#define WINDOW_HEIGHT 1080
-float AR = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT; // Aspect ratio
 float cameraRotation[2] = {0.0f, 0.0f}; // yaw, pitch
 struct ButtonState {
     int left;
@@ -35,11 +32,7 @@ struct ButtonState buttonState = {0, 0, 0, 0};
 struct Vector3 {
     float x, y, z;
 };
-#define CHAR_WIDTH_SCREEN (48 * 2) // todo: avoid difference with same const in shader code...
-#define CHAR_HEIGHT_SCREEN (24 * 2)
-#define MAX_CHAR_ON_SCREEN (48 * 24 * 2)
-struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {0};
-struct Mesh quad_mesh = {0};
+
 int screen_chars_index = 0;
 int current_screen_char = 0;
 void print_on_screen(char *str) {
@@ -268,11 +261,17 @@ void applyGravity(struct Speed *speed, float *pos, float ms) { // gravity as vel
     }
 }
 
+void set_instances(struct Mesh *mesh, struct Instance *instances, int instanceCount) {
+    free(mesh->instances);
+    mesh->instances = instances;
+    mesh->instanceCount = instanceCount;
+}
+
 typedef struct {
-    uint32_t vertexCount;
-    uint32_t indexCount;
-    uint32_t vertexArrayOffset;
-    uint32_t indexArrayOffset;
+    unsigned int vertexCount;
+    unsigned int indexCount;
+    unsigned int vertexArrayOffset;
+    unsigned int indexArrayOffset;
 } MeshHeader;
 struct Mesh read_mesh_binary(const char *binFilename) {
     FILE *file = fopen(binFilename, "rb");
@@ -287,7 +286,7 @@ struct Mesh read_mesh_binary(const char *binFilename) {
         fprintf(stderr, "Memory allocation failed for vertices_in\n");
         exit(1);
     }
-    uint32_t *indices_in = malloc(header.indexCount * sizeof(uint32_t));
+    unsigned int *indices_in = malloc(header.indexCount * sizeof(unsigned int));
     if (!indices_in) {
         fprintf(stderr, "Memory allocation failed for indices_in\n");
         exit(1);
@@ -295,9 +294,9 @@ struct Mesh read_mesh_binary(const char *binFilename) {
     fseek(file, header.vertexArrayOffset, SEEK_SET);
     fread(vertices_in, sizeof(struct Vertex), header.vertexCount, file);
     fseek(file, header.indexArrayOffset, SEEK_SET);
-    fread(indices_in, sizeof(uint32_t), header.indexCount, file);
+    fread(indices_in, sizeof(unsigned int), header.indexCount, file);
     fclose(file);
-    size_t fileSize = header.indexArrayOffset + header.indexCount * sizeof(uint32_t);
+    size_t fileSize = header.indexArrayOffset + header.indexCount * sizeof(unsigned int);
     double fileSizeKB = fileSize / 1024.0;
     printf("Size of struct Vertex: %zu bytes\n", sizeof(struct Vertex));
     printf("Unique vertex count: %u\n", header.vertexCount);
@@ -311,13 +310,6 @@ struct Mesh read_mesh_binary(const char *binFilename) {
         .vertexCount=header.vertexCount, .indexCount=header.indexCount, .instanceCount = 1};
 }
 
-void set_instances(struct Mesh *mesh, struct Instance *instances, int instanceCount) {
-    free(mesh->instances);
-    mesh->instances = instances;
-    mesh->instanceCount = instanceCount;
-}
-
-// todo: move this somewhere deep...
 #if defined(_MSC_VER)
 #include <intrin.h>
 #pragma intrinsic(__rdtsc)
@@ -595,7 +587,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         WINDOW_WIDTH, WINDOW_HEIGHT, NULL, NULL, hInstance, NULL
     );
     assert(hwnd);
-    float aspect_ratio = ((float) WINDOW_WIDTH / (float) WINDOW_HEIGHT);
 
     // *info* to be aware of DPI to avoid specified resolutions with lower granularity than actual screen resolution
     HMODULE shcore = LoadLibrary("Shcore.dll"); // import explicitly because tcc doesn't know these headers
@@ -609,29 +600,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         FreeLibrary(shcore);
     }
-
     // *info* this sets the window to exclusive fullscreen bypassing the window manager
     // set_fullscreen(hwnd, WINDOW_WIDTH, WINDOW_HEIGHT, 60); // need to specify refresh rate of monitor (?)
-
     RECT screen;
     GetClientRect(GetDesktopWindow(), &screen);
-
-    int width = WINDOW_WIDTH;
-    int height = WINDOW_HEIGHT;
-    int x = (screen.right - width) / 2;
-    int y = (screen.bottom - height) / 2;
-
-    SetWindowPos(hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_SHOWWINDOW);
-    ShowCursor(FALSE);
-
-    print_time_since_startup("Setup window");
-
-    load_raw_input_functions();
-    InitializeRawInput();
-    print_time_since_startup("Load raw input dll");
+    int x = (screen.right - WINDOW_WIDTH) / 2;
+    int y = (screen.bottom - WINDOW_HEIGHT) / 2;
+    SetWindowPos(hwnd, NULL, x, y, WINDOW_WIDTH, WINDOW_HEIGHT, SWP_NOZORDER | SWP_SHOWWINDOW); // put window in middle of screen
+    ShowCursor(FALSE); // hide the cursor
+    load_raw_input_functions(); // load windows dll to use raw input
+    InitializeRawInput(); // setup for listening to windows raw input
+    /* WINDOWS-ONLY SPECIFIC SETTINGS */
     
     wgpuInit(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
-    print_time_since_startup("Init wgpu");
 
     // todo: create a 'floor' quad mesh to use as orientation and for shadows etc.
     // todo: lighting
@@ -642,31 +623,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // todo: use precompiled shader for faster loading
     // todo: use glsl instead of wgsl for C-style syntax
-    struct Material basic_material = (struct Material) {
-        .vertex_layout=STANDARD_LAYOUT, .shader="data/shaders/shader.wgsl", .texture_layout=STANDARD_FOUR_TEXTURES,
-        .use_alpha=0, .use_textures=1, .use_uniforms=1, .update_instances=0};
-    int basic_material_id = wgpuCreateMaterial(&basic_material);
-
-    print_time_since_startup("Create basic material");
-
-    // create ground mesh
-    struct Vertex ground_verts[4] = {0};
-    // todo: use meters as basic measurement for everything
-    ground_verts[0] = (struct Vertex) {.position={-10000.0, -10.0, 10000.0}, .color={.5,.5,.5}, .normal={0}, .uv={-1.,1.}};
-    ground_verts[1] = (struct Vertex) {.position={10000.0, -10.0, 10000.0}, .color={.5,.5,.5}, .normal={0}, .uv={1.,1.}};
-    ground_verts[2] = (struct Vertex) {.position={-10000.0, -10.0, -10000.0}, .color={.5,.5,.5}, .normal={0}, .uv={-1.,-1.}};
-    ground_verts[3] = (struct Vertex) {.position={10000.0, -10.0, -10000.0}, .color={.5,.5,.5}, .normal={0}, .uv={1.,-1.}};
-    uint32_t ground_indices[6] = {0,1,2, 1,2,3};
-    struct Mesh ground_mesh = {0};
-    ground_mesh.indexCount = 6;
-    ground_mesh.indices = ground_indices;
-    ground_mesh.vertexCount = 4;
-    ground_mesh.vertices = ground_verts;
-    ground_mesh.instanceCount = 1;
-    ground_mesh.instances = (struct Instance[1]) {(struct Instance) {.position={0., 0., 0.}}};
-    // todo: manipulate bindgroups for textures to have one material for meshes with a different texture
-    int ground_mesh_id = wgpuCreateMesh(basic_material_id, &ground_mesh);
-    int texSlot2 = wgpuAddTexture(ground_mesh_id, "data/textures/bin/texture_2.bin");
+    
+    // Add a projection matrix (a 4x4 matrix).  
+    float view[16] = {
+    1.0 / (tan(fov / 2.0) * aspect_ratio), 0.0f,  0.0f,                               0.0f,
+    0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
+    0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
+    0.0f,  0.0f, -1.0f,                               0.0f
+    };
     
     // load teapot mesh
     struct Mesh teapot_mesh = read_mesh_binary("data/models/bin/teapot.bin");
@@ -674,58 +638,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     struct Instance instance2 = {0.0f, 80.0f, 0.0f};
     struct Instance instances[2] = {instance1, instance2};
     set_instances(&teapot_mesh, instances, 2);
-    int teapot_mesh_id = wgpuCreateMesh(basic_material_id, &teapot_mesh);
-    print_time_since_startup("Load teapot binary mesh");
     
     // load cube mesh
-    struct Mesh cube_mesh = read_mesh_binary("data/models/bin/ground.bin");
+    struct Mesh cube_mesh = read_mesh_binary("data/models/bin/cube.bin");
     struct Instance cube = {0.0f, 0.0f, 0.0f};
     set_instances(&cube_mesh, &cube, 1);
-    int cube_mesh_id = wgpuCreateMesh(basic_material_id, &cube_mesh);
 
-    // create hud mesh
-    struct vert2 quad_vertices[4] = {
-        quad_vertices[0] = (struct vert2) {.position={0.0, 1.0}, .uv={0.0, 1.0}},
-        quad_vertices[1] = (struct vert2) {.position={1.0, 1.0}, .uv={1.0, 1.0}},
-        quad_vertices[2] = (struct vert2) {.position={0.0, 0.0}, .uv={0.0, 0.0}},
-        quad_vertices[3] = (struct vert2) {.position={1.0, 0.0}, .uv={1.0, 0.0}}
-    };
-    uint32_t quad_indices[6] = {0,1,2, 1,2,3};
-    quad_mesh.indexCount = 6;
-    quad_mesh.indices = quad_indices;
-    quad_mesh.vertexCount = 4;
-    quad_mesh.vertices = quad_vertices;
-    quad_mesh.instanceCount = MAX_CHAR_ON_SCREEN;
-    quad_mesh.instances = screen_chars;
-    struct Material hud_material = (struct Material) {
-        .vertex_layout=HUD_LAYOUT, .shader="data/shaders/hud.wgsl", .texture_layout=STANDARD_FOUR_TEXTURES,
-        .use_alpha=1, .use_textures=1, .use_uniforms=1, .update_instances=1
-    };
+
+    // CALLS TO GPU BACKEND
+    // todo: create a function that does this automatically based on game state object
+    int basic_material_id = wgpuCreateMaterial(&basic_material);
     int hud_material_id = wgpuCreateMaterial(&hud_material);
-    int quad_mesh_id = wgpuCreateMesh(hud_material_id, &quad_mesh);
-    int font_atlas_texture_slot = wgpuAddTexture(quad_mesh_id, "data/textures/bin/font_atlas.bin");
-    print_time_since_startup("Create HUD material");
 
-    // add uniforms
-    int aspect_ratio_uniform = wgpuAddUniform(hud_material_id, &aspect_ratio, sizeof(float));
-    float brightness = 1.0f;
-    int brightnessOffset = wgpuAddUniform(basic_material_id, &brightness, sizeof(float));
-    float timeVal = 0.0f;
-    int timeOffset = wgpuAddUniform(basic_material_id, &timeVal, sizeof(float));
-    int cameraOffset = wgpuAddUniform(basic_material_id, camera, sizeof(camera));
+    int ground_mesh_id = wgpuCreateMesh(basic_material_id, &ground_mesh);
+    int teapot_mesh_id = wgpuCreateMesh(basic_material_id, &teapot_mesh);
+    int cube_mesh_id = wgpuCreateMesh(basic_material_id, &cube_mesh);
+    int quad_mesh_id = wgpuCreateMesh(hud_material_id, &quad_mesh);
+
+    int texSlot2 = wgpuAddTexture(cube_mesh_id, "data/textures/bin/font_atlas.bin");
+    int font_atlas_texture_slot = wgpuAddTexture(quad_mesh_id, "data/textures/bin/font_atlas.bin");
+
+    int aspect_ratio_uniform = wgpuAddUniform(&hud_material, &aspect_ratio, sizeof(float));
+    int brightnessOffset = wgpuAddUniform(&basic_material, &brightness, sizeof(float));
+    int timeOffset = wgpuAddUniform(&basic_material, &timeVal, sizeof(float));
+    int cameraOffset = wgpuAddUniform(&basic_material, camera, sizeof(camera));
+    int viewOffset = wgpuAddUniform(&basic_material, view, sizeof(view));
+
+
+
     
-    // Add a projection matrix (a 4x4 matrix).  
-    float view[16] = {
-    1.0 / (tan(fov / 2.0) * AR), 0.0f,  0.0f,                               0.0f,
-    0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
-    0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
-    0.0f,  0.0f, -1.0f,                               0.0f
-    };
-    int viewOffset = wgpuAddUniform(basic_material_id, view, sizeof(view));
-    
-    print_time_since_startup("Add textures and uniforms");
-    
-    // Main loop
+    /* MAIN LOOP */
     init_debug_info();
     while (g_Running) {
         MSG msg;
@@ -748,17 +690,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         camera[7] = cameraLocation[1];
         float inv[16];
         inverseViewMatrix(camera, inv);
-        wgpuSetUniformValue(basic_material_id, timeOffset, &timeVal, sizeof(float));
-        wgpuSetUniformValue(basic_material_id, cameraOffset, &inv, sizeof(camera));
+        wgpuSetUniformValue(&basic_material, timeOffset, &timeVal, sizeof(float));
+        wgpuSetUniformValue(&basic_material, cameraOffset, &inv, sizeof(camera));
 
         // Actual frame rendering
         // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure
         // *info* forces the cpu to wait before pushing another frame, bringing the cpu speed down to the gpu speed
         // *info* we can force the cpu to wait regardless by using the fence in wgpuEndFrame()
-        wgpuStartFrame();
-        wgpuDrawMaterial(basic_material_id);
-        wgpuDrawMaterial(hud_material_id);
-        debug_info.ms_waited_on_gpu = wgpuEndFrame();
+        debug_info.ms_waited_on_gpu = wgpuDrawFrame();
         
         // todo: create a central place for things that need to happen to initialize every frame iteration correctly
         // Set the printed chars to 0 to reset the text in the HUD
