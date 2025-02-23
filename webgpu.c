@@ -69,6 +69,7 @@ static WGPURenderPassEncoder g_currentPass = NULL;
 /* GLOBAL STATE OF THE WGPU BACKEND */
 
 
+/* CONST DATA */
 // One standard uniform layout for all pipelines; ca. 1000 bytes of data
 static WGPUBindGroupLayout s_uniformBindGroupLayout = NULL;
 // Multiple possible layouts for textures
@@ -94,6 +95,39 @@ static const WGPUBindGroupLayoutDescriptor TEXTURE_LAYOUT_DESCRIPTORS[NUM_BIND_G
         }
     }
 };
+
+// Vertex layout consts
+static const WGPUVertexBufferLayout VERTEX_LAYOUTS[2][2] = {
+    { // STANDARD LAYOUT
+        {   .arrayStride = sizeof(struct Vertex),
+            .stepMode = WGPUVertexStepMode_Vertex,
+            .attributeCount = 3,
+            .attributes = (const WGPUVertexAttribute[]) {
+                { .format = WGPUVertexFormat_Float32x3, .offset = 0,                 .shaderLocation = 0 },
+                { .format = WGPUVertexFormat_Float32x3, .offset = sizeof(float) * 3, .shaderLocation = 1 },
+                { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 6, .shaderLocation = 2 }}},
+        {   .arrayStride = sizeof(struct Instance),
+            .stepMode = WGPUVertexStepMode_Instance,
+            .attributeCount = 1,
+            .attributes = (const WGPUVertexAttribute[]) {
+                { .format = WGPUVertexFormat_Float32x3, .offset = 0, .shaderLocation = 3 }}}
+    },
+    { // HUD LAYOUT
+        {   .arrayStride = sizeof(struct vert2),
+            .stepMode = WGPUVertexStepMode_Vertex,
+            .attributeCount = 2,
+            .attributes = (const WGPUVertexAttribute[]) {
+                { .format = WGPUVertexFormat_Float32x2, .offset = 0,                 .shaderLocation = 0 },
+                { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 2, .shaderLocation = 1 }}},
+        {   .arrayStride = sizeof(struct char_instance),
+            .stepMode = WGPUVertexStepMode_Instance,
+            .attributeCount = 2,
+            .attributes = (const WGPUVertexAttribute[]) {
+                { .format = WGPUVertexFormat_Sint32,   .offset = 0,                 .shaderLocation = 2 },
+                { .format = WGPUVertexFormat_Sint32,   .offset = sizeof(int),       .shaderLocation = 3 }}}
+    }
+};
+/* CONST DATA */
 
 static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, const char* message, void* userdata) {
     (void)userdata;
@@ -297,37 +331,6 @@ static WGPUShaderModule loadWGSL(WGPUDevice device, const char* filePath) {
     free(wgslSource);
     return module;
 }
-
-static const WGPUVertexBufferLayout VERTEX_LAYOUTS[2][2] = {
-    { // STANDARD LAYOUT
-        {   .arrayStride = sizeof(struct Vertex),
-            .stepMode = WGPUVertexStepMode_Vertex,
-            .attributeCount = 3,
-            .attributes = (const WGPUVertexAttribute[]) {
-                { .format = WGPUVertexFormat_Float32x3, .offset = 0,                 .shaderLocation = 0 },
-                { .format = WGPUVertexFormat_Float32x3, .offset = sizeof(float) * 3, .shaderLocation = 1 },
-                { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 6, .shaderLocation = 2 }}},
-        {   .arrayStride = sizeof(struct Instance),
-            .stepMode = WGPUVertexStepMode_Instance,
-            .attributeCount = 1,
-            .attributes = (const WGPUVertexAttribute[]) {
-                { .format = WGPUVertexFormat_Float32x3, .offset = 0, .shaderLocation = 3 }}}
-    },
-    { // HUD LAYOUT
-        {   .arrayStride = sizeof(struct vert2),
-            .stepMode = WGPUVertexStepMode_Vertex,
-            .attributeCount = 2,
-            .attributes = (const WGPUVertexAttribute[]) {
-                { .format = WGPUVertexFormat_Float32x2, .offset = 0,                 .shaderLocation = 0 },
-                { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 2, .shaderLocation = 1 }}},
-        {   .arrayStride = sizeof(struct char_instance),
-            .stepMode = WGPUVertexStepMode_Instance,
-            .attributeCount = 2,
-            .attributes = (const WGPUVertexAttribute[]) {
-                { .format = WGPUVertexFormat_Sint32,   .offset = 0,                 .shaderLocation = 2 },
-                { .format = WGPUVertexFormat_Sint32,   .offset = sizeof(int),       .shaderLocation = 3 }}}
-    }
-};
 
 // -----------------------------------------------------------------------------
 // wgpuCreatePipeline: Create a render pipeline plus a generic uniform and texture bindgroup.
