@@ -81,6 +81,9 @@ struct Mesh read_mesh_binary(const char *binFilename) {
         .vertexCount=header.vertexCount, .indexCount=header.indexCount, .instanceCount = 1};
 }
 
+
+
+/* CYCLE COUNT */
 #if defined(_MSC_VER)
 #include <intrin.h>
 #pragma intrinsic(__rdtsc)
@@ -97,7 +100,13 @@ inline unsigned long long read_cycle_count() {
     return ((unsigned long long)hi << 32) | lo;
 }
 #endif
+/* CYCLE COUNT */
 
+
+
+
+
+/* RAW INPUT SETUP */
 typedef BOOL (WINAPI *RegisterRawInputDevices_t)(PCRAWINPUTDEVICE, UINT, UINT);
 typedef UINT (WINAPI *GetRawInputData_t)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
 
@@ -120,6 +129,12 @@ void load_raw_input_functions() {
         exit(1);
     }
 }
+/* RAW INPUT SETUP */
+
+
+
+
+
 RAWINPUTDEVICE rid[2];
 HRESULT InitializeRawInput()
 {
@@ -143,12 +158,16 @@ HRESULT InitializeRawInput()
     }
     return 0;
 }
-
 #define MAX_KEYS 256
 bool keyStates[MAX_KEYS] = { false };  // Track pressed keys
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
+        case WM_CREATE:
+        {
+            load_raw_input_functions(); // load windows dll to use raw input
+            InitializeRawInput(); // setup for listening to windows raw input
+        } break;
         case WM_INPUT:
         {
             UINT dwSize = 0;
@@ -379,8 +398,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int y = (screen.bottom - WINDOW_HEIGHT) / 2;
     SetWindowPos(hwnd, NULL, x, y, WINDOW_WIDTH, WINDOW_HEIGHT, SWP_NOZORDER | SWP_SHOWWINDOW); // put window in middle of screen
     ShowCursor(FALSE); // hide the cursor
-    load_raw_input_functions(); // load windows dll to use raw input
-    InitializeRawInput(); // setup for listening to windows raw input
     /* WINDOWS-ONLY SPECIFIC SETTINGS */
     
     wgpuInit(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
