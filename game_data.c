@@ -1,5 +1,4 @@
 #include "game_data.h"
-#include <math.h>
 
 #define WINDOW_WIDTH 1920 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
 #define WINDOW_HEIGHT 1080 // todo: make this global variable that can be modified
@@ -19,13 +18,13 @@ static struct Material basic_material = {
 
 // Ground mesh data
 static struct Vertex ground_verts[4] = {
-    {.position = {-10000.0, -10.0, 10000.0}, .color = {.5, .5, .5}, .normal = {0}, .uv = {-1., 1.}},
-    {.position = {10000.0, -10.0, 10000.0}, .color = {.5, .5, .5}, .normal = {0}, .uv = {1., 1.}},
-    {.position = {-10000.0, -10.0, -10000.0}, .color = {.5, .5, .5}, .normal = {0}, .uv = {-1., -1.}},
-    {.position = {10000.0, -10.0, -10000.0}, .color = {.5, .5, .5}, .normal = {0}, .uv = {1., -1.}}
+    {.position = {-10000.0, -15.0, 10000.0}, .color = {0,0,0}, .normal = {0}, .uv = {-1., 1.}},
+    {.position = {10000.0, -15.0, 10000.0}, .color = {0,0,0}, .normal = {0}, .uv = {1., 1.}},
+    {.position = {-10000.0, -15.0, -10000.0}, .color = {0,0,0}, .normal = {0}, .uv = {-1., -1.}},
+    {.position = {10000.0, -15.0, -10000.0}, .color = {0,0,0}, .normal = {0}, .uv = {1., -1.}}
 };
 
-static unsigned int ground_indices[6] = {2, 0, 1, 3, 2, 1};
+static unsigned int ground_indices[6] = {0, 2, 1, 2, 3, 1};
 
 static struct Instance ground_instance = {.position = {0., 0., 0.}};
 
@@ -47,7 +46,7 @@ static struct vert2 quad_vertices[4] = {
     {.position = {1.0, 0.0}, .uv = {1.0, 0.0}}
 };
 
-static unsigned int quad_indices[6] = {2, 0, 1, 3, 2, 1};
+static unsigned int quad_indices[6] = {0, 2, 1, 2, 3, 1};
 
 // HUD material
 static struct Material hud_material = {
@@ -71,7 +70,7 @@ static float aspect_ratio = ((float) WINDOW_WIDTH / (float) WINDOW_HEIGHT);
 #define CHAR_WIDTH_SCREEN (48 * 2) // todo: this is duplicated in shader code...
 #define CHAR_HEIGHT_SCREEN (24 * 2)
 #define MAX_CHAR_ON_SCREEN (48 * 24 * 2)
-struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {0};
+struct char_instance screen_chars[MAX_CHAR_ON_SCREEN] = {{0,'H'},{1,'e'},{2,'l'},{3,'l'},{4,'o'}};
 static struct Mesh quad_mesh = {
     .material = &hud_material,
     .indexCount = 6,
