@@ -263,7 +263,7 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
         .width = width,
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
-        .presentMode = WGPUPresentMode_Immediate // *info* use fifo for vsync
+        .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(g_wgpu.surface, &g_wgpu.config);
 
@@ -408,7 +408,7 @@ int wgpuCreateMaterial(struct Material *material) {
     
     WGPUPrimitiveState prim = {0};
     prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe
-    prim.cullMode = WGPUCullMode_Back;
+    //prim.cullMode = WGPUCullMode_Back;
     prim.frontFace = WGPUFrontFace_CW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};

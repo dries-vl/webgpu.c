@@ -4,6 +4,10 @@
 #define WINDOW_WIDTH 1920 // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
 #define WINDOW_HEIGHT 1080 // todo: make this global variable that can be modified
 
+struct Vector3 {
+    float x, y, z;
+};
+
 // Basic material
 static struct Material basic_material = {
     .vertex_layout = STANDARD_LAYOUT,

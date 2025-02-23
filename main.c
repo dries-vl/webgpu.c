@@ -29,10 +29,6 @@ struct ButtonState {
 };
 struct ButtonState buttonState = {0, 0, 0, 0};
 
-struct Vector3 {
-    float x, y, z;
-};
-
 int screen_chars_index = 0;
 int current_screen_char = 0;
 void print_on_screen(char *str) {
@@ -225,6 +221,59 @@ float camera[16] = {
         0.0f, 0.0f, 1.0f, -300.0f,
         0.0f, 0.0f, 0.0f, 1
 };
+
+// add cube collision box
+struct Rigid_Body cubeCollisionBox = {
+    .vertices = (struct Vector3[]) {
+        {100.0f, 100.0f, 100.0f},
+        {100.0f, 100.0f, -100.0f},
+        {100.0f, -100.0f, 100.0f},
+        {100.0f, -100.0f, -100.0f},
+        {-100.0f, 100.0f, 100.0f},
+        {-100.0f, 100.0f, -100.0f},
+        {-100.0f, -100.0f, 100.0f},
+        {-100.0f, -100.0f, -100.0f}
+    },
+    .normals = (struct Vector3[]) {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+        {-1.0f, 0.0f, 0.0f},
+        {0.0f, -1.0f, 0.0f},
+        {0.0f, 0.0f, -1.0f}
+    },
+    .normal_count = 6,
+    .vertex_count = 8,
+    .position = {0.0f, 0.0f, 0.0f},
+    .radius = 3.0f
+};
+
+struct Rigid_Body cameraCollisionBox = {
+    .vertices = (struct Vector3[]) {
+        {20.0f, 20.0f, 20.0f},
+        {20.0f, 20.0f, -20.0f},
+        {20.0f, -120.0f, 20.0f},
+        {20.0f, -120.0f, -20.0f},
+        {-20.0f, 20.0f, 20.0f},
+        {-20.0f, 20.0f, -20.0f},
+        {-20.0f, -120.0f, 20.0f},
+        {-20.0f, -120.0f, -20.0f}
+    },
+    .normals = (struct Vector3[]) {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+        {-1.0f, 0.0f, 0.0f},
+        {0.0f, -1.0f, 0.0f},
+        {0.0f, 0.0f, -1.0f}
+    },
+    .normal_count = 6,
+    .vertex_count = 8,
+    .position = {0.0f, 0.0f, -300.0f},
+    .radius = 3.0f
+};
+
+
 struct Speed {
     float x;
     float y;
@@ -234,23 +283,68 @@ struct Speed {
     float roll;
 };
 struct Speed cameraSpeed = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // only y-speed used
-float movementSpeed = 7.5f;
+float movementSpeed = 0.5f;
+
+
+void collisionDetectionCamera(struct Rigid_Body cubeCollisionBox) { // nu enkel met onze collision box
+    struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
+    if (separation.x != 0.0f || separation.y != 0.0f || separation.z != 0.0f) {
+        camera[3] += separation.x; // undo movement
+        camera[7] += separation.y;
+        camera[11] += separation.z;
+        cameraCollisionBox.position.x = camera[3];
+        cameraCollisionBox.position.y = camera[7];
+        cameraCollisionBox.position.z = camera[11];
+        //printf("Collision detected\n");
+        float proj = dot(normalise(separation), (struct Vector3){cameraSpeed.x, cameraSpeed.y, cameraSpeed.z});
+        cameraSpeed.x = 0; // proj * normalise(separation).x;
+        cameraSpeed.y = 0; // proj * normalise(separation).y;
+        cameraSpeed.z = 0; // proj * normalise(separation).z;
+    }
+    char output_string[256];
+    snprintf(output_string, sizeof(output_string), "%4.2f,%4.2f,%4.2f\n", separation.x, separation.y, separation.z);
+    print_on_screen(output_string);
+    
+    char output_string2[256];
+    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", camera[3], camera[7], camera[11]);
+    print_on_screen(output_string2);
+}
+
 void cameraMovement(float *camera, float speed, float ms) {
+    cameraSpeed.x = speed * (buttonState.right - buttonState.left);
+    cameraSpeed.z = speed * -(buttonState.forward - buttonState.backward);
+    
     float yawRot[16] = {
         cos(cameraRotation[0]), 0.0f, sin(cameraRotation[0]),
         0.0f,       1.0f, 0.0f,
        -sin(cameraRotation[0]), 0.0f, cos(cameraRotation[0])
     };
-    float xSpeed = speed * ms * (buttonState.right - buttonState.left);
+    float xSpeed = cameraSpeed.x * ms;
     float ySpeed = cameraSpeed.y * ms;
-    float zSpeed = speed * ms * -(buttonState.forward - buttonState.backward);
+    float zSpeed = cameraSpeed.z * ms;
     float transSpeed[3] = {xSpeed, ySpeed, zSpeed};
     multiply(yawRot, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
     move(movit, camera);
+    cameraCollisionBox.position.x = camera[3];
+    cameraCollisionBox.position.y = camera[7];
+    cameraCollisionBox.position.z = camera[11];
+    
+    collisionDetectionCamera(cubeCollisionBox);
+    char output_string2[256];
+    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", cameraSpeed.x, cameraSpeed.y, cameraSpeed.z);
+    print_on_screen(output_string2);
+    /*
+    char output_string[256];
+    snprintf(output_string, sizeof(output_string), "%4.2f,%4.2f,%4.2f\n", cameraCollisionBox.position.x, cameraCollisionBox.position.y, cameraCollisionBox.position.z);
+    print_on_screen(output_string);
+    char output_string2[256];
+    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", camera[3], camera[7], camera[11]);
+    print_on_screen(output_string2);
+    */
 }
 void applyGravity(struct Speed *speed, float *pos, float ms) { // gravity as velocity instead of acceleration
-    float gravity = 9.81f * 0.001f;
+    float gravity = 9.81f * 0.0005f;
     float gravitySpeed = gravity * ms;
     if (pos[1] > 0.0f){
         speed->y -= gravitySpeed;
@@ -258,6 +352,7 @@ void applyGravity(struct Speed *speed, float *pos, float ms) { // gravity as vel
     }
     else { // some sort of hit the ground / collision detection
         speed->y = 0.0f;
+        camera[7] = 0.0f;
     }
 }
 
@@ -687,7 +782,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         cameraMovement(camera, movementSpeed, debug_info.ms_last_frame);
         float cameraLocation[3] = {camera[3], camera[7], camera[11]};
         applyGravity(&cameraSpeed, cameraLocation, debug_info.ms_last_frame);
-        camera[7] = cameraLocation[1];
+        //collisionDetectionCamera(cubeCollisionBox);
+        // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
+        //printf("Collision detected: %4.2f\n", separation.x);
+        //camera[7] = cameraLocation[1];
         float inv[16];
         inverseViewMatrix(camera, inv);
         wgpuSetUniformValue(&basic_material, timeOffset, &timeVal, sizeof(float));
@@ -707,6 +805,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         memset(screen_chars, 0, sizeof(screen_chars));
 
         draw_debug_info();
+        if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {
+            printf("Camera speed: %4.2f %4.2f %4.2f\n", cameraSpeed.x, cameraSpeed.y, cameraSpeed.z);
+        }
     }
     
     return 0;

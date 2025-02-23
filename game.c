@@ -6,6 +6,15 @@ struct game_data {
     struct Mesh meshes[MAX_MESHES];
     struct Material materials[MAX_MATERIALS];
 };
+
+struct Rigid_Body {
+    struct Vector3 position;
+    struct Vector3 *vertices;
+    struct Vector3 *normals;
+    int vertex_count;
+    int normal_count;
+    float radius;
+};
 /* GAME STRUCTS */
 
 /* GLOBAL STATE OF THE GAME */
@@ -65,3 +74,102 @@ void wgpuSetUniformValue(struct Material *material, int offset, const void* data
     }
     memcpy(material->uniformData + offset, data, dataSize);
 }
+
+
+// ------------------------------------------------------FYSICS--------------------------------------------------------------
+
+float dot(struct Vector3 a, struct Vector3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+// Helper: Add two vectors
+struct Vector3 add(struct Vector3 a, struct Vector3 b) {
+    struct Vector3 result = { a.x + b.x, a.y + b.y, a.z + b.z };
+    return result;
+}
+// normalise vector
+struct Vector3 normalise(struct Vector3 a) {
+    if (a.x == 0.0f && a.y == 0.0f && a.z == 0.0f) { // division by zero
+        return a;
+    }
+    float length = sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+    struct Vector3 result = { a.x / length, a.y / length, a.z / length };
+    return result;
+}
+
+int detectRadialCollision(struct Vector3 position1, struct Vector3 position2, float radius1, float radius2) { // returns boolean
+    float distance = (position1.x - position2.x) * (position1.x - position2.x) +
+                           (position1.y - position2.y) * (position1.y - position2.y) +
+                           (position1.z - position2.z) * (position1.z - position2.z);
+    return distance < (radius1 + radius2) * (radius1 + radius2);
+}
+struct Vector3 detectCollision(struct Rigid_Body body1, struct Rigid_Body body2) { // is passed by value // maybe make version that stops at non collision
+    int normal_count = body1.normal_count + body2.normal_count;
+    int collision = 1; // assume collision, is boolean
+    float separation = -1000.0f; // make bigger!!!!!!!!!!!!!!!!
+    struct Vector3 collisionNormal = {0.0f, 0.0f, 0.0f};
+
+    for (int n = 0; n < normal_count; n++) {
+        struct Vector3 normal = n < body1.normal_count ? body1.normals[n] : body2.normals[n - body1.normal_count];
+        normal = normalise(normal);
+        float smallest1 = dot(add(body1.vertices[0], body1.position), normal);
+        float largest1 = smallest1;
+        for (int v = 1; v < body1.vertex_count; v++) {
+            struct Vector3 vertex = add(body1.vertices[v], body1.position);
+            float projection = dot(vertex, normal);
+            if (projection < smallest1) {
+                smallest1 = projection;
+            } else if (projection > largest1) {
+                largest1 = projection;
+            }
+        }
+        float smallest2 = dot(add(body2.vertices[0], body2.position), normal);
+        float largest2 = smallest2;
+        for (int v = 1; v < body2.vertex_count; v++) {
+            struct Vector3 vertex = add(body2.vertices[v], body2.position);
+            float projection = dot(vertex, normal);
+            if (projection < smallest2) {
+                smallest2 = projection;
+            } else if (projection > largest2) {
+                largest2 = projection;
+            }
+        }
+        if (largest1 < smallest2 || largest2 < smallest1) {
+            if (collision == 1) {
+                collision = 0;
+                separation = 1000.0f; // make bigger!!!!!!!!!!!!!!!!
+                collisionNormal = (struct Vector3){0.0f, 0.0f, 0.0f};
+                return collisionNormal; // temporary no collision return 0,0,0
+            }
+            float separationTemp = largest1 < smallest2 ? smallest2 - largest1 : smallest1 - largest2;
+            if (separationTemp < separation) {
+                separation = separationTemp;
+                collisionNormal.x = normal.x;
+                collisionNormal.y = normal.y;
+                collisionNormal.z = normal.z;
+            }
+        }
+        else if (collision == 1){
+            float overlap1 = largest1 - smallest2;
+            float overlap2 = largest2 - smallest1;
+            overlap1 = fabs(overlap1);
+            overlap2 = fabs(overlap2);
+            float overlap = overlap1 < overlap2 ? overlap1 : overlap2;
+            if (-overlap > separation) { // remember that separation is negative
+                separation = -overlap;
+                collisionNormal.x = normal.x;
+                collisionNormal.y = normal.y;
+                collisionNormal.z = normal.z;
+            }
+        }
+    }
+    collisionNormal = normalise(collisionNormal);
+    collisionNormal.x *= separation;
+    collisionNormal.y *= separation;
+    collisionNormal.z *= separation;
+    collisionNormal.x = body1.position.x > collisionNormal.x ? -collisionNormal.x : collisionNormal.x;
+    collisionNormal.y = body1.position.y > collisionNormal.y ? -collisionNormal.y : collisionNormal.y;
+    collisionNormal.z = body1.position.z > collisionNormal.z ? -collisionNormal.z : collisionNormal.z;
+    printf("collision: %f, %f, %f\n", collisionNormal.x, collisionNormal.y, collisionNormal.z);
+    return collisionNormal;
+
+}; // SAT
