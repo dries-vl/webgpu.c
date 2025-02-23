@@ -16,22 +16,6 @@ extern float wgpuDrawFrame(void);
 
 static bool g_Running = true;
 
-int screen_chars_index = 0;
-int current_screen_char = 0;
-void print_on_screen(char *str) {
-    for (int i = 0; str[i] != '\0'; i++) {
-        if (i >= CHAR_WIDTH_SCREEN) break;
-        if (str[i] == '\n') {
-            current_screen_char = ((current_screen_char / CHAR_WIDTH_SCREEN) + 1) * CHAR_WIDTH_SCREEN;
-            continue;
-        }
-        screen_chars[screen_chars_index] = (struct char_instance) {.i_pos={current_screen_char}, .i_char=(int) str[i]};
-        screen_chars_index++;
-        current_screen_char++;
-        quad_mesh.instanceCount = screen_chars_index;
-    }
-}
-
 void set_instances(struct Mesh *mesh, struct Instance *instances, int instanceCount) {
     free(mesh->instances);
     mesh->instances = instances;
@@ -474,7 +458,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         cameraMovement(camera, movementSpeed, debug_info.ms_last_frame);
         float cameraLocation[3] = {camera[3], camera[7], camera[11]};
         applyGravity(&cameraSpeed, cameraLocation, debug_info.ms_last_frame);
-        camera[7] = cameraLocation[1];
+        //collisionDetectionCamera(cubeCollisionBox);
+        // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
+        //printf("Collision detected: %4.2f\n", separation.x);
+        //camera[7] = cameraLocation[1];
         float inv[16];
         inverseViewMatrix(camera, inv);
         wgpuSetUniformValue(&basic_material, timeOffset, &timeVal, sizeof(float));
@@ -494,6 +481,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         memset(screen_chars, 0, sizeof(screen_chars));
 
         draw_debug_info();
+        if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {
+            printf("Camera speed: %4.2f %4.2f %4.2f\n", cameraSpeed.x, cameraSpeed.y, cameraSpeed.z);
+        }
     }
     
     return 0;
