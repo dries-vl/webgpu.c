@@ -37,6 +37,11 @@ struct TextureLayout {
 #define STANDARD_MAX_TEXTURES 4
 static const struct TextureLayout TEXTURE_LAYOUT_STANDARD = {.layout_index=0, .max_textures=STANDARD_MAX_TEXTURES};
 
+struct MappedMemory {
+    void *data;     // Base pointer to mapped file data
+    void *mapping;  // Opaque handle for the mapping (ex. Windows HANDLE)
+};
+
 struct Material {
     int used;
     int hash; // unique hash based on url/name of material
@@ -61,6 +66,7 @@ struct Mesh {
     unsigned int indexCount;
     unsigned int vertexCount;
     unsigned int instanceCount;
+    struct MappedMemory mm;
 };
 
 // todo: one big static array of memory

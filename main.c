@@ -8,62 +8,115 @@
 
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
 // todo: add functions to remove meshes from the scene, and automatically remove materials/pipelines that have no meshes anymore (?)
-extern void  wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height);
-extern int   wgpuCreateMaterial(struct Material *material);
-extern int   wgpuCreateMesh(int materialID, struct Mesh *mesh);
-extern int   wgpuAddTexture(int mesh_id, const char* texturePath);
+/* GRAPHICS LAYER API */
+extern void  wgpuInit(void **hInstance, void **hwnd, int width, int height);
+extern int   wgpuCreateMaterial(struct Material *material); // todo: do not pass struct
+extern int   wgpuCreateMesh(int materialID, struct Mesh *mesh); // todo: do not pass struct
+extern int   wgpuAddTexture(int mesh_id, struct MappedMemory *mm, int w, int h);
 extern float wgpuDrawFrame(void);
+/* PLATFORM LAYER API */
+
 
 static bool g_Running = true;
 
 void set_instances(struct Mesh *mesh, struct Instance *instances, int instanceCount) {
-    free(mesh->instances);
     mesh->instances = instances;
     mesh->instanceCount = instanceCount;
 }
 
+
+
+
+/* FILE MAPPING */
+struct MappedMemory map_file(const char *filename) {
+    struct MappedMemory mm = {0};
+    HANDLE hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "Failed to open file: %s\n", filename);
+        return mm;
+    }
+    HANDLE hMapping = CreateFileMappingA(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+    CloseHandle(hFile); // File handle can be closed once mapping is created.
+    if (!hMapping) {
+        fprintf(stderr, "Failed to create mapping for: %s\n", filename);
+        return mm;
+    }
+    void *base = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+    if (!base) {
+        fprintf(stderr, "Failed to map view for: %s\n", filename);
+        CloseHandle(hMapping);
+        return mm;
+    }
+    mm.data = base;
+    mm.mapping = (void*)hMapping;
+    return mm;
+}
+static void unmap_file(struct MappedMemory *mm) {
+    if (mm->data) {
+        UnmapViewOfFile(mm->data);
+    }
+    if (mm->mapping) {
+        CloseHandle((HANDLE)mm->mapping);
+    }
+    mm->data = NULL;
+    mm->mapping = NULL;
+}
+/* FILE MAPPING */
+/* MEMORY MAPPING MESH */
 typedef struct {
     unsigned int vertexCount;
     unsigned int indexCount;
     unsigned int vertexArrayOffset;
     unsigned int indexArrayOffset;
 } MeshHeader;
-struct Mesh read_mesh_binary(const char *binFilename) {
-    FILE *file = fopen(binFilename, "rb");
-    if (!file) {
-        fprintf(stderr, "Failed to open %s for reading\n", binFilename);
+struct Mesh load_mesh(const char *filename) {
+    struct Mesh mesh = {0};
+    struct MappedMemory mm = map_file(filename);
+    if (!mm.data) {
+        fprintf(stderr, "Failed to load mesh: %s\n", filename);
         exit(1);
     }
-    MeshHeader header;
-    fread(&header, sizeof(MeshHeader), 1, file);
-    struct Vertex *vertices_in = malloc(header.vertexCount * sizeof(struct Vertex));
-    if (!vertices_in) {
-        fprintf(stderr, "Memory allocation failed for vertices_in\n");
+    
+    MeshHeader *header = (MeshHeader*)mm.data;
+    mesh.vertexCount = header->vertexCount;
+    mesh.indexCount  = header->indexCount;
+    
+    // Set pointers into the mapped memory using the header's offsets
+    mesh.vertices = (unsigned char*)mm.data + header->vertexArrayOffset;
+    mesh.indices  = (unsigned int*)((unsigned char*)mm.data + header->indexArrayOffset);
+    
+    // We allocate a default instance (e.g. a 3-float position)
+    mesh.instanceCount = 1;
+    static float default_instance[10] = {0};  // stack-allocated zeroed array
+    mesh.instances = default_instance; // please set the value of instances later on (!)
+    if (!mesh.instances) {
+        printf("Failed to allocate instance data\n");
+        unmap_file(&mm);
         exit(1);
     }
-    unsigned int *indices_in = malloc(header.indexCount * sizeof(unsigned int));
-    if (!indices_in) {
-        fprintf(stderr, "Memory allocation failed for indices_in\n");
-        exit(1);
-    }
-    fseek(file, header.vertexArrayOffset, SEEK_SET);
-    fread(vertices_in, sizeof(struct Vertex), header.vertexCount, file);
-    fseek(file, header.indexArrayOffset, SEEK_SET);
-    fread(indices_in, sizeof(unsigned int), header.indexCount, file);
-    fclose(file);
-    size_t fileSize = header.indexArrayOffset + header.indexCount * sizeof(unsigned int);
-    double fileSizeKB = fileSize / 1024.0;
-    printf("Size of struct Vertex: %zu bytes\n", sizeof(struct Vertex));
-    printf("Unique vertex count: %u\n", header.vertexCount);
-    printf("Index count: %u\n", header.indexCount);
-    printf("Expected binary file size: %.2f KB\n", fileSizeKB);
-    struct Instance *instances_in = malloc(sizeof(struct Instance) * 1);
-    struct Instance singleInstance = {0};
-    *instances_in = singleInstance;
-    return (struct Mesh) {
-        .vertices=vertices_in, .indices=indices_in, .instances = instances_in,
-        .vertexCount=header.vertexCount, .indexCount=header.indexCount, .instanceCount = 1};
+    
+    memset(mesh.texture_ids, 0, sizeof(mesh.texture_ids));
+    
+    mesh.mm = mm;
+    return mesh;
 }
+/* MEMORY MAPPING MESH */
+/* MEMORY MAPPING TEXTURE */
+typedef struct {
+    int width;
+    int height;
+} ImageHeader;  
+struct MappedMemory load_texture(const char *filename, int *out_width, int *out_height) {
+    struct MappedMemory mm = map_file(filename);
+
+    ImageHeader *header = (ImageHeader*)mm.data;
+    *out_width  = header->width;
+    *out_height = header->height;
+    return mm;
+}
+/* MEMORY MAPPING TEXTURE */
+
 
 
 
@@ -384,7 +437,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ShowCursor(FALSE); // hide the cursor
     /* WINDOWS-ONLY SPECIFIC SETTINGS */
     
-    wgpuInit(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
+    wgpuInit(&hInstance, &hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
 
     // todo: lighting
     // todo: cubemap sky
@@ -395,7 +448,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // todo: use precompiled shader for faster loading
     // todo: use glsl instead of wgsl for C-style syntax
     
-    // Add a projection matrix (a 4x4 matrix).  
+    // Add a projection matrix (a 4x4 matrix)
     float view[16] = {
     1.0 / (tan(fov / 2.0) * aspect_ratio), 0.0f,  0.0f,                               0.0f,
     0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
@@ -404,14 +457,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     };
     
     // load teapot mesh
-    struct Mesh teapot_mesh = read_mesh_binary("data/models/bin/teapot.bin");
+    struct Mesh teapot_mesh = load_mesh("data/models/bin/teapot.bin");
     struct Instance instance1 = {0.0f, 0.0f, 0.0f};
     struct Instance instance2 = {0.0f, 80.0f, 0.0f};
     struct Instance instances[2] = {instance1, instance2};
     set_instances(&teapot_mesh, instances, 2);
     
     // load cube mesh
-    struct Mesh cube_mesh = read_mesh_binary("data/models/bin/cube.bin");
+    struct Mesh cube_mesh = load_mesh("data/models/bin/cube.bin");
     struct Instance cube = {0.0f, 0.0f, 0.0f};
     set_instances(&cube_mesh, &cube, 1);
 
@@ -425,9 +478,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int teapot_mesh_id = wgpuCreateMesh(basic_material_id, &teapot_mesh);
     int cube_mesh_id = wgpuCreateMesh(basic_material_id, &cube_mesh);
     int quad_mesh_id = wgpuCreateMesh(hud_material_id, &quad_mesh);
+    unmap_file(&teapot_mesh.mm);
+    unmap_file(&cube_mesh.mm);
 
-    int texSlot2 = wgpuAddTexture(cube_mesh_id, "data/textures/bin/font_atlas.bin");
-    int font_atlas_texture_slot = wgpuAddTexture(quad_mesh_id, "data/textures/bin/font_atlas.bin");
+    int w, h = 0;
+    struct MappedMemory font_texture_memory = load_texture("data/textures/bin/font_atlas.bin", &w, &h);
+    int cube_texture_1 = wgpuAddTexture(cube_mesh_id, &font_texture_memory, w, h);
+    int quad_texture_1 = wgpuAddTexture(quad_mesh_id, &font_texture_memory, w, h);
+    unmap_file(&font_texture_memory);
 
     int aspect_ratio_uniform = wgpuAddUniform(&hud_material, &aspect_ratio, sizeof(float));
     int brightnessOffset = wgpuAddUniform(&basic_material, &brightness, sizeof(float));

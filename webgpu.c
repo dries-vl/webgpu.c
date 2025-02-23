@@ -1,9 +1,11 @@
-#include <windows.h>
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <time.h>
+
+// todo: no global state
 
 #include "game_data.h" // todo: remove this header
 #include "wgpu.h"
@@ -147,7 +149,7 @@ static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice dev
 
 // -----------------------------------------------------------------------------
 // wgpuInit: Initialize WebGPU, create global bind group layouts, default texture, etc.
-void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
+void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
     g_wgpu = (WebGPUContext){0}; // initialize all fields to zero
 
     // Instance creation (your instance extras, etc.)
@@ -165,10 +167,13 @@ void wgpuInit(HINSTANCE hInstance, HWND hwnd, int width, int height) {
     g_wgpu.instance = wgpuCreateInstance(&instDesc);
     assert(g_wgpu.instance);
 
+    /* WINDOWS SPECIFIC */
+    // todo: hide windows specific
     WGPUSurfaceDescriptorFromWindowsHWND chained_desc = {0};
     chained_desc.chain.sType = WGPUSType_SurfaceDescriptorFromWindowsHWND;
-    chained_desc.hwnd = hwnd;
-    chained_desc.hinstance = hInstance;
+    chained_desc.hwnd = *hwnd;
+    chained_desc.hinstance = *hInstance;
+    /* WINDOWS SPECIFIC */
 
     WGPUSurfaceDescriptor surface_desc = {0};
     surface_desc.nextInChain = (const WGPUChainedStruct*)&chained_desc;
@@ -567,75 +572,15 @@ int wgpuCreateMesh(int materialID, struct Mesh *mesh) {
     return meshID;
 }
 
-// -----------------------------------------------------------------------------
-typedef struct {
-    int width;
-    int height;
-} ImageHeader;
-typedef struct {
-    void* data;     // Pointer to RGBA pixel data
-    HANDLE mapping; // Handle to the file mapping
-} MappedTexture;
-MappedTexture load_binary_texture(const char* filename, int* out_width, int* out_height) {
-    MappedTexture result = {NULL, NULL}; // Initialize result struct
-
-    HANDLE hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
-                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        printf("Failed to open file: %s\n", filename);
-        return result;
-    }
-
-    HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
-    CloseHandle(hFile); // Safe to close the file handle now
-    if (!hMapping) {
-        printf("Failed to create file mapping for: %s\n", filename);
-        return result;
-    }
-
-    void* file_data = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
-    if (!file_data) {
-        printf("Failed to map file: %s\n", filename);
-        CloseHandle(hMapping);
-        return result;
-    }
-
-    // Read header
-    ImageHeader* header = (ImageHeader*)file_data;
-    *out_width = header->width;
-    *out_height = header->height;
-
-    // Set the mapped texture result
-    result.data = (unsigned char*)file_data + sizeof(ImageHeader);
-    result.mapping = hMapping; // Keep track of mapping handle for later cleanup
-
-    return result;
-}
-// Function to release the memory-mapped texture
-void free_binary_texture(MappedTexture* texture) {
-    if (texture->data) {
-        UnmapViewOfFile((unsigned char*)texture->data - sizeof(ImageHeader)); // Restore original mapping pointer
-    }
-    if (texture->mapping) {
-        CloseHandle(texture->mapping);
-    }
-    texture->data = NULL;
-    texture->mapping = NULL;
-}
-
 // wgpuAddTexture: Load a PNG file and add it to the pipeline’s texture bind group.
-int wgpuAddTexture(int mesh_id, const char* filename) {
+int wgpuAddTexture(int mesh_id, struct MappedMemory *mm, int w, int h) {
     GpuMesh* mesh_data = &g_game_data_gpu.meshes[mesh_id];
     GpuMaterial* material_data = &g_game_data_gpu.materials[mesh_data->materialID];
     if (mesh_data->textureCount >= material_data->material->texture_layout->max_textures) { // todo: this check needs to be based on the texture layout
         fprintf(stderr, "No more texture slots in mesh!");
-        fprintf(stderr, filename); fprintf(stderr, "\n");
         return -1;
     }
     int slot = mesh_data->textureCount; // e.g. 0 => binding=1, etc.
-
-    int w, h;
-    MappedTexture texture_data = load_binary_texture(filename, &w, &h);
 
     // Create texture with the given dimensions and RGBA format.
     WGPUTextureDescriptor td = {0};
@@ -656,9 +601,7 @@ int wgpuAddTexture(int mesh_id, const char* filename) {
     tdl.bytesPerRow  = 4 * w; // 4 bytes per pixel (RGBA)
     tdl.rowsPerImage = h;
     WGPUExtent3D ext = { .width = (uint32_t)w, .height = (uint32_t)h, .depthOrArrayLayers = 1 };
-    wgpuQueueWriteTexture(g_wgpu.queue, &ict, texture_data.data, (size_t)(4 * w * h), &tdl, &ext);
-
-    free_binary_texture(&texture_data);
+    wgpuQueueWriteTexture(g_wgpu.queue, &ict, mm->data, (size_t)(4 * w * h), &tdl, &ext);
 
     // Create view
     WGPUTextureView view = wgpuTextureCreateView(tex, NULL);
@@ -688,8 +631,7 @@ int wgpuAddTexture(int mesh_id, const char* filename) {
     mesh_data->textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
     free(e);
 
-    printf("Added texture %s to mesh %d at slot %d (binding=%d)\n",
-           filename, mesh_id, slot, slot+1);
+    printf("Added texture to mesh %d at slot %d (binding=%d)\n", mesh_id, slot, slot+1);
 
     return slot;
 }
@@ -707,21 +649,13 @@ float fenceAndWait(WGPUQueue queue) {
     wgpuQueueOnSubmittedWorkDone(queue, fenceCallback, (void*)&workDone);
 
     // Busy-wait until the flag is set.
-    // (In a production app you might want to sleep briefly or use a more sophisticated wait.)
-    LARGE_INTEGER query_perf_result;
-	QueryPerformanceFrequency(&query_perf_result);
-	long ticks_per_second = query_perf_result.QuadPart;
-    LARGE_INTEGER current_tick_count;
-    QueryPerformanceCounter(&current_tick_count);
+    int time_before_ns = time(NULL);
     while (!workDone) {
         wgpuDevicePoll(g_wgpu.device, false, NULL);
-        Sleep(0);
+        // Sleep(0);
     }
-    LARGE_INTEGER new_tick_count;
-    QueryPerformanceCounter(&new_tick_count);
-    long ticks_elapsed = new_tick_count.QuadPart - current_tick_count.QuadPart;
-    current_tick_count = new_tick_count;
-    float ms_waited_on_gpu = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
+    int time_after_ns = time(NULL);
+    float ms_waited_on_gpu = ((float) (time_before_ns / 1000) / (float) (time_after_ns / 1000));
     return ms_waited_on_gpu;
 }
 
