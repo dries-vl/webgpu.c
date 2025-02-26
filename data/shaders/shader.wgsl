@@ -9,10 +9,14 @@ var<uniform> uniforms : Uniforms;
 
 struct VertexInput {
     @location(0) position : vec3<f32>,
-    @location(1) color : vec3<f32>,
-    @location(2) uv : vec2<f32>,
-    @location(3) instanceOffset : vec3<f32>, // NEW: per-instance offset.
-};
+    @location(1) normal : vec4<f32>,
+    @location(2) tangent : vec4<f32>,
+    @location(3) uv : vec2<f32>,
+    @location(4) weights : vec4<f32>,
+    @location(5) indices : vec4<u32>,
+    @location(6) instance : vec3<f32>,
+}
+
 
 // Vertex output.
 struct VertexOutput {
@@ -35,7 +39,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     }
 
     var output: VertexOutput;
-    output.pos = vec4<f32>(input.position * 100.0 + input.instanceOffset, 1.0) * uniforms.camera;
+    output.pos = vec4<f32>(input.position * 100.0 + input.instance, 1.0) * uniforms.camera;
     output.pos = output.pos * uniforms.view;
     // output.pos.z = 0.5f; // todo: this might just be the cause of the incorrect ordering of faces / culling issues
     output.color = color;

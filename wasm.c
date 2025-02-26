@@ -3,7 +3,7 @@ extern void  wgpuInit(int width, int height);
 extern int   wgpuCreateMaterial(void* material);
 extern int   wgpuCreateMesh(int materialID, void* mesh);
 extern int   wgpuAddTexture(int mesh_id, const char* texturePath);
-extern float wgpuDrawFrame(void);
+extern float drawGPUFrame(void);
 
 #ifdef __wasm__
 #define sqrt(x) (1 + 0.5*((x)-1) - 0.125*(((x)-1)*((x)-1)))
@@ -53,7 +53,7 @@ void get_mesh_struct_offsets(int* offsets) {
     offsets[4] = offsetof(struct Mesh, texture_ids);
     offsets[5] = offsetof(struct Mesh, indexCount);
     offsets[6] = offsetof(struct Mesh, vertexCount);
-    offsets[7] = offsetof(struct Mesh, instanceCount);
+    offsets[7] = offsetof(struct Mesh, instance_count);
 }
 #endif
 
@@ -75,15 +75,15 @@ int main(void) {
 
     int font_atlas_texture_slot = wgpuAddTexture(quad_mesh_id, "data/textures/bin/font_atlas.bin");
 
-    int aspect_ratio_uniform = wgpuAddUniform(&hud_material, &aspect_ratio, sizeof(float));
-    int brightnessOffset = wgpuAddUniform(&basic_material, &brightness, sizeof(float));
-    int timeOffset = wgpuAddUniform(&basic_material, &timeVal, sizeof(float));
-    int cameraOffset = wgpuAddUniform(&basic_material, camera, sizeof(camera));
-    int viewOffset = wgpuAddUniform(&basic_material, view, sizeof(view));
+    int aspect_ratio_uniform = addUniform(&hud_material, &aspect_ratio, sizeof(float));
+    int brightnessOffset = addUniform(&basic_material, &brightness, sizeof(float));
+    int timeOffset = addUniform(&basic_material, &timeVal, sizeof(float));
+    int cameraOffset = addUniform(&basic_material, camera, sizeof(camera));
+    int viewOffset = addUniform(&basic_material, view, sizeof(view));
 
     // Main render loop (simplified for demonstration)
     for (int i = 0; i < 3; i++) {
-        wgpuDrawFrame();
+        drawGPUFrame();
     }
     return 0;
 }

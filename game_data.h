@@ -6,67 +6,41 @@
 #define MAX_MESHES                128
 #define UNIFORM_BUFFER_CAPACITY   1024  // bytes per pipeline’s uniform buffer
 
-struct Vertex {
+struct Vertex { // 32 bytes
     float position[3]; // 12 bytes
-    float normal[3];   // 12 bytes
-    float uv[2];       // 8 bytes
-    char color[3];     // 3 bytes
-    char pad;          // 1 byte of padding so the total size is 36 bytes
+    unsigned char normal[4];   // 4 bytes
+    unsigned char tangent[4];   // 4 bytes
+    unsigned short uv[2];       // 4 bytes
+    unsigned char bone_weights[4]; // 4 bytes
+    unsigned char bone_indices[4]; // 4 bytes
 };
-struct Instance {
+struct Instance { // 12 bytes
     float position[3];
 };
-struct vert2 {
+struct Vertex2D { // 8 bytes
     float position[2];
     float uv[2];
 };
-struct char_instance {
+struct CharInstance { // 8 bytes
     int i_pos;
     int i_char;
 };
-// enum that refers to the index in the list of predefined vertex layouts
-enum VertexLayout {
-    STANDARD_LAYOUT,
-    HUD_LAYOUT
-};
-
-struct TextureLayout {
-    int layout_index;
-    int max_textures;
-};
-#define STANDARD_MAX_TEXTURES 4
-static const struct TextureLayout TEXTURE_LAYOUT_STANDARD = {.layout_index=0, .max_textures=STANDARD_MAX_TEXTURES};
 
 struct MappedMemory {
     void *data;     // Base pointer to mapped file data
     void *mapping;  // Opaque handle for the mapping (ex. Windows HANDLE)
 };
 
-struct Material {
-    int used;
-    int hash; // unique hash based on url/name of material
-    int index; // index in material array
-    int use_alpha;
-    int use_textures;
-    int use_uniforms;
-    int update_instances;
-    enum VertexLayout vertex_layout;
-    struct TextureLayout *texture_layout; // ptr to static struct
-    const char* shader; // todo: pre-compile
-    unsigned char uniformData[UNIFORM_BUFFER_CAPACITY];
-    int uniformCurrentOffset;
-};
-
-struct Mesh {
-    struct Material *material;
-    unsigned int *indices;
-    void *vertices;
-    void *instances;
-    unsigned char texture_ids[16]; // assume there will never be more than 16 textures on a mesh
-    unsigned int indexCount;
-    unsigned int vertexCount;
-    unsigned int instanceCount;
-    struct MappedMemory mm;
+// todo: for createTexture: don't pass struct, just data ptr, and free mapping yourself
+// todo: maybe use trick from SBarrett, to avoid keeping counts of arrays everywhere
+enum MaterialFlags {
+    USE_ALPHA               = 1 << 0,//1
+    USE_TEXTURES            = 1 << 1,//2
+    USE_UNIFORMS            = 1 << 2,//4
+    UPDATE_INSTANCES        = 1 << 3,//8
+    STANDARD_VERTEX_LAYOUT  = 1 << 4,//16
+    HUD_VERTEX_LAYOUT       = 1 << 5,//32
+    STANDARD_TEXTURE_LAYOUT = 1 << 6 //64
 };
 
 // todo: one big static array of memory

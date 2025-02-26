@@ -1,5 +1,4 @@
 #include "game.c"
-#include "webgpu.c"
 
 #include <windows.h>
 #include <stdbool.h>
@@ -9,25 +8,41 @@
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
 // todo: add functions to remove meshes from the scene, and automatically remove materials/pipelines that have no meshes anymore (?)
 /* GRAPHICS LAYER API */
-extern void  wgpuInit(void **hInstance, void **hwnd, int width, int height);
-extern int   wgpuCreateMaterial(struct Material *material); // todo: do not pass struct
-extern int   wgpuCreateMesh(int materialID, struct Mesh *mesh); // todo: do not pass struct
-extern int   wgpuAddTexture(int mesh_id, struct MappedMemory *mm, int w, int h);
-extern float wgpuDrawFrame(void);
+// todo : platform provides these functions to presentation layer via a struct
+typedef void* GPUContext;
+extern GPUContext createGPUContext(void *hInstance, void *hwnd, int width, int height);
+extern int   createGPUMaterial(GPUContext context, enum MaterialFlags flags, const char *shader);
+extern int   createGPUMesh(GPUContext context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
+extern int   createGPUTexture(GPUContext context, int mesh_id, void *data, int w, int h);
+int          addGPUUniform(GPUContext context, int material_id, const void* data, int data_size);
+void         setGPUUniformValue(GPUContext context, int material_id, int offset, const void* data, int dataSize);
+extern void  setGPUInstanceBuffer(GPUContext context, int mesh_id, void* ii, int iic);
+extern float drawGPUFrame(GPUContext context);
 /* PLATFORM LAYER API */
+// memory map file / load file
+// networking functions
+// audio
+// window
+// event loop callback
+// ...
 
+// todo: add presentation layer that orchestrates the graphics layer (eg. webgpu.c)
+// todo: ... automatically based on the game state + game state deltas that it gets from the domain layer
+// todo: ... it also contains the UI
+
+// todo: |platform|--> |presentation| --> |domain|
+// todo:                              --> |graphics api|
+// todo:                              --> |platform api|
+// todo: platform initializes presentation layer, and provides it a struct with functions for platform-dependent things
+// todo: presentation initializes domain, and provides it with eg. save file content
+// BROWSER: rust bindgen main --> provide file/network/... functions
+// ...                        --> C presentation wasm --> rust wgpu graphics
+// ...                                             --> C domain wasm
 
 static bool g_Running = true;
 
-void set_instances(struct Mesh *mesh, struct Instance *instances, int instanceCount) {
-    mesh->instances = instances;
-    mesh->instanceCount = instanceCount;
-}
 
-
-
-
-/* FILE MAPPING */
+#pragma region FILE MAPPING
 struct MappedMemory map_file(const char *filename) {
     struct MappedMemory mm = {0};
     HANDLE hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL,
@@ -52,7 +67,7 @@ struct MappedMemory map_file(const char *filename) {
     mm.mapping = (void*)hMapping;
     return mm;
 }
-static void unmap_file(struct MappedMemory *mm) {
+void unmap_file(struct MappedMemory *mm) {
     if (mm->data) {
         UnmapViewOfFile(mm->data);
     }
@@ -70,8 +85,7 @@ typedef struct {
     unsigned int vertexArrayOffset;
     unsigned int indexArrayOffset;
 } MeshHeader;
-struct Mesh load_mesh(const char *filename) {
-    struct Mesh mesh = {0};
+struct MappedMemory load_mesh(const char *filename, void** v, int *vc, void** i, int *ic) {
     struct MappedMemory mm = map_file(filename);
     if (!mm.data) {
         fprintf(stderr, "Failed to load mesh: %s\n", filename);
@@ -79,27 +93,13 @@ struct Mesh load_mesh(const char *filename) {
     }
     
     MeshHeader *header = (MeshHeader*)mm.data;
-    mesh.vertexCount = header->vertexCount;
-    mesh.indexCount  = header->indexCount;
-    
     // Set pointers into the mapped memory using the header's offsets
-    mesh.vertices = (unsigned char*)mm.data + header->vertexArrayOffset;
-    mesh.indices  = (unsigned int*)((unsigned char*)mm.data + header->indexArrayOffset);
+    *vc = header->vertexCount;
+    *v = (unsigned char*)mm.data + header->vertexArrayOffset;
+    *ic  = header->indexCount;
+    *i  = (unsigned int*)((unsigned char*)mm.data + header->indexArrayOffset);
     
-    // We allocate a default instance (e.g. a 3-float position)
-    mesh.instanceCount = 1;
-    static float default_instance[10] = {0};  // stack-allocated zeroed array
-    mesh.instances = default_instance; // please set the value of instances later on (!)
-    if (!mesh.instances) {
-        printf("Failed to allocate instance data\n");
-        unmap_file(&mm);
-        exit(1);
-    }
-    
-    memset(mesh.texture_ids, 0, sizeof(mesh.texture_ids));
-    
-    mesh.mm = mm;
-    return mesh;
+    return mm;
 }
 /* MEMORY MAPPING MESH */
 /* MEMORY MAPPING TEXTURE */
@@ -116,7 +116,7 @@ struct MappedMemory load_texture(const char *filename, int *out_width, int *out_
     return mm;
 }
 /* MEMORY MAPPING TEXTURE */
-
+#pragma endregion
 
 
 
@@ -143,7 +143,7 @@ inline unsigned long long read_cycle_count() {
 
 
 
-/* RAW INPUT SETUP */
+#pragma region RAW INPUT SETUP
 typedef BOOL (WINAPI *RegisterRawInputDevices_t)(PCRAWINPUTDEVICE, UINT, UINT);
 typedef UINT (WINAPI *GetRawInputData_t)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
 
@@ -166,12 +166,12 @@ void load_raw_input_functions() {
         exit(1);
     }
 }
-/* RAW INPUT SETUP */
+#pragma endregion
 
 
 
 
-
+#pragma region INPUT EVENTS
 RAWINPUTDEVICE rid[2];
 HRESULT InitializeRawInput()
 {
@@ -298,6 +298,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
     }
     return DefWindowProc(hWnd, message, wParam, lParam);
 }
+#pragma endregion
 
 void set_fullscreen(HWND hwnd, int width, int height, int refreshRate) {
     DEVMODE devMode = {0};
@@ -389,6 +390,7 @@ typedef HRESULT (WINAPI *SetProcessDpiAwareness_t)(int);
 #define PROCESS_PER_MONITOR_DPI_AWARE 2
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
+    #pragma region WINDOWS-SPECIFIC SETUP
     (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
 
     // ----- TO CHECK STARTUP SPEED -----
@@ -436,8 +438,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     SetWindowPos(hwnd, NULL, x, y, WINDOW_WIDTH, WINDOW_HEIGHT, SWP_NOZORDER | SWP_SHOWWINDOW); // put window in middle of screen
     ShowCursor(FALSE); // hide the cursor
     /* WINDOWS-ONLY SPECIFIC SETTINGS */
+    #pragma endregion
     
-    wgpuInit(&hInstance, &hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
+    GPUContext context = createGPUContext(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
 
     // todo: lighting
     // todo: cubemap sky
@@ -448,54 +451,53 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // todo: use precompiled shader for faster loading
     // todo: use glsl instead of wgsl for C-style syntax
     
-    // Add a projection matrix (a 4x4 matrix)
-    float view[16] = {
-    1.0 / (tan(fov / 2.0) * aspect_ratio), 0.0f,  0.0f,                               0.0f,
-    0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
-    0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
-    0.0f,  0.0f, -1.0f,                               0.0f
-    };
-    
-    // load teapot mesh
-    struct Mesh teapot_mesh = load_mesh("data/models/bin/teapot.bin");
-    struct Instance instance1 = {0.0f, 0.0f, 0.0f};
-    struct Instance instance2 = {0.0f, 80.0f, 0.0f};
-    struct Instance instances[2] = {instance1, instance2};
-    set_instances(&teapot_mesh, instances, 2);
-    
-    // load cube mesh
-    struct Mesh cube_mesh = load_mesh("data/models/bin/cube.bin");
-    struct Instance cube = {0.0f, 0.0f, 0.0f};
-    set_instances(&cube_mesh, &cube, 1);
-
-
-    // CALLS TO GPU BACKEND
+    // CREATE MATERIALS
     // todo: create a function that does this automatically based on game state object
-    int basic_material_id = wgpuCreateMaterial(&basic_material);
-    int hud_material_id = wgpuCreateMaterial(&hud_material);
+    int basic_material_id = createGPUMaterial(context, basic_material, "data/shaders/shader.wgsl");
+    int hud_material_id = createGPUMaterial(context, hud_material, "data/shaders/hud.wgsl");
+    // CREATE MATERIALS
 
-    int ground_mesh_id = wgpuCreateMesh(basic_material_id, &ground_mesh);
-    int teapot_mesh_id = wgpuCreateMesh(basic_material_id, &teapot_mesh);
-    int cube_mesh_id = wgpuCreateMesh(basic_material_id, &cube_mesh);
-    int quad_mesh_id = wgpuCreateMesh(hud_material_id, &quad_mesh);
-    unmap_file(&teapot_mesh.mm);
-    unmap_file(&cube_mesh.mm);
+    // LOAD MESHES FROM DISK
+    int vc, ic; void *v, *i;
+    
+    struct MappedMemory teapot_mm = load_mesh("data/models/bin/teapot.bin", &v, &vc, &i, &ic);
+    struct Instance ii[2] = {{0.0f, 0.0f, 0.0f}, {0.0f, 80.0f, 0.0f}};
+    int teapot_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 2);
+    unmap_file(&teapot_mm);
 
+    struct MappedMemory cube_mm = load_mesh("data/models/bin/cube.bin", &v, &vc, &i, &ic);
+    struct Instance cube = {0.0f, 0.0f, 0.0f};
+    int cube_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 1);
+    unmap_file(&cube_mm);
+    // LOAD MESHES FROM DISK
+
+    // PREDEFINED MESHES
+    int ground_mesh_id = createGPUMesh(context, basic_material_id, &ground_verts, 4, &ground_indices, 6, &ground_instance, 1);
+    int quad_mesh_id = createGPUMesh(context, hud_material_id, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
+    // PREDEFINED MESHES
+
+    // TEXTURE
     int w, h = 0;
     struct MappedMemory font_texture_memory = load_texture("data/textures/bin/font_atlas.bin", &w, &h);
-    int cube_texture_1 = wgpuAddTexture(cube_mesh_id, &font_texture_memory, w, h);
-    int quad_texture_1 = wgpuAddTexture(quad_mesh_id, &font_texture_memory, w, h);
+    int cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_memory.data, w, h);
+    int quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_memory.data, w, h);
     unmap_file(&font_texture_memory);
-
-    int aspect_ratio_uniform = wgpuAddUniform(&hud_material, &aspect_ratio, sizeof(float));
-    int brightnessOffset = wgpuAddUniform(&basic_material, &brightness, sizeof(float));
-    int timeOffset = wgpuAddUniform(&basic_material, &timeVal, sizeof(float));
-    int cameraOffset = wgpuAddUniform(&basic_material, camera, sizeof(camera));
-    int viewOffset = wgpuAddUniform(&basic_material, view, sizeof(view));
+    // TEXTURE
 
 
 
-    
+    float view[16] = {
+        1.0 / (tan(fov / 2.0) * aspect_ratio), 0.0f,  0.0f,                               0.0f,
+        0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
+        0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
+        0.0f,  0.0f, -1.0f,                               0.0f
+    };
+    int aspect_ratio_uniform = addGPUUniform(context, hud_material_id, &aspect_ratio, sizeof(float));
+    int brightnessOffset = addGPUUniform(context, basic_material_id, &brightness, sizeof(float));
+    int timeOffset = addGPUUniform(context, basic_material_id, &timeVal, sizeof(float));
+    int cameraOffset = addGPUUniform(context, basic_material_id, camera, sizeof(camera));
+    int viewOffset = addGPUUniform(context, basic_material_id, view, sizeof(view));
+
     /* MAIN LOOP */
     init_debug_info();
     while (g_Running) {
@@ -522,21 +524,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         //camera[7] = cameraLocation[1];
         float inv[16];
         inverseViewMatrix(camera, inv);
-        wgpuSetUniformValue(&basic_material, timeOffset, &timeVal, sizeof(float));
-        wgpuSetUniformValue(&basic_material, cameraOffset, &inv, sizeof(camera));
+        setGPUUniformValue(context, basic_material_id, timeOffset, &timeVal, sizeof(float));
+        setGPUUniformValue(context, basic_material_id, cameraOffset, &inv, sizeof(camera));
+
+        // update the instances of the text
+        setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
 
         // Actual frame rendering
         // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure
         // *info* forces the cpu to wait before pushing another frame, bringing the cpu speed down to the gpu speed
         // *info* we can force the cpu to wait regardless by using the fence in wgpuEndFrame()
-        debug_info.ms_waited_on_gpu = wgpuDrawFrame();
+        debug_info.ms_waited_on_gpu = drawGPUFrame(context);
         
         // todo: create a central place for things that need to happen to initialize every frame iteration correctly
         // Set the printed chars to 0 to reset the text in the HUD
-        screen_chars_index = 0;
-        current_screen_char = 0;
-        quad_mesh.instanceCount = screen_chars_index;
-        memset(screen_chars, 0, sizeof(screen_chars));
+        {
+            screen_chars_index = 0;
+            current_screen_char = 0; // todo: replace with function that resets instead of spaghetti
+            memset(char_instances, 0, sizeof(char_instances));
+            setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
+        }
 
         draw_debug_info();
         if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {

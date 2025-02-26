@@ -1,0 +1,21 @@
+LIBRARY webgpu.dll
+
+EXPORTS
+DllMain
+_dllstart
+_edata
+_end
+_etext
+addGPUUniform
+createGPUContext
+createGPUMaterial
+createGPUMesh
+createGPUTexture
+drawGPUFrame
+frmwrk_device_create_buffer_init
+frmwrk_load_shader_module
+frmwrk_print_adapter_info
+frmwrk_print_global_report
+frmwrk_setup_logging
+setGPUInstanceBuffer
+setGPUUniformValue

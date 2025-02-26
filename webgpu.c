@@ -5,80 +5,21 @@
 #include <stdbool.h>
 #include <time.h>
 
-// todo: no global state
-
-#include "game_data.h" // todo: remove this header
+#include "game_data.h" // todo: remove this header, this library should be receiving no game-specific structs at all
 #include "wgpu.h"
 
-/* WGPU BACKEND STRUCTS */
-typedef struct {
-    WGPURenderPipeline pipeline;
-    bool               used;
-    struct Material    *material;
-    WGPUBuffer         uniformBuffer;
-    WGPUBindGroup      uniformBindGroup;
-    WGPUSampler        textureSampler; // sampler for textures reused between meshes
-} GpuMaterial;
-
-typedef struct {
-    bool       used;
-    int        materialID;
-    struct Mesh *mesh;
-
-    WGPUBuffer vertexBuffer;
-    int        vertexCount;
-    WGPUBuffer indexBuffer;
-    int        indexCount;
-    WGPUBuffer instanceBuffer;  // buffer with per-instance data
-    int        instanceCount;   // number of instances
-
-    WGPUBindGroup      textureBindGroup;
-    WGPUTexture        *textureObjects;
-    WGPUTextureView    *textureViews;
-    int                textureCount; // keep track of max amount of textures allowed (set per pipeline)
-} GpuMesh;
-
-typedef struct {
-    WGPUInstance             instance;
-    WGPUSurface              surface;
-    WGPUAdapter              adapter;
-    WGPUDevice               device;
-    WGPUQueue                queue;
-    WGPUSurfaceConfiguration config;
-    bool                     initialized;
-} WebGPUContext;
-
-struct game_data_gpu {
-    GpuMaterial materials[MAX_MATERIALS];
-    GpuMesh     meshes[MAX_MESHES];
-};
-/* WGPU BACKEND STRUCTS */
-
-/* GLOBAL STATE OF THE WGPU BACKEND */
-static WebGPUContext g_wgpu = {0};
-static struct game_data_gpu g_game_data_gpu = {0};
-// Default 1 pixel texture global to assign to every empty texture slot for new meshes
-static WGPUTexture      g_defaultTexture = NULL;
-static WGPUTextureView  g_defaultTextureView = NULL;
-// global depth texture
-WGPUDepthStencilState depthStencilState; 
-WGPURenderPassDepthStencilAttachment depthAttachment;
-// Current frame objects (global for simplicity)
-static WGPUSurfaceTexture    g_currentSurfaceTexture = {0};
-static WGPUTextureView       g_currentView = NULL;
-static WGPUCommandEncoder    g_currentEncoder = NULL;
-static WGPURenderPassEncoder g_currentPass = NULL;
-/* GLOBAL STATE OF THE WGPU BACKEND */
-
-
-/* CONST DATA */
-// One standard uniform layout for all pipelines; ca. 1000 bytes of data
-static WGPUBindGroupLayout s_uniformBindGroupLayout = NULL;
+#pragma region PREDEFINED DATA
 // Multiple possible layouts for textures
-// todo: allow for 1, 2, 4 textures instead of always 4, or different types of textures
 #define NUM_BIND_GROUP_LAYOUTS 1
 #define STANDARD_TEXTURE {.sampleType = WGPUTextureSampleType_Float, .viewDimension = WGPUTextureViewDimension_2D, .multisampled = false}
-static WGPUBindGroupLayout TEXTURE_LAYOUTS[NUM_BIND_GROUP_LAYOUTS];
+// todo: this is a global variable that is set in init wgpu!
+#define STANDARD_MAX_TEXTURES 4
+static unsigned char get_texture_layout_index(enum MaterialFlags flags) {
+    if (flags & STANDARD_TEXTURE_LAYOUT) {
+        return 0;
+    }
+    return 0;
+}
 static const WGPUBindGroupLayoutDescriptor TEXTURE_LAYOUT_DESCRIPTORS[NUM_BIND_GROUP_LAYOUTS] = {
     { // TEXTURE_LAYOUT_STANDARD
         .entryCount = 1 + STANDARD_MAX_TEXTURES,
@@ -97,60 +38,135 @@ static const WGPUBindGroupLayoutDescriptor TEXTURE_LAYOUT_DESCRIPTORS[NUM_BIND_G
         }
     }
 };
-
 // Vertex layout consts
+static unsigned char get_vertex_layout_index(enum MaterialFlags flags) {
+    if (flags & STANDARD_VERTEX_LAYOUT) {
+        return 0;
+    } else if (flags & HUD_VERTEX_LAYOUT) {
+        return 1;
+    }
+    return 0;
+}
 static const WGPUVertexBufferLayout VERTEX_LAYOUTS[2][2] = {
     { // STANDARD LAYOUT
         {   .arrayStride = sizeof(struct Vertex),
             .stepMode = WGPUVertexStepMode_Vertex,
-            .attributeCount = 3,
+            .attributeCount = 6,
             .attributes = (const WGPUVertexAttribute[]) {
-                { .format = WGPUVertexFormat_Float32x3, .offset = 0,                 .shaderLocation = 0 },
-                { .format = WGPUVertexFormat_Float32x3, .offset = sizeof(float) * 3, .shaderLocation = 1 },
-                { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 6, .shaderLocation = 2 }}},
+                { .format = WGPUVertexFormat_Float32x3, .offset = 0, .shaderLocation = 0 },
+                { .format = WGPUVertexFormat_Snorm8x4, .offset = 12, .shaderLocation = 1 },
+                { .format = WGPUVertexFormat_Snorm8x4, .offset = 16, .shaderLocation = 2 },
+                { .format = WGPUVertexFormat_Float16x2, .offset = 20, .shaderLocation = 3 },
+                { .format = WGPUVertexFormat_Unorm8x4, .offset = 24, .shaderLocation = 4 },
+                { .format = WGPUVertexFormat_Uint8x4, .offset = 28, .shaderLocation = 5 }
+            }
+        },
         {   .arrayStride = sizeof(struct Instance),
             .stepMode = WGPUVertexStepMode_Instance,
             .attributeCount = 1,
             .attributes = (const WGPUVertexAttribute[]) {
-                { .format = WGPUVertexFormat_Float32x3, .offset = 0, .shaderLocation = 3 }}}
+                { .format = WGPUVertexFormat_Float32x3, .offset = 0, .shaderLocation = 6 }
+            }
+        }
     },
     { // HUD LAYOUT
-        {   .arrayStride = sizeof(struct vert2),
+        {   .arrayStride = sizeof(struct Vertex2D),
             .stepMode = WGPUVertexStepMode_Vertex,
             .attributeCount = 2,
             .attributes = (const WGPUVertexAttribute[]) {
                 { .format = WGPUVertexFormat_Float32x2, .offset = 0,                 .shaderLocation = 0 },
-                { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 2, .shaderLocation = 1 }}},
-        {   .arrayStride = sizeof(struct char_instance),
+                { .format = WGPUVertexFormat_Float32x2, .offset = sizeof(float) * 2, .shaderLocation = 1 }
+            }
+        },
+        {   .arrayStride = sizeof(struct CharInstance),
             .stepMode = WGPUVertexStepMode_Instance,
             .attributeCount = 2,
             .attributes = (const WGPUVertexAttribute[]) {
                 { .format = WGPUVertexFormat_Sint32,   .offset = 0,                 .shaderLocation = 2 },
-                { .format = WGPUVertexFormat_Sint32,   .offset = sizeof(int),       .shaderLocation = 3 }}}
+                { .format = WGPUVertexFormat_Sint32,   .offset = sizeof(int),       .shaderLocation = 3 }
+            }
+        }
     }
 };
-/* CONST DATA */
+#pragma endregion
+
+#pragma region STRUCT DEFINITIONS
+typedef struct {
+    WGPURenderPipeline pipeline;
+    bool               used;
+    WGPUBuffer         uniformBuffer;
+    WGPUBindGroup      uniformBindGroup;
+    WGPUSampler        textureSampler; // sampler for textures reused between meshes
+
+    enum MaterialFlags flags;
+    unsigned char vertex_layout_index;
+    unsigned char texture_layout_index;
+
+    int current_uniform_offset;
+    unsigned char uniform_data[UNIFORM_BUFFER_CAPACITY];
+} GpuMaterial;
+
+typedef struct {
+    bool       used;
+    int        material_id;
+
+    WGPUBuffer vertexBuffer; // vertices are not kept in RAM, (memory mapping)
+    int        vertexCount;
+    WGPUBuffer indexBuffer; // indices are not kept in RAM (memory mapping)
+    int        indexCount;
+    WGPUBuffer instanceBuffer;
+    void      *instances; // instances in RAM
+    int        instance_count;
+
+    WGPUBindGroup      textureBindGroup;
+    WGPUTexture        *textureObjects;
+    WGPUTextureView    *textureViews;
+    int                textureCount; // keep track of max amount of textures allowed (set per pipeline)
+} GpuMesh;
+
+typedef struct {
+    bool                     initialized;
+    WGPUInstance             instance;
+    WGPUSurface              surface;
+    WGPUAdapter              adapter;
+    WGPUDevice               device;
+    WGPUQueue                queue;
+    WGPUSurfaceConfiguration config;
+    GpuMaterial materials[MAX_MATERIALS];
+    GpuMesh     meshes[MAX_MESHES];
+    // Current frame objects (global for simplicity)
+    WGPUSurfaceTexture    currentSurfaceTexture;
+    WGPUTextureView       currentView;
+    WGPUCommandEncoder    currentEncoder;
+    WGPURenderPassEncoder currentPass;
+    // Default 1 pixel texture global to assign to every empty texture slot for new meshes
+    WGPUTexture      defaultTexture;
+    WGPUTextureView  defaultTextureView;
+    // global depth texture
+    WGPUDepthStencilState depthStencilState; 
+    WGPURenderPassDepthStencilAttachment depthAttachment;
+    // One standard uniform layout for all pipelines
+    WGPUBindGroupLayout uniform_layout;
+    WGPUBindGroupLayout texture_layouts[NUM_BIND_GROUP_LAYOUTS];
+} WebGPUContext;
+#pragma endregion
 
 static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, const char* message, void* userdata) {
-    (void)userdata;
+    WebGPUContext *context = (WebGPUContext *)userdata;
     if (status == WGPURequestAdapterStatus_Success)
-        g_wgpu.adapter = adapter;
+        context->adapter = adapter;
     else
         fprintf(stderr, "[webgpu.c] RequestAdapter failed: %s\n", message);
 }
-
 static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice device, const char* message, void* userdata) {
-    (void)userdata;
+    WebGPUContext *context = (WebGPUContext *)userdata;
     if (status == WGPURequestDeviceStatus_Success)
-        g_wgpu.device = device;
+        context->device = device;
     else
         fprintf(stderr, "[webgpu.c] RequestDevice failed: %s\n", message);
 }
-
-// -----------------------------------------------------------------------------
-// wgpuInit: Initialize WebGPU, create global bind group layouts, default texture, etc.
-void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
-    g_wgpu = (WebGPUContext){0}; // initialize all fields to zero
+void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
+    static WebGPUContext context = {0}; // initialize all fields to zero
 
     // Instance creation (your instance extras, etc.)
     WGPUInstanceExtras extras = {0};
@@ -164,30 +180,30 @@ void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
 
     WGPUInstanceDescriptor instDesc = {0};
     instDesc.nextInChain = (const WGPUChainedStruct*)&extras;
-    g_wgpu.instance = wgpuCreateInstance(&instDesc);
-    assert(g_wgpu.instance);
+    context.instance = wgpuCreateInstance(&instDesc);
+    assert(context.instance);
 
     /* WINDOWS SPECIFIC */
     // todo: hide windows specific
     WGPUSurfaceDescriptorFromWindowsHWND chained_desc = {0};
     chained_desc.chain.sType = WGPUSType_SurfaceDescriptorFromWindowsHWND;
-    chained_desc.hwnd = *hwnd;
-    chained_desc.hinstance = *hInstance;
+    chained_desc.hwnd = hwnd;
+    chained_desc.hinstance = hInstance;
     /* WINDOWS SPECIFIC */
 
     WGPUSurfaceDescriptor surface_desc = {0};
     surface_desc.nextInChain = (const WGPUChainedStruct*)&chained_desc;
-    g_wgpu.surface = wgpuInstanceCreateSurface(g_wgpu.instance, &surface_desc);
-    assert(g_wgpu.surface);
+    context.surface = wgpuInstanceCreateSurface(context.instance, &surface_desc);
+    assert(context.surface);
 
     WGPURequestAdapterOptions adapter_opts = {0};
-    adapter_opts.compatibleSurface = g_wgpu.surface;
-    wgpuInstanceRequestAdapter(g_wgpu.instance, &adapter_opts, handle_request_adapter, NULL);
-    assert(g_wgpu.adapter);
-    wgpuAdapterRequestDevice(g_wgpu.adapter, NULL, handle_request_device, NULL);
-    assert(g_wgpu.device);
-    g_wgpu.queue = wgpuDeviceGetQueue(g_wgpu.device);
-    assert(g_wgpu.queue);
+    adapter_opts.compatibleSurface = context.surface;
+    wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
+    assert(context.adapter);
+    wgpuAdapterRequestDevice(context.adapter, NULL, handle_request_device, &context);
+    assert(context.device);
+    context.queue = wgpuDeviceGetQueue(context.device);
+    assert(context.queue);
 
     // Create the global uniform bind group layout.
     {
@@ -199,13 +215,13 @@ void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
         WGPUBindGroupLayoutDescriptor bglDesc = {0};
         bglDesc.entryCount = 1;
         bglDesc.entries = &entry;
-        s_uniformBindGroupLayout = wgpuDeviceCreateBindGroupLayout(g_wgpu.device, &bglDesc);
+        context.uniform_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
     }
     
     // 2) Initialize all the texture group layouts in wgpu
     {
         for (int i = 0; i < NUM_BIND_GROUP_LAYOUTS; i++) {
-            TEXTURE_LAYOUTS[i] = wgpuDeviceCreateBindGroupLayout(g_wgpu.device, &TEXTURE_LAYOUT_DESCRIPTORS[i]);
+            context.texture_layouts[i] = wgpuDeviceCreateBindGroupLayout(context.device, &TEXTURE_LAYOUT_DESCRIPTORS[i]);
         }
     }
 
@@ -221,19 +237,19 @@ void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
         td.size.depthOrArrayLayers = 1;
         td.mipLevelCount = 1;
         td.sampleCount   = 1;
-        g_defaultTexture = wgpuDeviceCreateTexture(g_wgpu.device, &td);
+        context.defaultTexture = wgpuDeviceCreateTexture(context.device, &td);
 
         // Copy data
         WGPUImageCopyTexture ict = {0};
-        ict.texture = g_defaultTexture;
+        ict.texture = context.defaultTexture;
         WGPUTextureDataLayout tdl = {0};
         tdl.bytesPerRow    = 4;
         tdl.rowsPerImage   = 1;
         WGPUExtent3D extent = {1,1,1};
-        wgpuQueueWriteTexture(g_wgpu.queue, &ict, whitePixel, 4, &tdl, &extent);
+        wgpuQueueWriteTexture(context.queue, &ict, whitePixel, 4, &tdl, &extent);
 
         // Create a view
-        g_defaultTextureView = wgpuTextureCreateView(g_defaultTexture, NULL);
+        context.defaultTextureView = wgpuTextureCreateView(context.defaultTexture, NULL);
     }
 
     // Create a depth texture
@@ -247,7 +263,7 @@ void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
             .sampleCount = 1,
             .nextInChain = NULL,
         };
-        WGPUTexture depthTexture = wgpuDeviceCreateTexture(g_wgpu.device, &depthTextureDesc);
+        WGPUTexture depthTexture = wgpuDeviceCreateTexture(context.device, &depthTextureDesc);
         // 2. Create a texture view for the depth texture
         WGPUTextureViewDescriptor depthViewDesc = {
             .format = depthTextureDesc.format,
@@ -266,7 +282,7 @@ void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
             .depthFailOp = WGPUStencilOperation_Keep,
             .passOp = WGPUStencilOperation_Keep,
         };
-        depthStencilState = (WGPUDepthStencilState){
+        context.depthStencilState = (WGPUDepthStencilState){
             .format = depthTextureDesc.format,
             .depthWriteEnabled = true,
             .depthCompare = WGPUCompareFunction_Less, // Pass fragments with lesser depth values
@@ -280,7 +296,7 @@ void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
             .depthBiasClamp = 0.0f,
         };
         // 4. depth attachment for render pass
-        depthAttachment = (WGPURenderPassDepthStencilAttachment){
+        context.depthAttachment = (WGPURenderPassDepthStencilAttachment){
             .view = depthTextureView,
             .depthLoadOp = WGPULoadOp_Clear,   // Clear depth at start of pass
             .depthStoreOp = WGPUStoreOp_Store,  // Optionally store depth results
@@ -290,24 +306,25 @@ void wgpuInit(void **hInstance, void **hwnd, int width, int height) {
     }
 
     WGPUSurfaceCapabilities caps = {0};
-    wgpuSurfaceGetCapabilities(g_wgpu.surface, g_wgpu.adapter, &caps);
+    wgpuSurfaceGetCapabilities(context.surface, context.adapter, &caps);
     WGPUTextureFormat chosenFormat = WGPUTextureFormat_BGRA8Unorm;
     if (caps.formatCount > 0) {
         chosenFormat = caps.formats[0];
     }
 
-    g_wgpu.config = (WGPUSurfaceConfiguration){
-        .device = g_wgpu.device,
+    context.config = (WGPUSurfaceConfiguration){
+        .device = context.device,
         .format = chosenFormat,
         .width = width,
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
         .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
     };
-    wgpuSurfaceConfigure(g_wgpu.surface, &g_wgpu.config);
+    wgpuSurfaceConfigure(context.surface, &context.config);
 
-    g_wgpu.initialized = true;
+    context.initialized = true;
     printf("[webgpu.c] wgpuInit done.\n");
+    return (void *) &context;
 }
 
 static WGPUShaderModule loadWGSL(WGPUDevice device, const char* filePath) {
@@ -336,46 +353,47 @@ static WGPUShaderModule loadWGSL(WGPUDevice device, const char* filePath) {
     free(wgslSource);
     return module;
 }
-
-// -----------------------------------------------------------------------------
-// wgpuCreatePipeline: Create a render pipeline plus a generic uniform and texture bindgroup.
-int wgpuCreateMaterial(struct Material *material) {
-    if (!g_wgpu.initialized) {
+int createGPUMaterial(WebGPUContext *context, enum MaterialFlags flags, const char *shader) {
+    if (!context->initialized) {
         fprintf(stderr, "[webgpu.c] wgpuCreatePipeline called before init!\n");
         return -1;
     }
-    int materialID = -1;
+    int material_id = -1;
     for (int i = 0; i < MAX_MATERIALS; i++) {
-        if (!g_game_data_gpu.materials[i].used) {
-            materialID = i;
-            g_game_data_gpu.materials[i].used = true;
-            g_game_data_gpu.materials[i].material = material;
-            g_game_data_gpu.materials[i].material->uniformCurrentOffset = 0;
-            memset(g_game_data_gpu.materials[i].material->uniformData, 0, UNIFORM_BUFFER_CAPACITY);
+        if (!context->materials[i].used) {
+            material_id = i;
+            context->materials[i] = (GpuMaterial) {0};
+            context->materials[i].used = true;
+            context->materials[i].flags = flags;
+            context->materials[i].current_uniform_offset = 0;
+            memset(context->materials[i].uniform_data, 0, UNIFORM_BUFFER_CAPACITY);
             break;
         }
     }
     
-    printf("update instances: %d", g_game_data_gpu.materials[materialID].material->update_instances);
-    if (materialID < 0) {
+    if (material_id < 0) {
         fprintf(stderr, "[webgpu.c] No more pipeline slots!\n");
         return -1;
     }
     
-    WGPUShaderModule shaderModule = loadWGSL(g_wgpu.device, material->shader);
+    WGPUShaderModule shaderModule = loadWGSL(context->device, shader);
     if (!shaderModule) {
-        fprintf(stderr, "[webgpu.c] Failed to load shader: %s\n", material->shader);
-        g_game_data_gpu.materials[materialID].used = false;
+        fprintf(stderr, "[webgpu.c] Failed to load shader: %s\n", shader);
+        context->materials[material_id].used = false;
         return -1;
     }
-    
+
+    GpuMaterial *material = &context->materials[material_id];
+    material->vertex_layout_index = get_vertex_layout_index(flags);
+    material->texture_layout_index = get_texture_layout_index(flags);
+
     // Create a pipeline layout with 2 bind groups:
-    // group 0: uniform buffer, group 1: textures. // todo: pass texture layout enum/const in material
-    WGPUBindGroupLayout bgls[2] = { s_uniformBindGroupLayout, TEXTURE_LAYOUTS[material->texture_layout->layout_index] };
+    // group 0: uniform buffer, group 1: textures. 
+    WGPUBindGroupLayout bgls[2] = { context->uniform_layout, context->texture_layouts[get_texture_layout_index(flags)] };
     WGPUPipelineLayoutDescriptor layoutDesc = {0};
     layoutDesc.bindGroupLayoutCount = 2;
     layoutDesc.bindGroupLayouts = bgls;
-    WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(g_wgpu.device, &layoutDesc);
+    WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(context->device, &layoutDesc);
     assert(pipelineLayout);
     
     WGPURenderPipelineDescriptor rpDesc = {0};
@@ -386,7 +404,7 @@ int wgpuCreateMaterial(struct Material *material) {
     rpDesc.vertex.entryPoint = "vs_main";
 
     rpDesc.vertex.bufferCount = 2;
-    rpDesc.vertex.buffers = VERTEX_LAYOUTS[material->vertex_layout];
+    rpDesc.vertex.buffers = VERTEX_LAYOUTS[get_vertex_layout_index(flags)];
     
     // Fragment stage.
     WGPUFragmentState fragState = {0};
@@ -394,10 +412,10 @@ int wgpuCreateMaterial(struct Material *material) {
     fragState.entryPoint = "fs_main";
     fragState.targetCount = 1;
     WGPUColorTargetState colorTarget = {0};
-    colorTarget.format = g_wgpu.config.format;
+    colorTarget.format = context->config.format;
     colorTarget.writeMask = WGPUColorWriteMask_All;
     // --- enable alpha blending ---
-    if (material->use_alpha > 0) {
+    if (flags & USE_ALPHA) {
         colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
             .color = (WGPUBlendComponent){
                 .srcFactor = WGPUBlendFactor_SrcAlpha,
@@ -415,7 +433,7 @@ int wgpuCreateMaterial(struct Material *material) {
     rpDesc.fragment = &fragState;
     
     WGPUPrimitiveState prim = {0};
-    prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe
+    prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe (line width?)
     //prim.cullMode = WGPUCullMode_Back;
     prim.frontFace = WGPUFrontFace_CW;
     rpDesc.primitive = prim;
@@ -424,30 +442,30 @@ int wgpuCreateMaterial(struct Material *material) {
     ms.mask = 0xFFFFFFFF;
     rpDesc.multisample = ms;
     // add depth texture
-    rpDesc.depthStencil = &depthStencilState;
+    rpDesc.depthStencil = &context->depthStencilState;
 
     // todo: this has exception when running with windows compiler...
-    WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(g_wgpu.device, &rpDesc);
-    g_game_data_gpu.materials[materialID].pipeline = pipeline;
+    WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(context->device, &rpDesc);
+    material->pipeline = pipeline;
     
     // Create uniform buffer.
     WGPUBufferDescriptor ubDesc = {0};
     ubDesc.size = UNIFORM_BUFFER_CAPACITY;
     ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-    g_game_data_gpu.materials[materialID].uniformBuffer = wgpuDeviceCreateBuffer(g_wgpu.device, &ubDesc);
-    assert(g_game_data_gpu.materials[materialID].uniformBuffer);
+    material->uniformBuffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
+    assert(material->uniformBuffer);
     
     // Create uniform bind group.
     WGPUBindGroupEntry uEntry = {0};
     uEntry.binding = 0;
-    uEntry.buffer = g_game_data_gpu.materials[materialID].uniformBuffer;
+    uEntry.buffer = material->uniformBuffer;
     uEntry.offset = 0;
     uEntry.size = UNIFORM_BUFFER_CAPACITY;
     WGPUBindGroupDescriptor uBgDesc = {0};
-    uBgDesc.layout = s_uniformBindGroupLayout;
+    uBgDesc.layout = context->uniform_layout;
     uBgDesc.entryCount = 1;
     uBgDesc.entries = &uEntry;
-    g_game_data_gpu.materials[materialID].uniformBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &uBgDesc);
+    material->uniformBindGroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
     
     // Create a sampler
     WGPUSamplerDescriptor samplerDesc = {0};
@@ -460,127 +478,129 @@ int wgpuCreateMaterial(struct Material *material) {
     samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
     samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
     samplerDesc.addressModeW = WGPUAddressMode_ClampToEdge;
-    g_game_data_gpu.materials[materialID].textureSampler = wgpuDeviceCreateSampler(g_wgpu.device, &samplerDesc);
+    material->textureSampler = wgpuDeviceCreateSampler(context->device, &samplerDesc);
+    assert(material->textureSampler != NULL);
     
     wgpuShaderModuleRelease(shaderModule);
     wgpuPipelineLayoutRelease(pipelineLayout);
     
-    printf("[webgpu.c] Created pipeline %d from shader: %s\n", materialID, material->shader);
-    return materialID;
+    printf("[webgpu.c] Created pipeline %d from shader: %s\n", material_id, shader);
+    return material_id;
 }
 
-// -----------------------------------------------------------------------------
-// wgpuCreateMesh: Create a mesh for a given pipeline.
-// Now receives a Mesh struct containing vertices, indices, and their counts.
-int wgpuCreateMesh(int materialID, struct Mesh *mesh) {
-    if (!g_wgpu.initialized) {
+int createGPUMesh(WebGPUContext *context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic) {
+    if (!context->initialized) {
         fprintf(stderr, "[webgpu.c] wgpuCreateInstancedMesh called before init!\n");
         return -1;
     }
-    if (materialID < 0 || materialID >= MAX_MATERIALS || !g_game_data_gpu.materials[materialID].used) {
-        fprintf(stderr, "[webgpu.c] Invalid pipeline ID %d!\n", materialID);
+    if (material_id < 0 || material_id >= MAX_MATERIALS || !context->materials[material_id].used) {
+        fprintf(stderr, "[webgpu.c] Invalid pipeline ID %d!\n", material_id);
         return -1;
     }
-    int meshID = -1;
+    int mesh_id = -1;
     for (int i = 0; i < MAX_MESHES; i++) {
-        if (!g_game_data_gpu.meshes[i].used) {
-            meshID = i;
-            g_game_data_gpu.meshes[i].used = true;
-            g_game_data_gpu.meshes[i].mesh = mesh;
+        if (!context->meshes[i].used) {
+            mesh_id = i;
+            context->meshes[i].used = true;
             break;
         }
     }
-    if (meshID < 0) {
+    if (mesh_id < 0) {
         fprintf(stderr, "[webgpu.c] No more mesh slots!\n");
         return -1;
     }
-    mesh->material = g_game_data_gpu.materials[materialID].material;
+    
+    GpuMesh *mesh = &context->meshes[mesh_id];
+    GpuMaterial material = context->materials[material_id];
     // Create vertex buffer (same as in wgpuCreateMesh)
-    size_t vertexDataSize = VERTEX_LAYOUTS[mesh->material->vertex_layout][0].arrayStride * mesh->vertexCount;
+    size_t vertexDataSize = VERTEX_LAYOUTS[material.vertex_layout_index][0].arrayStride * vc;
     WGPUBufferDescriptor vertexBufDesc = {0};
     vertexBufDesc.size = vertexDataSize;
     vertexBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
-    WGPUBuffer vertexBuffer = wgpuDeviceCreateBuffer(g_wgpu.device, &vertexBufDesc);
+    WGPUBuffer vertexBuffer = wgpuDeviceCreateBuffer(context->device, &vertexBufDesc);
     assert(vertexBuffer);
-    wgpuQueueWriteBuffer(g_wgpu.queue, vertexBuffer, 0, mesh->vertices, vertexDataSize);
-    g_game_data_gpu.meshes[meshID].vertexBuffer = vertexBuffer;
-    g_game_data_gpu.meshes[meshID].vertexCount = mesh->vertexCount;
+    wgpuQueueWriteBuffer(context->queue, vertexBuffer, 0, v, vertexDataSize);
+    mesh->vertexBuffer = vertexBuffer;
+    mesh->vertexCount = vc;
     
     // Create index buffer
-    size_t indexDataSize = sizeof(uint32_t) * mesh->indexCount;
+    size_t indexDataSize = sizeof(uint32_t) * ic;
     WGPUBufferDescriptor indexBufDesc = {0};
     indexBufDesc.size = indexDataSize;
     indexBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Index;
-    WGPUBuffer indexBuffer = wgpuDeviceCreateBuffer(g_wgpu.device, &indexBufDesc);
+    WGPUBuffer indexBuffer = wgpuDeviceCreateBuffer(context->device, &indexBufDesc);
     assert(indexBuffer);
-    wgpuQueueWriteBuffer(g_wgpu.queue, indexBuffer, 0, mesh->indices, indexDataSize);
-    g_game_data_gpu.meshes[meshID].indexBuffer = indexBuffer;
-    g_game_data_gpu.meshes[meshID].indexCount = mesh->indexCount;
+    wgpuQueueWriteBuffer(context->queue, indexBuffer, 0, i, indexDataSize);
+    mesh->indexBuffer = indexBuffer;
+    mesh->indexCount = ic;
     
     // Create instance buffer
-    size_t instanceDataSize = VERTEX_LAYOUTS[mesh->material->vertex_layout][1].arrayStride * mesh->instanceCount;
+    size_t instanceDataSize = VERTEX_LAYOUTS[material.vertex_layout_index][1].arrayStride * iic;
     WGPUBufferDescriptor instBufDesc = {0};
     instBufDesc.size = instanceDataSize;
     instBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
-    WGPUBuffer instanceBuffer = wgpuDeviceCreateBuffer(g_wgpu.device, &instBufDesc);
+    WGPUBuffer instanceBuffer = wgpuDeviceCreateBuffer(context->device, &instBufDesc);
     assert(instanceBuffer);
-    wgpuQueueWriteBuffer(g_wgpu.queue, instanceBuffer, 0, mesh->instances, instanceDataSize);
-    g_game_data_gpu.meshes[meshID].instanceBuffer = instanceBuffer;
-    g_game_data_gpu.meshes[meshID].instanceCount = mesh->instanceCount;
+    wgpuQueueWriteBuffer(context->queue, instanceBuffer, 0, ii, instanceDataSize);
+    mesh->instanceBuffer = instanceBuffer;
+    mesh->instances = ii;
+    mesh->instance_count = iic;
 
     // Initialize all available textures to default
-    g_game_data_gpu.meshes[meshID].textureCount = 0;
+    mesh->textureCount = 0;
     // todo: memory leak, we need to free this malloc stuff
     // todo: would it make more sense to just have a few separate structs where the size is fully known up front
     // todo: then we never have to malloc, and can put everything in a big static array
-    g_game_data_gpu.meshes[meshID].textureObjects = malloc(sizeof(WGPUTexture) * mesh->material->texture_layout->max_textures);
-    g_game_data_gpu.meshes[meshID].textureViews = malloc(sizeof(WGPUTextureView) * mesh->material->texture_layout->max_textures);
-    for (int i=0; i<mesh->material->texture_layout->max_textures; i++) {
-        g_game_data_gpu.meshes[meshID].textureObjects[i] = g_defaultTexture;
-        g_game_data_gpu.meshes[meshID].textureViews[i]   = g_defaultTextureView;
+    int max_textures = TEXTURE_LAYOUT_DESCRIPTORS[material.texture_layout_index].entryCount-1;
+    mesh->textureObjects = malloc(sizeof(WGPUTexture) * max_textures);
+    mesh->textureViews = malloc(sizeof(WGPUTextureView) * max_textures);
+    for (int i=0; i<max_textures; i++) {
+        mesh->textureObjects[i] = context->defaultTexture;
+        mesh->textureViews[i]   = context->defaultTextureView;
     }
-
-    // Create the initial texture bind group
+    
     {
-        // We'll have 1 + 16 = 17 entries
-        int totalEntries = mesh->material->texture_layout->max_textures + 1; // entry 0 is the sampler
+        int totalEntries = max_textures + 1; // entry 0 is the sampler
         WGPUBindGroupEntry *entries = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
         // Sampler at binding=0
         entries[0].binding = 0;
-        entries[0].sampler = g_game_data_gpu.materials[materialID].textureSampler;
-        // 16 textures at binding=1..16
-        for (int i=0; i<mesh->material->texture_layout->max_textures; i++) {
+        entries[0].sampler = material.textureSampler;
+        for (int i=0; i<max_textures; i++) {
             entries[i+1].binding = i + 1;
-            entries[i+1].textureView = g_game_data_gpu.meshes[meshID].textureViews[i];
+            entries[i+1].textureView = mesh->textureViews[i];
+        }
+        assert(material.textureSampler != NULL);
+        for (int i = 0; i < max_textures; i++) {
+            assert(mesh->textureViews[i] != NULL);
         }
 
-        if (g_game_data_gpu.meshes[meshID].textureBindGroup) {
-            wgpuBindGroupRelease(g_game_data_gpu.meshes[meshID].textureBindGroup);
+        if (mesh->textureBindGroup) {
+            wgpuBindGroupRelease(mesh->textureBindGroup);
         }
         WGPUBindGroupDescriptor bgDesc = {0};
-        bgDesc.layout     = TEXTURE_LAYOUTS[mesh->material->texture_layout->layout_index];
+        bgDesc.layout     = context->texture_layouts[material.texture_layout_index];
         bgDesc.entryCount = totalEntries;
         bgDesc.entries    = entries;
-        g_game_data_gpu.meshes[meshID].textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
+        mesh->textureBindGroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
 
         free(entries);
     }
     
-    g_game_data_gpu.meshes[meshID].materialID = materialID;
+    mesh->material_id = material_id;
     printf("[webgpu.c] Created instanced mesh %d with %d vertices, %d indices, and %d instances for pipeline %d\n",
-           meshID, mesh->vertexCount, mesh->indexCount, mesh->instanceCount, materialID);
-    return meshID;
+           mesh_id, vc, ic, iic, material_id);
+    return mesh_id;
 }
 
-// wgpuAddTexture: Load a PNG file and add it to the pipeline’s texture bind group.
-int wgpuAddTexture(int mesh_id, struct MappedMemory *mm, int w, int h) {
-    GpuMesh* mesh_data = &g_game_data_gpu.meshes[mesh_id];
-    GpuMaterial* material_data = &g_game_data_gpu.materials[mesh_data->materialID];
-    if (mesh_data->textureCount >= material_data->material->texture_layout->max_textures) { // todo: this check needs to be based on the texture layout
+int createGPUTexture(WebGPUContext *context, int mesh_id, void *data, int w, int h) {
+    GpuMesh* mesh = &context->meshes[mesh_id];
+    GpuMaterial* material = &context->materials[mesh->material_id];
+    int max_textures = TEXTURE_LAYOUT_DESCRIPTORS[material->texture_layout_index].entryCount-1;
+    if (mesh->textureCount >= max_textures) {
         fprintf(stderr, "No more texture slots in mesh!");
         return -1;
     }
-    int slot = mesh_data->textureCount; // e.g. 0 => binding=1, etc.
+    int slot = mesh->textureCount; // e.g. 0 => binding=1, etc.
 
     // Create texture with the given dimensions and RGBA format.
     WGPUTextureDescriptor td = {0};
@@ -592,7 +612,7 @@ int wgpuAddTexture(int mesh_id, struct MappedMemory *mm, int w, int h) {
     td.size.depthOrArrayLayers = 1;
     td.mipLevelCount = 1;
     td.sampleCount   = 1;
-    WGPUTexture tex = wgpuDeviceCreateTexture(g_wgpu.device, &td);
+    WGPUTexture tex = wgpuDeviceCreateTexture(context->device, &td);
 
     // Upload the pixel data.
     WGPUImageCopyTexture ict = {0};
@@ -601,34 +621,34 @@ int wgpuAddTexture(int mesh_id, struct MappedMemory *mm, int w, int h) {
     tdl.bytesPerRow  = 4 * w; // 4 bytes per pixel (RGBA)
     tdl.rowsPerImage = h;
     WGPUExtent3D ext = { .width = (uint32_t)w, .height = (uint32_t)h, .depthOrArrayLayers = 1 };
-    wgpuQueueWriteTexture(g_wgpu.queue, &ict, mm->data, (size_t)(4 * w * h), &tdl, &ext);
+    wgpuQueueWriteTexture(context->queue, &ict, data, (size_t)(4 * w * h), &tdl, &ext);
 
     // Create view
     WGPUTextureView view = wgpuTextureCreateView(tex, NULL);
 
-    mesh_data->textureObjects[slot] = tex;
-    mesh_data->textureViews[slot]   = view;
-    mesh_data->textureCount++;
+    mesh->textureObjects[slot] = tex;
+    mesh->textureViews[slot]   = view;
+    mesh->textureCount++;
 
     // Now rebuild the bind group
-    int totalEntries = 1 + material_data->material->texture_layout->max_textures; // + 1 is because we have at index 0 the sampler binding
+    int totalEntries = 1 + max_textures; // + 1 is because we have at index 0 the sampler binding
     WGPUBindGroupEntry* e = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
     e[0].binding = 0;
-    e[0].sampler = material_data->textureSampler;
-    for (int i=0; i<material_data->material->texture_layout->max_textures; i++) {
+    e[0].sampler = material->textureSampler;
+    for (int i=0; i<max_textures; i++) {
         e[i+1].binding = i+1;
-        e[i+1].textureView = (i < mesh_data->textureCount) 
-                             ? mesh_data->textureViews[i]
-                             : g_defaultTextureView;
+        e[i+1].textureView = (i < mesh->textureCount) 
+                             ? mesh->textureViews[i]
+                             : context->defaultTextureView;
     }
-    if (mesh_data->textureBindGroup) {
-        wgpuBindGroupRelease(mesh_data->textureBindGroup);
+    if (mesh->textureBindGroup) {
+        wgpuBindGroupRelease(mesh->textureBindGroup);
     }
     WGPUBindGroupDescriptor bgDesc = {0};
-    bgDesc.layout     = TEXTURE_LAYOUTS[mesh_data->mesh->material->texture_layout->layout_index];
+    bgDesc.layout     = context->texture_layouts[material->texture_layout_index];
     bgDesc.entryCount = totalEntries;
     bgDesc.entries    = e;
-    mesh_data->textureBindGroup = wgpuDeviceCreateBindGroup(g_wgpu.device, &bgDesc);
+    mesh->textureBindGroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
     free(e);
 
     printf("Added texture to mesh %d at slot %d (binding=%d)\n", mesh_id, slot, slot+1);
@@ -636,105 +656,143 @@ int wgpuAddTexture(int mesh_id, struct MappedMemory *mm, int w, int h) {
     return slot;
 }
 
-// Callback that sets our flag when the GPU has finished processing
-void fenceCallback(WGPUQueueWorkDoneStatus status, WGPU_NULLABLE void * userdata) {
+
+#pragma region UNIFORMS
+int addGPUUniform(WebGPUContext *context, int material_id, const void* data, int data_size) {
+    GpuMaterial *material = &context->materials[material_id];
+    // Inline alignment determination using ternary operators
+    int alignment = (data_size <= 4) ? 4 :
+                    (data_size <= 8) ? 8 :
+                    16; // Default for vec3, vec4, mat4x4, or larger
+    // Align the offset to the correct boundary (based on WGSL rules)
+    int aligned_offset = (material->current_uniform_offset + (alignment - 1)) & ~(alignment - 1);
+    // Check if the new offset exceeds buffer capacity
+    if (aligned_offset + data_size > UNIFORM_BUFFER_CAPACITY) {
+        // todo: print warning on screen or in log that this failed
+        return -1;
+    }
+    // Copy the data into the aligned buffer
+    memcpy(material->uniform_data + aligned_offset, data, data_size);
+    // Update the current offset
+    material->current_uniform_offset = aligned_offset + data_size;
+    // todo: print on screen that uniform changed
+    return aligned_offset;
+}
+
+void setGPUUniformValue(WebGPUContext *context, int material_id, int offset, const void* data, int dataSize) {
+    GpuMaterial *material = &context->materials[material_id];
+    if (offset < 0 || offset + dataSize > material->current_uniform_offset) {
+        // todo: print warning on screen or in log that this failed
+        return;
+    }
+    memcpy(material->uniform_data + offset, data, dataSize);
+}
+#pragma endregion
+
+
+void setGPUInstanceBuffer(WebGPUContext *context, int mesh_id, void* ii, int iic) {
+    // freeing the previous buffer is the responsibility of the caller
+    GpuMesh *mesh = &context->meshes[mesh_id];
+    mesh->instances = ii;
+    mesh->instance_count = iic;
+}
+
+static void fenceCallback(WGPUQueueWorkDoneStatus status, WGPU_NULLABLE void * userdata) {
     bool *done = (bool*)userdata;
     *done = true;
 }
-// Simple fence/wait function that blocks until the GPU is done with submitted work.
-float fenceAndWait(WGPUQueue queue) {
+static float fenceAndWait(WebGPUContext *context) {
     volatile bool workDone = false;
 
     // Request notification when the GPU work is done.
-    wgpuQueueOnSubmittedWorkDone(queue, fenceCallback, (void*)&workDone);
+    wgpuQueueOnSubmittedWorkDone(context->queue, fenceCallback, (void*)&workDone);
 
     // Busy-wait until the flag is set.
     int time_before_ns = time(NULL);
     while (!workDone) {
-        wgpuDevicePoll(g_wgpu.device, false, NULL);
+        wgpuDevicePoll(context->device, false, NULL);
         // Sleep(0);
     }
     int time_after_ns = time(NULL);
     float ms_waited_on_gpu = ((float) (time_before_ns / 1000) / (float) (time_after_ns / 1000));
     return ms_waited_on_gpu;
 }
-
-// Combined drawing function: start frame, draw all materials, and end frame.
-float wgpuDrawFrame(void) {
+float drawGPUFrame(WebGPUContext *context) {
     // Start the frame.
-    wgpuSurfaceGetCurrentTexture(g_wgpu.surface, &g_currentSurfaceTexture);
-    if (g_currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success)
+    wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
+    if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success)
         return 0.0f;
-    g_currentView = wgpuTextureCreateView(g_currentSurfaceTexture.texture, NULL);
+    context->currentView = wgpuTextureCreateView(context->currentSurfaceTexture.texture, NULL);
     WGPUCommandEncoderDescriptor encDesc = {0};
-    g_currentEncoder = wgpuDeviceCreateCommandEncoder(g_wgpu.device, &encDesc);
+    context->currentEncoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
     WGPURenderPassColorAttachment colorAtt = {0};
-    colorAtt.view = g_currentView;
+    colorAtt.view = context->currentView;
     colorAtt.loadOp = WGPULoadOp_Clear;
     colorAtt.storeOp = WGPUStoreOp_Store;
     colorAtt.clearValue = (WGPUColor){0.1, 0.2, 0.3, 1.0};
     WGPURenderPassDescriptor passDesc = {0};
     passDesc.colorAttachmentCount = 1;
     passDesc.colorAttachments = &colorAtt;
-    passDesc.depthStencilAttachment = &depthAttachment,
-    g_currentPass = wgpuCommandEncoderBeginRenderPass(g_currentEncoder, &passDesc);
+    passDesc.depthStencilAttachment = &context->depthAttachment,
+    context->currentPass = wgpuCommandEncoderBeginRenderPass(context->currentEncoder, &passDesc);
 
     // Loop through all materials and draw each one.
-    for (int materialID = 0; materialID < MAX_MATERIALS; materialID++) {
-        if (g_game_data_gpu.materials[materialID].used) {
+    for (int material_id = 0; material_id < MAX_MATERIALS; material_id++) {
+        if (context->materials[material_id].used) {
 
-            GpuMaterial* gpu_material = &g_game_data_gpu.materials[materialID];
+            GpuMaterial *gpu_material = &context->materials[material_id];
             // Write CPU–side uniform data to GPU. // todo: does every material need to update uniforms every frame?
-            wgpuQueueWriteBuffer(g_wgpu.queue, gpu_material->uniformBuffer, 0, gpu_material->material->uniformData, UNIFORM_BUFFER_CAPACITY);
+            wgpuQueueWriteBuffer(context->queue, gpu_material->uniformBuffer, 0, gpu_material->uniform_data, UNIFORM_BUFFER_CAPACITY);
             // Bind uniform bind group (group 0).
             // todo: potentially we could do per-mesh uniform values like we do for textures
-            wgpuRenderPassEncoderSetBindGroup(g_currentPass, 0, gpu_material->uniformBindGroup, 0, NULL);
+            wgpuRenderPassEncoderSetBindGroup(context->currentPass, 0, gpu_material->uniformBindGroup, 0, NULL);
             // Set the render pipeline.
-            wgpuRenderPassEncoderSetPipeline(g_currentPass, gpu_material->pipeline);
+            wgpuRenderPassEncoderSetPipeline(context->currentPass, gpu_material->pipeline);
 
             // Iterate over all meshes that use this material. // todo: more efficient if material has array of meshes instead
             for (int i = 0; i < MAX_MESHES; i++) {
-                if (g_game_data_gpu.meshes[i].used && g_game_data_gpu.meshes[i].materialID == materialID) {
+                if (context->meshes[i].used && context->meshes[i].material_id == material_id) {
                     // If the material requires instance data updates, update the instance buffer.
-                    if (gpu_material->material->update_instances) {
-                        g_game_data_gpu.meshes[i].instanceCount = g_game_data_gpu.meshes[i].mesh->instanceCount;
-                        size_t instanceDataSize = VERTEX_LAYOUTS[gpu_material->material->vertex_layout][1].arrayStride *
-                                                  g_game_data_gpu.meshes[i].instanceCount;
-                        wgpuQueueWriteBuffer(g_wgpu.queue,g_game_data_gpu.meshes[i].instanceBuffer,0,g_game_data_gpu.meshes[i].mesh->instances,instanceDataSize);
+                    if (gpu_material->flags & UPDATE_INSTANCES) {
+                        context->meshes[i].instance_count = context->meshes[i].instance_count;
+                        size_t instanceDataSize = VERTEX_LAYOUTS[gpu_material->vertex_layout_index][1].arrayStride *
+                                                  context->meshes[i].instance_count;
+                        // write RAM instances to GPU instances
+                        wgpuQueueWriteBuffer(context->queue,context->meshes[i].instanceBuffer,0,context->meshes[i].instances,instanceDataSize);
                     }
                     // todo: some meshes could share the same textures so we could avoid to switch always
-                    wgpuRenderPassEncoderSetBindGroup(g_currentPass, 1, g_game_data_gpu.meshes[i].textureBindGroup, 0, NULL); // group 1 for textures
+                    wgpuRenderPassEncoderSetBindGroup(context->currentPass, 1, context->meshes[i].textureBindGroup, 0, NULL); // group 1 for textures
                     // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count.
-                    wgpuRenderPassEncoderSetVertexBuffer(g_currentPass, 0, g_game_data_gpu.meshes[i].vertexBuffer, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderSetVertexBuffer(g_currentPass, 1, g_game_data_gpu.meshes[i].instanceBuffer, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderSetIndexBuffer(g_currentPass, g_game_data_gpu.meshes[i].indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderDrawIndexed(g_currentPass, g_game_data_gpu.meshes[i].indexCount,g_game_data_gpu.meshes[i].instanceCount,0,0,0);
+                    wgpuRenderPassEncoderSetVertexBuffer(context->currentPass, 0, context->meshes[i].vertexBuffer, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderSetVertexBuffer(context->currentPass, 1, context->meshes[i].instanceBuffer, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderSetIndexBuffer(context->currentPass, context->meshes[i].indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderDrawIndexed(context->currentPass, context->meshes[i].indexCount,context->meshes[i].instance_count,0,0,0);
                 }
             }
         }
     }
 
     // End the render pass.
-    wgpuRenderPassEncoderEnd(g_currentPass);
-    wgpuRenderPassEncoderRelease(g_currentPass);
-    g_currentPass = NULL;
+    wgpuRenderPassEncoderEnd(context->currentPass);
+    wgpuRenderPassEncoderRelease(context->currentPass);
+    context->currentPass = NULL;
 
     // Finish command encoding and submit.
     WGPUCommandBufferDescriptor cmdDesc = {0};
-    WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(g_currentEncoder, &cmdDesc);
-    wgpuCommandEncoderRelease(g_currentEncoder);
-    wgpuQueueSubmit(g_wgpu.queue, 1, &cmdBuf);
+    WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(context->currentEncoder, &cmdDesc);
+    wgpuCommandEncoderRelease(context->currentEncoder);
+    wgpuQueueSubmit(context->queue, 1, &cmdBuf);
 
     // Wait on the fence to measure GPU work time.
-    float ms_waited_on_gpu = fenceAndWait(g_wgpu.queue);
+    float ms_waited_on_gpu = fenceAndWait(context);
 
     // Release command buffer and present the surface.
     wgpuCommandBufferRelease(cmdBuf);
-    wgpuSurfacePresent(g_wgpu.surface);
-    wgpuTextureViewRelease(g_currentView);
-    g_currentView = NULL;
-    wgpuTextureRelease(g_currentSurfaceTexture.texture);
-    g_currentSurfaceTexture.texture = NULL;
+    wgpuSurfacePresent(context->surface);
+    wgpuTextureViewRelease(context->currentView);
+    context->currentView = NULL;
+    wgpuTextureRelease(context->currentSurfaceTexture.texture);
+    context->currentSurfaceTexture.texture = NULL;
 
     return ms_waited_on_gpu;
 }

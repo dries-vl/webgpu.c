@@ -6,10 +6,6 @@
 #endif
 
 /* GAME STRUCTS */
-struct game_data {
-    struct Mesh meshes[MAX_MESHES];
-    struct Material materials[MAX_MATERIALS];
-};
 struct Vector3 {
     float x, y, z;
 };
@@ -31,7 +27,6 @@ struct Rigid_Body {
 /* GAME STRUCTS */
 
 /* GLOBAL STATE OF THE GAME */
-static struct game_data game_data = {0};
 float camera[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
@@ -46,11 +41,14 @@ struct ButtonState buttonState = {0, 0, 0, 0};
 float fov = 3.14f / 4.0f; // 45 degrees
 float farClip = 20000000.0f;
 float nearClip = 1.0f;
+static float brightness = 1.0f;
+static float timeVal = 0.0f;
+static float aspect_ratio = ((float) WINDOW_WIDTH / (float) WINDOW_HEIGHT);
 /* CONSTS */
 
 
 int screen_chars_index = 0;
-int current_screen_char = 0;
+int current_screen_char = 0; // todo: static inside function?
 void print_on_screen(char *str) {
     for (int i = 0; str[i] != '\0'; i++) {
         if (i >= CHAR_WIDTH_SCREEN) break;
@@ -58,10 +56,10 @@ void print_on_screen(char *str) {
             current_screen_char = ((current_screen_char / CHAR_WIDTH_SCREEN) + 1) * CHAR_WIDTH_SCREEN;
             continue;
         }
-        screen_chars[screen_chars_index] = (struct char_instance) {.i_pos={current_screen_char}, .i_char=(int) str[i]};
+        // set specific instance value
+        char_instances[screen_chars_index] = (struct CharInstance) {.i_pos={current_screen_char}, .i_char=(int) str[i]};
         screen_chars_index++;
         current_screen_char++;
-        quad_mesh.instanceCount = screen_chars_index;
     }
 }
 
@@ -475,7 +473,7 @@ unsigned int fnv1a(const char *s) {
     return hash;
 }
 
-int find_material_index(const int hash) {
+/*int find_material_index(const int hash) {
     int empty_index = -1;
     for (int i = 0; i < MAX_MATERIALS; i++) {
         if (game_data.materials[i].used) {
@@ -487,33 +485,4 @@ int find_material_index(const int hash) {
         }
     }
     return empty_index; // return empty slot (or -1 if array is full)
-}
-
-int wgpuAddUniform(struct Material *material, const void* data, int dataSize) {
-    // Inline alignment determination using ternary operators
-    int alignment = (dataSize <= 4) ? 4 :
-                    (dataSize <= 8) ? 8 :
-                    16; // Default for vec3, vec4, mat4x4, or larger
-    // Align the offset to the correct boundary (based on WGSL rules)
-    int alignedOffset = (material->uniformCurrentOffset + (alignment - 1)) & ~(alignment - 1);
-    // Check if the new offset exceeds buffer capacity
-    if (alignedOffset + dataSize > UNIFORM_BUFFER_CAPACITY) {
-        // todo: print warning on screen or in log that this failed
-        return -1;  
-    }
-    // Copy the data into the aligned buffer
-    memcpy(material->uniformData + alignedOffset, data, dataSize);
-    // Update the current offset
-    material->uniformCurrentOffset = alignedOffset + dataSize;
-    // todo: print on screen that uniform changed
-    return alignedOffset;
-}
-
-void wgpuSetUniformValue(struct Material *material, int offset, const void* data, int dataSize) {
-    if (offset < 0 || offset + dataSize > material->uniformCurrentOffset) {
-        // todo: print warning on screen or in log that this failed
-        return;
-    }
-    memcpy(material->uniformData + offset, data, dataSize);
-}
-
+}*/
