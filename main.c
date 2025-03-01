@@ -8,10 +8,10 @@
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
 // todo: add functions to remove meshes from the scene, and automatically remove materials/pipelines that have no meshes anymore (?)
 /* GRAPHICS LAYER API */
-// todo : platform provides these functions to presentation layer via a struct
+// todo : platform provides these functions to presentation layer via a struct (then they don't need to be compiled together)
 typedef void* GPUContext;
 extern GPUContext createGPUContext(void *hInstance, void *hwnd, int width, int height);
-extern int   createGPUMaterial(GPUContext context, enum MaterialFlags flags, const char *shader);
+extern int   createGPUMaterial(GPUContext context, const char *shader);
 extern int   createGPUMesh(GPUContext context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
 extern int   createGPUTexture(GPUContext context, int mesh_id, void *data, int w, int h);
 int          addGPUUniform(GPUContext context, int material_id, const void* data, int data_size);
@@ -19,6 +19,7 @@ void         setGPUUniformValue(GPUContext context, int material_id, int offset,
 extern void  setGPUInstanceBuffer(GPUContext context, int mesh_id, void* ii, int iic);
 extern float drawGPUFrame(GPUContext context);
 /* PLATFORM LAYER API */
+// todo: pass these by struct to game.c
 // memory map file / load file
 // networking functions
 // audio
@@ -43,6 +44,10 @@ static bool g_Running = true;
 
 
 #pragma region FILE MAPPING
+struct MappedMemory {
+    void *data;     // Base pointer to mapped file data
+    void *mapping;  // Opaque handle for the mapping (ex. Windows HANDLE)
+};
 struct MappedMemory map_file(const char *filename) {
     struct MappedMemory mm = {0};
     HANDLE hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL,
@@ -453,22 +458,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // CREATE MATERIALS
     // todo: create a function that does this automatically based on game state object
-    int basic_material_id = createGPUMaterial(context, basic_material, "data/shaders/shader.wgsl");
-    int hud_material_id = createGPUMaterial(context, hud_material, "data/shaders/hud.wgsl");
+    int basic_material_id = createGPUMaterial(context, "data/shaders/shader.wgsl");
+    int hud_material_id = createGPUMaterial(context, "data/shaders/hud.wgsl");
     // CREATE MATERIALS
 
     // LOAD MESHES FROM DISK
-    int vc, ic; void *v, *i;
+    // int vc, ic; void *v, *i;
     
-    struct MappedMemory teapot_mm = load_mesh("data/models/bin/teapot.bin", &v, &vc, &i, &ic);
-    struct Instance ii[2] = {{0.0f, 0.0f, 0.0f}, {0.0f, 80.0f, 0.0f}};
-    int teapot_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 2);
-    unmap_file(&teapot_mm);
+    // struct MappedMemory teapot_mm = load_mesh("data/models/bin/teapot.bin", &v, &vc, &i, &ic);
+    // struct Instance ii[2] = {{0.0f, 0.0f, 0.0f}, {0.0f, 80.0f, 0.0f}};
+    // int teapot_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 2);
+    // unmap_file(&teapot_mm);
 
-    struct MappedMemory cube_mm = load_mesh("data/models/bin/cube.bin", &v, &vc, &i, &ic);
-    struct Instance cube = {0.0f, 0.0f, 0.0f};
-    int cube_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 1);
-    unmap_file(&cube_mm);
+    // struct MappedMemory cube_mm = load_mesh("data/models/bin/cube.bin", &v, &vc, &i, &ic);
+    // struct Instance cube = {0.0f, 0.0f, 0.0f};
+    // int cube_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 1);
+    // unmap_file(&cube_mm);
     // LOAD MESHES FROM DISK
 
     // PREDEFINED MESHES
@@ -479,7 +484,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // TEXTURE
     int w, h = 0;
     struct MappedMemory font_texture_memory = load_texture("data/textures/bin/font_atlas.bin", &w, &h);
-    int cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_memory.data, w, h);
+    // int cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_memory.data, w, h);
     int quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_memory.data, w, h);
     unmap_file(&font_texture_memory);
     // TEXTURE
@@ -487,12 +492,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 
     float view[16] = {
-        1.0 / (tan(fov / 2.0) * aspect_ratio), 0.0f,  0.0f,                               0.0f,
+        1.0 / (tan(fov / 2.0) * ASPECT_RATIO), 0.0f,  0.0f,                               0.0f,
         0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
         0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
         0.0f,  0.0f, -1.0f,                               0.0f
     };
-    int aspect_ratio_uniform = addGPUUniform(context, hud_material_id, &aspect_ratio, sizeof(float));
     int brightnessOffset = addGPUUniform(context, basic_material_id, &brightness, sizeof(float));
     int timeOffset = addGPUUniform(context, basic_material_id, &timeVal, sizeof(float));
     int cameraOffset = addGPUUniform(context, basic_material_id, camera, sizeof(camera));

@@ -61,7 +61,7 @@ void get_mesh_struct_offsets(int* offsets) {
 int main(void) {
     // Add a projection matrix (a 4x4 matrix).  
     float view[16] = {
-    1.0 / (tan(fov / 2.0) * aspect_ratio), 0.0f,  0.0f,                               0.0f,
+    1.0 / (tan(fov / 2.0) * ASPECT_RATIO), 0.0f,  0.0f,                               0.0f,
     0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
     0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
     0.0f,  0.0f, -1.0f,                               0.0f
@@ -75,7 +75,7 @@ int main(void) {
 
     int font_atlas_texture_slot = wgpuAddTexture(quad_mesh_id, "data/textures/bin/font_atlas.bin");
 
-    int aspect_ratio_uniform = addUniform(&hud_material, &aspect_ratio, sizeof(float));
+    int aspect_ratio_uniform = addUniform(&hud_material, &ASPECT_RATIO, sizeof(float));
     int brightnessOffset = addUniform(&basic_material, &brightness, sizeof(float));
     int timeOffset = addUniform(&basic_material, &timeVal, sizeof(float));
     int cameraOffset = addUniform(&basic_material, camera, sizeof(camera));

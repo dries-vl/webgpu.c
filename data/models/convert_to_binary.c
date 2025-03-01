@@ -7,14 +7,15 @@
 #include <stdint.h>
 #include <windows.h>
 
-// The new target vertex struct. 32 bytes total.
+// The new target vertex struct. 48 bytes total.
 typedef struct {
-    float position[3];           // 12 bytes
-    unsigned char normal[4];     // 4 bytes: packed from float normals [-1,1] -> [0,255]
-    unsigned char tangent[4];    // 4 bytes: not provided, so default to zero
-    unsigned short uv[2];        // 4 bytes: converted from float uv (0..1) scaled to 0..65535
-    unsigned char bone_weights[4]; // 4 bytes: default full weight (255) for bone 0
-    unsigned char bone_indices[4]; // 4 bytes: default all 0
+    unsigned int data[4];      // 16 bytes u32 // *info* raw data
+    float position[3];         // 12 bytes f32
+    unsigned char normal[4];   // 4 bytes n8
+    unsigned char tangent[4];  // 4 bytes n8
+    unsigned short uv[2];      // 4 bytes n16
+    unsigned char bone_weights[4]; // 4 bytes n8
+    unsigned char bone_indices[4]; // 4 bytes u8 // *info* max 256 bones
 } Vertex;
 
 // The header that will be stored at the beginning of the binary.
@@ -212,6 +213,12 @@ void process_obj_file(const char *filepath) {
                 for (int j = 0; j < 3; j++) {
                     int k = idx[j];
                     Vertex vert;
+                    // Initialize the new data field to zeros.
+                    vert.data[0] = 0;
+                    vert.data[1] = 0;
+                    vert.data[2] = 0;
+                    vert.data[3] = 0;
+                    
                     // Position: copy from positions array (OBJ indices are 1-based)
                     if (faceIndices[k].v != 0 && faceIndices[k].v <= (int)positions.count) {
                         Vec3 pos = positions.data[faceIndices[k].v - 1];
@@ -239,18 +246,17 @@ void process_obj_file(const char *filepath) {
                     // Tangent: not provided by OBJ; default to zero.
                     vert.tangent[0] = vert.tangent[1] = vert.tangent[2] = vert.tangent[3] = 0;
                     
-if (faceIndices[k].vt != 0 && faceIndices[k].vt <= (int)uvs.count) {
-    Vec2 uv = uvs.data[faceIndices[k].vt - 1];
-    float u = uv.u < 0 ? 0 : (uv.u > 1 ? 1 : uv.u);
-    float v = uv.v < 0 ? 0 : (uv.v > 1 ? 1 : uv.v);
-    // Optionally flip v if needed:
-    // v = 1.0f - v;
-    vert.uv[0] = float_to_half(u);
-    vert.uv[1] = float_to_half(v);
-} else {
-    vert.uv[0] = vert.uv[1] = 0;
-}
-
+                    if (faceIndices[k].vt != 0 && faceIndices[k].vt <= (int)uvs.count) {
+                        Vec2 uv = uvs.data[faceIndices[k].vt - 1];
+                        float u = uv.u < 0 ? 0 : (uv.u > 1 ? 1 : uv.u);
+                        float v = uv.v < 0 ? 0 : (uv.v > 1 ? 1 : uv.v);
+                        // Optionally flip v if needed:
+                        // v = 1.0f - v;
+                        vert.uv[0] = float_to_half(u);
+                        vert.uv[1] = float_to_half(v);
+                    } else {
+                        vert.uv[0] = vert.uv[1] = 0;
+                    }
                     
                     // Bone weights: default full weight on bone 0.
                     vert.bone_weights[0] = 255;

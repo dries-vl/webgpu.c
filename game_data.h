@@ -6,42 +6,42 @@
 #define MAX_MESHES                128
 #define UNIFORM_BUFFER_CAPACITY   1024  // bytes per pipeline’s uniform buffer
 
-struct Vertex { // 32 bytes
-    float position[3]; // 12 bytes
-    unsigned char normal[4];   // 4 bytes
-    unsigned char tangent[4];   // 4 bytes
-    unsigned short uv[2];       // 4 bytes
-    unsigned char bone_weights[4]; // 4 bytes
-    unsigned char bone_indices[4]; // 4 bytes
+// todo: this needs to be passed to platform, graphics AND presentation layer somehow
+#define WINDOW_WIDTH (1920 * 1.5) // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
+#define WINDOW_HEIGHT (1080 * 1.5) // todo: make this global variable that can be modified
+#define ASPECT_RATIO ((float) WINDOW_WIDTH / (float) WINDOW_HEIGHT)
+
+// todo: store all this in rust, make the connection agnostic by using functions only
+// todo: make the to_binary scripts based and connected with the rust WGPU backend only
+struct Vertex { // 48 bytes
+    unsigned int data[4]; // 16 bytes u32 // *info* raw data
+    float position[3]; // 12 bytes f32
+    unsigned char normal[4];   // 4 bytes n8
+    unsigned char tangent[4];   // 4 bytes n8
+    unsigned short uv[2];       // 4 bytes n16
+    unsigned char bone_weights[4]; // 4 bytes n8
+    unsigned char bone_indices[4]; // 4 bytes u8 // *info* max 256 bones
 };
-struct Instance { // 12 bytes
-    float position[3];
-};
-struct Vertex2D { // 8 bytes
-    float position[2];
-    float uv[2];
-};
-struct CharInstance { // 8 bytes
-    int i_pos;
-    int i_char;
+// todo: use texture arrays instead of texture layouts -> per-mesh index (use atlas for per-instance differences)
+// todo: use mesh uniforms and per-instance data to store material-like settings while keeping the same pipeline (eg. metallic, ...)
+// todo: have only 1 pipeline for everything, except for exceptional cases like HUD
+// todo: Uber-shader -> use per-draw-call (ie. mesh) uniform to select branch for shader logic
+struct Instance { // 96 bytes
+    float transform[16]; // 64 bytes f32 // *info* translation + rotation + scale
+    unsigned int data[3]; // 12 bytes u32 // *info* raw data
+    unsigned short norms[4]; // 8 bytes n16 // *info* raw normalized data (eg. metallic, etc.)
+    unsigned int animation; // 4 bytes u32
+    float animation_phase; // 4 bytes f32
+    unsigned short atlas_uv[2]; // 4 bytes n16 // *info* the texture index is a per-mesh uniform, and this picks within that texture for atlases
 };
 
-struct MappedMemory {
-    void *data;     // Base pointer to mapped file data
-    void *mapping;  // Opaque handle for the mapping (ex. Windows HANDLE)
-};
 
-// todo: for createTexture: don't pass struct, just data ptr, and free mapping yourself
-// todo: maybe use trick from SBarrett, to avoid keeping counts of arrays everywhere
-enum MaterialFlags {
-    USE_ALPHA               = 1 << 0,//1
-    USE_TEXTURES            = 1 << 1,//2
-    USE_UNIFORMS            = 1 << 2,//4
-    UPDATE_INSTANCES        = 1 << 3,//8
-    STANDARD_VERTEX_LAYOUT  = 1 << 4,//16
-    HUD_VERTEX_LAYOUT       = 1 << 5,//32
-    STANDARD_TEXTURE_LAYOUT = 1 << 6 //64
-};
+
+
+
+
+
+
 
 // todo: one big static array of memory
 // todo: keep track of how much of it is used, and by what

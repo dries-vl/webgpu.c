@@ -1,3 +1,4 @@
+// todo: do not import these here, either just have print_on_screen function passed in or defined here instead
 #include "game_data.h"
 #include "game_data.c"
 
@@ -43,25 +44,7 @@ float farClip = 20000000.0f;
 float nearClip = 1.0f;
 static float brightness = 1.0f;
 static float timeVal = 0.0f;
-static float aspect_ratio = ((float) WINDOW_WIDTH / (float) WINDOW_HEIGHT);
 /* CONSTS */
-
-
-int screen_chars_index = 0;
-int current_screen_char = 0; // todo: static inside function?
-void print_on_screen(char *str) {
-    for (int i = 0; str[i] != '\0'; i++) {
-        if (i >= CHAR_WIDTH_SCREEN) break;
-        if (str[i] == '\n') {
-            current_screen_char = ((current_screen_char / CHAR_WIDTH_SCREEN) + 1) * CHAR_WIDTH_SCREEN;
-            continue;
-        }
-        // set specific instance value
-        char_instances[screen_chars_index] = (struct CharInstance) {.i_pos={current_screen_char}, .i_char=(int) str[i]};
-        screen_chars_index++;
-        current_screen_char++;
-    }
-}
 
 void multiply(const float *a, int row1, int col1,
               const float *b, int row2, int col2, float *d) {

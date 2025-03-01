@@ -1,46 +1,47 @@
-struct Uniforms {
-    aspect_ratio : f32
-};
-@group(0) @binding(0)
-var<uniform> uniforms : Uniforms;
+// struct Uniforms {
+// };
+
+// @group(0) @binding(0)
+// var<uniform> uniforms: Uniforms;
 
 struct VertexInput {
-    @location(0) position : vec2<f32>,
-    @location(1) uv : vec2<f32>,
-    @location(2) i_pos : i32,
-    @location(3) i_char : i32
+    // From Vertex buffer:
+    @location(1) in_pos: vec3<f32>,
+    @location(4) in_uv: vec2<f32>,
+    // From Instance buffer:
+    @location(7) t0: vec4<f32>,
+    @location(8) t1: vec4<f32>,
+    @location(9) t2: vec4<f32>,
+    @location(10) t3: vec4<f32>,
+    @location(15) inst_atlas_uv: vec2<f32>,
 };
 
-// Vertex output.
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) char_uv: vec2<f32>
+    @location(0) uv: vec2<f32>
 };
-
-const char_scale = vec2(1.0 / 16.0, 1 / 8.0);
-const columns = 16;  // glyphs per row in atlas
-const rows = 8;      // total rows in atlas
-const text_columns = 48; // nr of characters that fit across screen-width // todo: avoid difference with same const in cpu code...
-const text_rows = 24; // nr of characters that fit across screen-height
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
-    // calculate the position of this character
-    var pos_col = input.i_pos % (text_columns * 2);
-    var pos_row = input.i_pos / (text_columns * 2);
-    var pos = vec2<f32>(f32(pos_col) / f32((text_columns + 4) / 2) / uniforms.aspect_ratio, -f32(pos_row) / f32(text_rows / 2)); // + 4 for slight kerning fix
-    // calculate the uv at which this character starts in the font atlas
-    var col: i32 = input.i_char % columns;
-    var row: i32 = input.i_char / columns;
-    var char_uv = vec2(f32(col) * char_scale.x, f32(row) * char_scale.y);
-    // calculate the correct starting top-left position
-    var start_position = vec2((input.position.x / f32(text_columns / 2) / uniforms.aspect_ratio) - 1.0, -(input.position.y / f32(text_rows / 2)) + 1.0);
-    // create the output we send to the fragment function
     var output: VertexOutput;
-    output.pos = vec4(start_position + pos, 0.0, 1.0);
-    output.uv = input.uv;
-    output.char_uv = char_uv;
+    // Reconstruct the 4x4 transform matrix from the instance attributes.
+    let inst_matrix = mat4x4<f32>(
+        input.t0,
+        input.t1,
+        input.t2,
+        input.t3
+    );
+    
+    // For HUD text, we assume the quad vertex only needs the x and y.
+    let vertex_position = vec4<f32>(input.in_pos.xy, 0.0, 1.0);
+    output.pos = inst_matrix * vertex_position;
+        
+    // Compute the final UV into the font atlas
+    // Here the font atlas is assumed to have 16 columns and 8 rows,
+    // so each glyph occupies (1/16, 1/8) of the texture.
+    let char_scale = vec2<f32>(1.0 / 16.0, 1.0 / 8.0);
+    output.uv = input.inst_atlas_uv + (input.in_uv * char_scale);
+    
     return output;
 }
 
@@ -50,8 +51,9 @@ var tex_sampler: sampler;
 var font_atlas: texture_2d<f32>;
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var font_uv = in.char_uv + in.uv * char_scale;
-    var color = textureSample(font_atlas, tex_sampler, font_uv);
-    return vec4<f32>(color.rgb, (color.r+color.g+color.b) / 3.0);
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    // Sample the font atlas at the computed coordinate.
+    let color = textureSample(font_atlas, tex_sampler, input.uv);
+    // Return the color with an alpha computed as the average of the rgb channels.
+    return vec4<f32>(color.rgb, (color.r + color.g + color.b) / 3.0);
 }

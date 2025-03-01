@@ -11,11 +11,14 @@ createGPUContext
 createGPUMaterial
 createGPUMesh
 createGPUTexture
+current_screen_char
 drawGPUFrame
 frmwrk_device_create_buffer_init
 frmwrk_load_shader_module
 frmwrk_print_adapter_info
 frmwrk_print_global_report
 frmwrk_setup_logging
+print_on_screen
+screen_chars_index
 setGPUInstanceBuffer
 setGPUUniformValue
