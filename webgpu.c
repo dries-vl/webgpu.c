@@ -384,7 +384,7 @@ int createGPUMaterial(WebGPUContext *context, const char *shader) {
     WGPUColorTargetState colorTarget = {0};
     colorTarget.format = context->config.format;
     colorTarget.writeMask = WGPUColorWriteMask_All;
-    // --- enable alpha blending ---
+    // --- enable alpha blending --- // todo: maybe remove this if it matters for performance?
     {
         colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
             .color = (WGPUBlendComponent){

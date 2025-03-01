@@ -31,7 +31,7 @@ struct VertexOutput {
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var output: VertexOutput;
     
-    // Determine a color based on the triangle corner.
+    // barymetric coordinates
     let corner_id = vertex_index % 3u;
     var color: vec3<f32>;
     if (corner_id == 0u) {
@@ -42,21 +42,17 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         color = vec3<f32>(0.0, 0.0, 1.0);
     }
     
-    // Reconstruct the instance transform matrix from instance attributes.
-    let inst_matrix = mat4x4<f32>(
+    // reconstruct the instance transform matrix
+    let instance_transform = mat4x4<f32>(
         input.t0,
         input.t1,
         input.t2,
         input.t3
     );
-    
-    // Transform the vertex position:
-    // - Scale the vertex position by 100.0,
-    // - Apply the instance transform,
-    // - Then apply the camera (projection) and view matrices.
-    let world_pos = inst_matrix * vec4<f32>(input.position * 100.0, 1.0);
-    let proj_pos = uniforms.camera * world_pos;
-    output.pos = uniforms.view * proj_pos;
+    let vertex_position = vec4<f32>(input.position * 100.0, 1.0);
+
+    // *important* order of multiplication matters here (!)
+    output.pos = instance_transform * vertex_position * uniforms.camera * uniforms.view;
     
     output.color = color;
     output.uv = input.uv;

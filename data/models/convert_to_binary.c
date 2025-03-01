@@ -252,8 +252,8 @@ void process_obj_file(const char *filepath) {
                         float v = uv.v < 0 ? 0 : (uv.v > 1 ? 1 : uv.v);
                         // Optionally flip v if needed:
                         // v = 1.0f - v;
-                        vert.uv[0] = float_to_half(u);
-                        vert.uv[1] = float_to_half(v);
+                        vert.uv[0] = (unsigned short)(u * 65535.0f);
+			vert.uv[1] = (unsigned short)(v * 65535.0f);
                     } else {
                         vert.uv[0] = vert.uv[1] = 0;
                     }

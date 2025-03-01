@@ -13,7 +13,7 @@
 static struct Vertex ground_verts[4] = {
     {
         .data = {0},
-        .position = {-10000.0f, -15.0f,  10000.0f},
+        .position = {-100.0f, -15.0f,  100.0f},
         .normal = {0},       // fill as needed
         .tangent = {0},
         .uv = {FLOAT_TO_U16(-1.0f), FLOAT_TO_U16(1.0f)},
@@ -22,7 +22,7 @@ static struct Vertex ground_verts[4] = {
     },
     {
         .data = {0},
-        .position = { 10000.0f, -15.0f,  10000.0f},
+        .position = { 100.0f, -15.0f,  100.0f},
         .normal = {0},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(1.0f), FLOAT_TO_U16(1.0f)},
@@ -31,7 +31,7 @@ static struct Vertex ground_verts[4] = {
     },
     {
         .data = {0},
-        .position = {-10000.0f, -15.0f, -10000.0f},
+        .position = {-100.0f, -15.0f, -100.0f},
         .normal = {0},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(-1.0f), FLOAT_TO_U16(-1.0f)},
@@ -40,7 +40,7 @@ static struct Vertex ground_verts[4] = {
     },
     {
         .data = {0},
-        .position = { 10000.0f, -15.0f, -10000.0f},
+        .position = { 100.0f, -15.0f, -100.0f},
         .normal = {0},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(1.0f), FLOAT_TO_U16(-1.0f)},

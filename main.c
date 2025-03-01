@@ -463,17 +463,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // CREATE MATERIALS
 
     // LOAD MESHES FROM DISK
-    // int vc, ic; void *v, *i;
+    int vc, ic; void *v, *i;
     
-    // struct MappedMemory teapot_mm = load_mesh("data/models/bin/teapot.bin", &v, &vc, &i, &ic);
-    // struct Instance ii[2] = {{0.0f, 0.0f, 0.0f}, {0.0f, 80.0f, 0.0f}};
-    // int teapot_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 2);
-    // unmap_file(&teapot_mm);
+    struct MappedMemory teapot_mm = load_mesh("data/models/bin/teapot.bin", &v, &vc, &i, &ic);
+    float identity_matrix[16] = {
+        1, 0, 0, 0,
+        0, -1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1 
+    };
+    struct Instance ii[2] = {0};
+    for (int i = 0; i < 16; i++) {
+        ii[0].transform[i] = identity_matrix[i];
+        ii[1].transform[i] = identity_matrix[i];
+    }
+    int teapot_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 2);
+    unmap_file(&teapot_mm);
 
-    // struct MappedMemory cube_mm = load_mesh("data/models/bin/cube.bin", &v, &vc, &i, &ic);
-    // struct Instance cube = {0.0f, 0.0f, 0.0f};
-    // int cube_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 1);
-    // unmap_file(&cube_mm);
+    struct MappedMemory cube_mm = load_mesh("data/models/bin/cube.bin", &v, &vc, &i, &ic);
+    struct Instance cube = {0};
+    for (int i = 0; i < 16; i++) {
+        cube.transform[i] = identity_matrix[i];
+    }
+    int cube_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 1);
+    unmap_file(&cube_mm);
     // LOAD MESHES FROM DISK
 
     // PREDEFINED MESHES
@@ -483,10 +496,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // TEXTURE
     int w, h = 0;
-    struct MappedMemory font_texture_memory = load_texture("data/textures/bin/font_atlas.bin", &w, &h);
-    // int cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_memory.data, w, h);
-    int quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_memory.data, w, h);
-    unmap_file(&font_texture_memory);
+    struct MappedMemory font_texture_mm = load_texture("data/textures/bin/font_atlas.bin", &w, &h);
+    int cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
+    int quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
+    unmap_file(&font_texture_mm);
+    struct MappedMemory crabby_mm = load_texture("data/textures/bin/texture_2.bin", &w, &h);
+    int ground_texture_id = createGPUTexture(context, ground_mesh_id, crabby_mm.data, w, h);
+    unmap_file(&crabby_mm);
     // TEXTURE
 
 
