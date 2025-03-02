@@ -449,7 +449,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // todo: lighting
     // todo: cubemap sky
-    // todo: LOD: how to most efficiently swap out the mesh with a lower/higher res one? swap instances with other material (?)
+    // todo: LOD: how to most efficiently swap out the mesh with a lower/higher res one? -> put instance in instance buffer of the LOD mesh instead
     // todo: character mesh
     // todo: animate the character mesh (skeleton?)
     
@@ -470,7 +470,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         1, 0, 0, 0,
         0, -1, 0, 0,
         0, 0, 1, 0,
-        0, 0, 0, 1 
+        0, 0, 0, 1
     };
     struct Instance ii[2] = {0};
     for (int i = 0; i < 16; i++) {

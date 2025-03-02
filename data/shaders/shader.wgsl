@@ -1,12 +1,21 @@
-struct Uniforms {
+struct GlobalUniforms {
     brightness: f32,
     time: f32,
     camera: mat4x4<f32>,  // Projection matrix (IS matrix for projection)
     view: mat4x4<f32>,    // View matrix
 };
+struct MeshUniforms {
+    index: u32,
+};
 
 @group(0) @binding(0)
-var<uniform> uniforms: Uniforms;
+var<uniform> global_uniforms: GlobalUniforms;
+@group(1) @binding(0)
+var<uniform> mesh_uniforms: MeshUniforms;
+@group(2) @binding(0)
+var texture_sampler: sampler;
+@group(2) @binding(1)
+var texture: texture_2d_array<f32>;
 
 struct VertexInput {
     // Vertex buffer attributes (stepMode: Vertex)
@@ -52,22 +61,17 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     let vertex_position = vec4<f32>(input.position * 100.0, 1.0);
 
     // *important* order of multiplication matters here (!)
-    output.pos = instance_transform * vertex_position * uniforms.camera * uniforms.view;
+    output.pos = instance_transform * vertex_position * global_uniforms.camera * global_uniforms.view;
     
     output.color = color;
     output.uv = input.uv;
     return output;
 }
 
-@group(1) @binding(0)
-var textureSampler: sampler;
-@group(1) @binding(1)
-var texture0: texture_2d<f32>;
-
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the texture using the interpolated UV coordinates.
-    let tex_color = textureSample(texture0, textureSampler, input.uv);
+    let tex_color = textureSample(texture, texture_sampler, input.uv, 0);
     var color = tex_color.rgb;
     // Darken the color if the per-vertex color is dark.
     if (input.color.x < 0.1 || input.color.y < 0.1 || input.color.z < 0.1) {

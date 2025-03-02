@@ -8,61 +8,54 @@
 #include "wgpu.h"
 
 #pragma region PREDEFINED DATA
-// Multiple possible layouts for textures
-#define NUM_BIND_GROUP_LAYOUTS 1
-#define STANDARD_TEXTURE {.sampleType = WGPUTextureSampleType_Float, .viewDimension = WGPUTextureViewDimension_2D, .multisampled = false}
 #define STANDARD_MAX_TEXTURES 4
-static const WGPUBindGroupLayoutDescriptor TEXTURE_LAYOUT_DESCRIPTORS[NUM_BIND_GROUP_LAYOUTS] = {
-    { // TEXTURE_LAYOUT_STANDARD
-        .entryCount = 1 + STANDARD_MAX_TEXTURES,
-        .entries = (WGPUBindGroupLayoutEntry[]){
-            // Sampler at binding = 0
-            {
-                .binding = 0,
-                .visibility = WGPUShaderStage_Fragment,
-                .sampler = { .type = WGPUSamplerBindingType_Filtering }
-            },
-            // todo: is there no way to just specify the amount of textures and use that to dyn. add these?
-            {.binding = 1, .visibility = WGPUShaderStage_Fragment, .texture = STANDARD_TEXTURE},
-            {.binding = 2, .visibility = WGPUShaderStage_Fragment, .texture = STANDARD_TEXTURE},
-            {.binding = 3, .visibility = WGPUShaderStage_Fragment, .texture = STANDARD_TEXTURE},
-            {.binding = 4, .visibility = WGPUShaderStage_Fragment, .texture = STANDARD_TEXTURE},
-        }
+static const WGPUBindGroupLayoutDescriptor TEXTURE_LAYOUT_DESCRIPTOR = {
+    .entryCount = 1 + STANDARD_MAX_TEXTURES,
+    .entries = (WGPUBindGroupLayoutEntry[]){
+        // Sampler at binding = 0
+        {
+            .binding = 0,
+            .visibility = WGPUShaderStage_Fragment,
+            .sampler = { .type = WGPUSamplerBindingType_Filtering }
+        },
+        #define TEXTURE_2D_ARRAY {.sampleType = WGPUTextureSampleType_Float, .viewDimension = WGPUTextureViewDimension_2DArray, .multisampled = false}
+        {.binding = 1, .visibility = WGPUShaderStage_Fragment, .texture = TEXTURE_2D_ARRAY},
+        {.binding = 2, .visibility = WGPUShaderStage_Fragment, .texture = TEXTURE_2D_ARRAY},
+        {.binding = 3, .visibility = WGPUShaderStage_Fragment, .texture = TEXTURE_2D_ARRAY},
+        {.binding = 4, .visibility = WGPUShaderStage_Fragment, .texture = TEXTURE_2D_ARRAY},
     }
 };
 #include "game_data.c" // todo: just one big file instead
-static const WGPUVertexBufferLayout VERTEX_LAYOUTS[1][2] = {
-    {
-        {   // Vertex layout
-            .arrayStride = 48,
-            .stepMode = WGPUVertexStepMode_Vertex,
-            .attributeCount = 7,
-            .attributes = (const WGPUVertexAttribute[]) {
-                { .format = WGPUVertexFormat_Uint32x4, .offset = 0,  .shaderLocation = 0 }, // data[4]  (16 bytes)
-                { .format = WGPUVertexFormat_Float32x3, .offset = 16, .shaderLocation = 1 }, // position[3] (12 bytes)
-                { .format = WGPUVertexFormat_Unorm8x4,   .offset = 28, .shaderLocation = 2 }, // normal[4]  (4 bytes)
-                { .format = WGPUVertexFormat_Unorm8x4,   .offset = 32, .shaderLocation = 3 }, // tangent[4] (4 bytes)
-                { .format = WGPUVertexFormat_Unorm16x2,  .offset = 36, .shaderLocation = 4 }, // uv[2]      (4 bytes)
-                { .format = WGPUVertexFormat_Unorm8x4,   .offset = 40, .shaderLocation = 5 }, // bone_weights[4] (4 bytes)
-                { .format = WGPUVertexFormat_Uint8x4,    .offset = 44, .shaderLocation = 6 }  // bone_indices[4] (4 bytes)
-            }
-        },
-        {   // Instance layout
-            .arrayStride = 96,
-            .stepMode = WGPUVertexStepMode_Instance,
-            .attributeCount = 9,
-            .attributes = (const WGPUVertexAttribute[]) {
-                { .format = WGPUVertexFormat_Float32x4, .offset = 0,   .shaderLocation = 7  }, // transform row0 (16 bytes)
-                { .format = WGPUVertexFormat_Float32x4, .offset = 16,  .shaderLocation = 8  }, // transform row1 (16 bytes)
-                { .format = WGPUVertexFormat_Float32x4, .offset = 32,  .shaderLocation = 9  }, // transform row2 (16 bytes)
-                { .format = WGPUVertexFormat_Float32x4, .offset = 48,  .shaderLocation = 10 }, // transform row3 (16 bytes)
-                { .format = WGPUVertexFormat_Uint32x3,  .offset = 64,  .shaderLocation = 11 }, // data[3] (12 bytes)
-                { .format = WGPUVertexFormat_Unorm16x4, .offset = 76,  .shaderLocation = 12 }, // norms[4] (8 bytes)
-                { .format = WGPUVertexFormat_Uint32,    .offset = 84,  .shaderLocation = 13 }, // animation (4 bytes)
-                { .format = WGPUVertexFormat_Float32,   .offset = 88,  .shaderLocation = 14 }, // animation_phase (4 bytes)
-                { .format = WGPUVertexFormat_Unorm16x2, .offset = 92,  .shaderLocation = 15 }  // atlas_uv[2] (4 bytes)
-            }
-        },
+static const WGPUVertexBufferLayout VERTEX_LAYOUT[2] = {
+    {   // Vertex layout
+        .arrayStride = 48,
+        .stepMode = WGPUVertexStepMode_Vertex,
+        .attributeCount = 7,
+        .attributes = (const WGPUVertexAttribute[]) {
+            { .format = WGPUVertexFormat_Uint32x4, .offset = 0,  .shaderLocation = 0 }, // data[4]  (16 bytes)
+            { .format = WGPUVertexFormat_Float32x3, .offset = 16, .shaderLocation = 1 }, // position[3] (12 bytes)
+            { .format = WGPUVertexFormat_Unorm8x4,   .offset = 28, .shaderLocation = 2 }, // normal[4]  (4 bytes)
+            { .format = WGPUVertexFormat_Unorm8x4,   .offset = 32, .shaderLocation = 3 }, // tangent[4] (4 bytes)
+            { .format = WGPUVertexFormat_Unorm16x2,  .offset = 36, .shaderLocation = 4 }, // uv[2]      (4 bytes)
+            { .format = WGPUVertexFormat_Unorm8x4,   .offset = 40, .shaderLocation = 5 }, // bone_weights[4] (4 bytes)
+            { .format = WGPUVertexFormat_Uint8x4,    .offset = 44, .shaderLocation = 6 }  // bone_indices[4] (4 bytes)
+        }
+    },
+    {   // Instance layout
+        .arrayStride = 96,
+        .stepMode = WGPUVertexStepMode_Instance,
+        .attributeCount = 9,
+        .attributes = (const WGPUVertexAttribute[]) {
+            { .format = WGPUVertexFormat_Float32x4, .offset = 0,   .shaderLocation = 7  }, // transform row0 (16 bytes)
+            { .format = WGPUVertexFormat_Float32x4, .offset = 16,  .shaderLocation = 8  }, // transform row1 (16 bytes)
+            { .format = WGPUVertexFormat_Float32x4, .offset = 32,  .shaderLocation = 9  }, // transform row2 (16 bytes)
+            { .format = WGPUVertexFormat_Float32x4, .offset = 48,  .shaderLocation = 10 }, // transform row3 (16 bytes)
+            { .format = WGPUVertexFormat_Uint32x3,  .offset = 64,  .shaderLocation = 11 }, // data[3] (12 bytes)
+            { .format = WGPUVertexFormat_Unorm16x4, .offset = 76,  .shaderLocation = 12 }, // norms[4] (8 bytes)
+            { .format = WGPUVertexFormat_Uint32,    .offset = 84,  .shaderLocation = 13 }, // animation (4 bytes)
+            { .format = WGPUVertexFormat_Float32,   .offset = 88,  .shaderLocation = 14 }, // animation_phase (4 bytes)
+            { .format = WGPUVertexFormat_Unorm16x2, .offset = 92,  .shaderLocation = 15 }  // atlas_uv[2] (4 bytes)
+        }
     }
 };
 #pragma endregion
@@ -71,30 +64,37 @@ static const WGPUVertexBufferLayout VERTEX_LAYOUTS[1][2] = {
 typedef struct {
     WGPURenderPipeline pipeline;
     bool               used;
-    WGPUBuffer         uniformBuffer;
-    WGPUBindGroup      uniformBindGroup;
-    WGPUSampler        textureSampler; // sampler for textures reused between meshes
 
-    int current_uniform_offset;
-    unsigned char uniform_data[UNIFORM_BUFFER_CAPACITY];
-} GpuMaterial;
+    WGPUSampler        textureSampler;
+    
+    WGPUBindGroup      globalUniformBindGroup;
+    WGPUBuffer         globalUniformBuffer;
+    unsigned char global_uniform_data[GLOBAL_UNIFORM_CAPACITY]; // global uniform data in RAM
+    int global_uniform_offset;
+    
+    WGPUBindGroup      meshUniformBindGroup;
+    WGPUBuffer         meshUniformBuffer;
+
+    WGPUBindGroup      textureBindGroup;
+    WGPUTexture        *textureObjects; // static arrays instead with max_textures and default white pixel (?)
+    WGPUTextureView    *textureViews;
+    int                textureCount;
+} GpuMaterial; // todo: no more material for pipeline, material should become the mesh uniform values instead
 
 typedef struct {
     bool       used;
     int        material_id;
 
-    WGPUBuffer vertexBuffer; // vertices are not kept in RAM, (memory mapping)
+    WGPUBuffer vertexBuffer;
     int        vertexCount;
-    WGPUBuffer indexBuffer; // indices are not kept in RAM (memory mapping)
+    WGPUBuffer indexBuffer;
     int        indexCount;
     WGPUBuffer instanceBuffer;
-    void      *instances; // instances in RAM
+    void      *instances; // instances in RAM (verts and indices are not kept in RAM) // todo: Instance instead of void
     int        instance_count;
+    unsigned char uniform_data[MESH_UNIFORM_CAPACITY]; // uniform data in RAM // todo: init
+    int mesh_uniform_offset;
 
-    WGPUBindGroup      textureBindGroup;
-    WGPUTexture        *textureObjects;
-    WGPUTextureView    *textureViews;
-    int                textureCount; // keep track of max amount of textures allowed (set per pipeline)
 } GpuMesh;
 
 typedef struct {
@@ -113,14 +113,15 @@ typedef struct {
     WGPUCommandEncoder    currentEncoder;
     WGPURenderPassEncoder currentPass;
     // Default 1 pixel texture global to assign to every empty texture slot for new meshes
-    WGPUTexture      defaultTexture;
+    WGPUTexture      defaultTextureArray;
     WGPUTextureView  defaultTextureView;
     // global depth texture
     WGPUDepthStencilState depthStencilState; 
     WGPURenderPassDepthStencilAttachment depthAttachment;
     // One standard uniform layout for all pipelines
-    WGPUBindGroupLayout uniform_layout;
-    WGPUBindGroupLayout texture_layouts[NUM_BIND_GROUP_LAYOUTS];
+    WGPUBindGroupLayout global_uniform_layout;
+    WGPUBindGroupLayout mesh_uniforms_layout;
+    WGPUBindGroupLayout texture_layout;
 } WebGPUContext;
 #pragma endregion
 
@@ -178,51 +179,80 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     context.queue = wgpuDeviceGetQueue(context.device);
     assert(context.queue);
 
-    // Create the global uniform bind group layout.
+    // Create the global uniform bind group layout
     {
         WGPUBindGroupLayoutEntry entry = {0};
         entry.binding = 0;
         entry.visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
         entry.buffer.type = WGPUBufferBindingType_Uniform;
-        entry.buffer.minBindingSize = UNIFORM_BUFFER_CAPACITY;
+        entry.buffer.minBindingSize = GLOBAL_UNIFORM_CAPACITY;
+        entry.buffer.hasDynamicOffset = 0;
         WGPUBindGroupLayoutDescriptor bglDesc = {0};
         bglDesc.entryCount = 1;
         bglDesc.entries = &entry;
-        context.uniform_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
-    }
-    
-    // 2) Initialize all the texture group layouts in wgpu
-    {
-        for (int i = 0; i < NUM_BIND_GROUP_LAYOUTS; i++) {
-            context.texture_layouts[i] = wgpuDeviceCreateBindGroupLayout(context.device, &TEXTURE_LAYOUT_DESCRIPTORS[i]);
-        }
+        context.global_uniform_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
     }
 
-    // 3) Create a 1×1 texture for empty texture slots
+    // Create the mesh uniforms bind group layout
     {
+        WGPUBindGroupLayoutEntry entry = {0};
+        entry.binding = 0;
+        entry.visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        entry.buffer.type = WGPUBufferBindingType_Uniform;
+        entry.buffer.minBindingSize = MESH_UNIFORM_CAPACITY;
+        entry.buffer.hasDynamicOffset = 1; // don't forget this (!)
+        WGPUBindGroupLayoutDescriptor bglDesc = {0};
+        bglDesc.entryCount = 1;
+        bglDesc.entries = &entry;
+        context.mesh_uniforms_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
+    }
+    
+    // Create the texture bind group layout
+    {
+        context.texture_layout = wgpuDeviceCreateBindGroupLayout(context.device, &TEXTURE_LAYOUT_DESCRIPTOR);
+    }
+
+    // Create a 1×1 texture to use as default value for empty texture slots
+    {
+        #define TEXTURE_WIDTH 1200
+        #define TEXTURE_HEIGHT 1200
         unsigned char whitePixel[4] = {127,127,127,127};
         WGPUTextureDescriptor td = {0};
+        td.label = "Texture Array",
         td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
         td.dimension = WGPUTextureDimension_2D;
         td.format = WGPUTextureFormat_RGBA8Unorm;
-        td.size.width  = 1;
-        td.size.height = 1;
-        td.size.depthOrArrayLayers = 1;
+        td.size.width  = TEXTURE_WIDTH;
+        td.size.height = TEXTURE_HEIGHT;
+        td.size.depthOrArrayLayers = MAX_MESH_CONFIGS; // nr of elements in texture array
         td.mipLevelCount = 1;
         td.sampleCount   = 1;
-        context.defaultTexture = wgpuDeviceCreateTexture(context.device, &td);
-
-        // Copy data
-        WGPUImageCopyTexture ict = {0};
-        ict.texture = context.defaultTexture;
-        WGPUTextureDataLayout tdl = {0};
-        tdl.bytesPerRow    = 4;
-        tdl.rowsPerImage   = 1;
-        WGPUExtent3D extent = {1,1,1};
-        wgpuQueueWriteTexture(context.queue, &ict, whitePixel, 4, &tdl, &extent);
+        context.defaultTextureArray = wgpuDeviceCreateTexture(context.device, &td);
 
         // Create a view
-        context.defaultTextureView = wgpuTextureCreateView(context.defaultTexture, NULL);
+        WGPUTextureViewDescriptor viewDesc = {
+            .label = "Texture Array View",
+            .format = WGPUTextureFormat_RGBA8Unorm,
+            .dimension = WGPUTextureViewDimension_2DArray,  // 2D Array
+            .baseMipLevel = 0,
+            .mipLevelCount = 1,
+            .baseArrayLayer = 0,
+            .arrayLayerCount = MAX_MESH_CONFIGS,
+            .aspect = WGPUTextureAspect_All,
+        };
+        context.defaultTextureView = wgpuTextureCreateView(context.defaultTextureArray, &viewDesc);
+
+        // Copy data
+        for (uint32_t layer = 0; layer < MAX_MESH_CONFIGS; ++layer) {
+            WGPUImageCopyTexture ict = {0};
+            ict.texture = context.defaultTextureArray;
+            ict.origin = (WGPUOrigin3D) {0, 0, layer};
+            WGPUTextureDataLayout tdl = {0};
+            tdl.bytesPerRow    = TEXTURE_WIDTH * 4; // == width of texture * 4 bytes per pixel
+            tdl.rowsPerImage   = TEXTURE_HEIGHT; // == height of texture
+            // Write a much smaller 1x1 texture into the layer
+            wgpuQueueWriteTexture(context.queue, &ict, whitePixel, 1 * 1 * 4, &tdl, &(WGPUExtent3D){1, 1, 1});
+        }
     }
 
     // Create a depth texture
@@ -297,6 +327,11 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     context.initialized = true;
     printf("[webgpu.c] wgpuInit done.\n");
+    WGPUSupportedLimits limits = {0}; wgpuDeviceGetLimits(context.device, &limits);
+    printf("[webgpu.c] max uniform buffer size: %d\n", limits.limits.maxUniformBufferBindingSize);
+    printf("[webgpu.c] max buffer size: %d\n", limits.limits.maxBufferSize);
+    printf("[webgpu.c] max nr of textures in array: %d\n", limits.limits.maxTextureArrayLayers);
+    printf("[webgpu.c] max texture 2D dimension: %d\n", limits.limits.maxTextureDimension2D);
     return (void *) &context;
 }
 
@@ -337,8 +372,8 @@ int createGPUMaterial(WebGPUContext *context, const char *shader) {
             material_id = i;
             context->materials[i] = (GpuMaterial) {0};
             context->materials[i].used = true;
-            context->materials[i].current_uniform_offset = 0;
-            memset(context->materials[i].uniform_data, 0, UNIFORM_BUFFER_CAPACITY);
+            context->materials[i].global_uniform_offset = 0;
+            memset(context->materials[i].global_uniform_data, 0, GLOBAL_UNIFORM_CAPACITY);
             break;
         }
     }
@@ -357,11 +392,11 @@ int createGPUMaterial(WebGPUContext *context, const char *shader) {
 
     GpuMaterial *material = &context->materials[material_id];
 
-    // Create a pipeline layout with 2 bind groups:
-    // group 0: uniform buffer, group 1: textures. 
-    WGPUBindGroupLayout bgls[2] = { context->uniform_layout, context->texture_layouts[0] };
+    // Create a pipeline layout with 3 bind groups:
+    // group 0 and 1: uniform buffers, group 2: textures
+    WGPUBindGroupLayout bgls[3] = { context->global_uniform_layout, context->mesh_uniforms_layout, context->texture_layout };
     WGPUPipelineLayoutDescriptor layoutDesc = {0};
-    layoutDesc.bindGroupLayoutCount = 2;
+    layoutDesc.bindGroupLayoutCount = 3;
     layoutDesc.bindGroupLayouts = bgls;
     WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(context->device, &layoutDesc);
     assert(pipelineLayout);
@@ -374,7 +409,7 @@ int createGPUMaterial(WebGPUContext *context, const char *shader) {
     rpDesc.vertex.entryPoint = "vs_main";
 
     rpDesc.vertex.bufferCount = 2;
-    rpDesc.vertex.buffers = VERTEX_LAYOUTS[0];
+    rpDesc.vertex.buffers = VERTEX_LAYOUT;
     
     // Fragment stage.
     WGPUFragmentState fragState = {0};
@@ -384,27 +419,27 @@ int createGPUMaterial(WebGPUContext *context, const char *shader) {
     WGPUColorTargetState colorTarget = {0};
     colorTarget.format = context->config.format;
     colorTarget.writeMask = WGPUColorWriteMask_All;
-    // --- enable alpha blending --- // todo: maybe remove this if it matters for performance?
-    {
-        colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
-            .color = (WGPUBlendComponent){
-                .srcFactor = WGPUBlendFactor_SrcAlpha,
-                .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
-                .operation = WGPUBlendOperation_Add,
-            },
-            .alpha = (WGPUBlendComponent){
-                .srcFactor = WGPUBlendFactor_One,
-                .dstFactor = WGPUBlendFactor_Zero,
-                .operation = WGPUBlendOperation_Add,
-            }
-        }};
-    }
+    // --- enable alpha blending --- // todo: maybe later if we want water (?)
+    // {
+    //     colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
+    //         .color = (WGPUBlendComponent){
+    //             .srcFactor = WGPUBlendFactor_SrcAlpha,
+    //             .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
+    //             .operation = WGPUBlendOperation_Add,
+    //         },
+    //         .alpha = (WGPUBlendComponent){
+    //             .srcFactor = WGPUBlendFactor_One,
+    //             .dstFactor = WGPUBlendFactor_Zero,
+    //             .operation = WGPUBlendOperation_Add,
+    //         }
+    //     }};
+    // }
     fragState.targets = &colorTarget;
     rpDesc.fragment = &fragState;
     
     WGPUPrimitiveState prim = {0};
     prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe (line width?)
-    //prim.cullMode = WGPUCullMode_Back;
+    prim.cullMode = WGPUCullMode_Back;
     prim.frontFace = WGPUFrontFace_CW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
@@ -418,24 +453,43 @@ int createGPUMaterial(WebGPUContext *context, const char *shader) {
     WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(context->device, &rpDesc);
     material->pipeline = pipeline;
     
-    // Create uniform buffer.
-    WGPUBufferDescriptor ubDesc = {0};
-    ubDesc.size = UNIFORM_BUFFER_CAPACITY;
-    ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-    material->uniformBuffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
-    assert(material->uniformBuffer);
-    
-    // Create uniform bind group.
-    WGPUBindGroupEntry uEntry = {0};
-    uEntry.binding = 0;
-    uEntry.buffer = material->uniformBuffer;
-    uEntry.offset = 0;
-    uEntry.size = UNIFORM_BUFFER_CAPACITY;
-    WGPUBindGroupDescriptor uBgDesc = {0};
-    uBgDesc.layout = context->uniform_layout;
-    uBgDesc.entryCount = 1;
-    uBgDesc.entries = &uEntry;
-    material->uniformBindGroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
+    // Create global uniform bind group
+    {
+        WGPUBufferDescriptor ubDesc = {0};
+        ubDesc.size = GLOBAL_UNIFORM_CAPACITY;
+        ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+        material->globalUniformBuffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
+
+        WGPUBindGroupEntry uEntry = {0};
+        uEntry.binding = 0;
+        uEntry.buffer = material->globalUniformBuffer;
+        uEntry.offset = 0;
+        uEntry.size = GLOBAL_UNIFORM_CAPACITY;
+        WGPUBindGroupDescriptor uBgDesc = {0};
+        uBgDesc.layout = context->global_uniform_layout;
+        uBgDesc.entryCount = 1;
+        uBgDesc.entries = &uEntry;
+        material->globalUniformBindGroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
+    }
+
+    // Create mesh uniforms bind group
+    {
+        WGPUBufferDescriptor ubDesc = {0};
+        ubDesc.size = MESH_UNIFORM_BUFFER_TOTAL_SIZE;
+        ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+        material->meshUniformBuffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
+
+        WGPUBindGroupEntry uEntry = {0};
+        uEntry.binding = 0;
+        uEntry.buffer = material->meshUniformBuffer;
+        uEntry.offset = 0;
+        uEntry.size = MESH_UNIFORM_CAPACITY;
+        WGPUBindGroupDescriptor uBgDesc = {0};
+        uBgDesc.layout = context->mesh_uniforms_layout;
+        uBgDesc.entryCount = 1;
+        uBgDesc.entries = &uEntry;
+        material->meshUniformBindGroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
+    }
     
     // Create a sampler
     WGPUSamplerDescriptor samplerDesc = {0};
@@ -450,6 +504,41 @@ int createGPUMaterial(WebGPUContext *context, const char *shader) {
     samplerDesc.addressModeW = WGPUAddressMode_ClampToEdge;
     material->textureSampler = wgpuDeviceCreateSampler(context->device, &samplerDesc);
     assert(material->textureSampler != NULL);
+
+    // Initialize all available textures to the default 1x1 white pixel
+    material->textureCount = 0;
+    // todo: memory leak, we need to free this malloc stuff
+    // todo: would it make more sense to just have a few separate structs where the size is fully known up front
+    // todo: then we never have to malloc, and can put everything in a big static array
+    int max_textures = TEXTURE_LAYOUT_DESCRIPTOR.entryCount-1;
+    material->textureObjects = malloc(sizeof(WGPUTexture) * max_textures);
+    material->textureViews = malloc(sizeof(WGPUTextureView) * max_textures);
+    for (int i=0; i<max_textures; i++) {
+        material->textureObjects[i] = context->defaultTextureArray;
+        material->textureViews[i]   = context->defaultTextureView;
+    }
+    
+    {
+        int totalEntries = max_textures + 1; // entry 0 is the sampler
+        WGPUBindGroupEntry *entries = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
+        // Sampler at binding=0
+        entries[0].binding = 0;
+        entries[0].sampler = material->textureSampler;
+        for (int i=0; i<max_textures; i++) {
+            entries[i+1].binding = i + 1;
+            entries[i+1].textureView = material->textureViews[i];
+        }
+        if (material->textureBindGroup) {
+            wgpuBindGroupRelease(material->textureBindGroup);
+        }
+        WGPUBindGroupDescriptor bgDesc = {0};
+        bgDesc.layout     = context->texture_layout;
+        bgDesc.entryCount = totalEntries;
+        bgDesc.entries    = entries;
+        material->textureBindGroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
+
+        free(entries);
+    }
     
     wgpuShaderModuleRelease(shaderModule);
     wgpuPipelineLayoutRelease(pipelineLayout);
@@ -483,7 +572,7 @@ int createGPUMesh(WebGPUContext *context, int material_id, void *v, int vc, void
     GpuMesh *mesh = &context->meshes[mesh_id];
     GpuMaterial material = context->materials[material_id];
     // Create vertex buffer (same as in wgpuCreateMesh)
-    size_t vertexDataSize = VERTEX_LAYOUTS[0][0].arrayStride * vc;
+    size_t vertexDataSize = VERTEX_LAYOUT[0].arrayStride * vc;
     WGPUBufferDescriptor vertexBufDesc = {0};
     vertexBufDesc.size = vertexDataSize;
     vertexBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
@@ -505,7 +594,7 @@ int createGPUMesh(WebGPUContext *context, int material_id, void *v, int vc, void
     mesh->indexCount = ic;
     
     // Create instance buffer
-    size_t instanceDataSize = VERTEX_LAYOUTS[0][1].arrayStride * iic;
+    size_t instanceDataSize = VERTEX_LAYOUT[1].arrayStride * iic;
     WGPUBufferDescriptor instBufDesc = {0};
     instBufDesc.size = instanceDataSize;
     instBufDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
@@ -515,46 +604,6 @@ int createGPUMesh(WebGPUContext *context, int material_id, void *v, int vc, void
     mesh->instanceBuffer = instanceBuffer;
     mesh->instances = ii;
     mesh->instance_count = iic;
-
-    // Initialize all available textures to default
-    mesh->textureCount = 0;
-    // todo: memory leak, we need to free this malloc stuff
-    // todo: would it make more sense to just have a few separate structs where the size is fully known up front
-    // todo: then we never have to malloc, and can put everything in a big static array
-    int max_textures = TEXTURE_LAYOUT_DESCRIPTORS[0].entryCount-1;
-    mesh->textureObjects = malloc(sizeof(WGPUTexture) * max_textures);
-    mesh->textureViews = malloc(sizeof(WGPUTextureView) * max_textures);
-    for (int i=0; i<max_textures; i++) {
-        mesh->textureObjects[i] = context->defaultTexture;
-        mesh->textureViews[i]   = context->defaultTextureView;
-    }
-    
-    {
-        int totalEntries = max_textures + 1; // entry 0 is the sampler
-        WGPUBindGroupEntry *entries = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
-        // Sampler at binding=0
-        entries[0].binding = 0;
-        entries[0].sampler = material.textureSampler;
-        for (int i=0; i<max_textures; i++) {
-            entries[i+1].binding = i + 1;
-            entries[i+1].textureView = mesh->textureViews[i];
-        }
-        assert(material.textureSampler != NULL);
-        for (int i = 0; i < max_textures; i++) {
-            assert(mesh->textureViews[i] != NULL);
-        }
-
-        if (mesh->textureBindGroup) {
-            wgpuBindGroupRelease(mesh->textureBindGroup);
-        }
-        WGPUBindGroupDescriptor bgDesc = {0};
-        bgDesc.layout     = context->texture_layouts[0];
-        bgDesc.entryCount = totalEntries;
-        bgDesc.entries    = entries;
-        mesh->textureBindGroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
-
-        free(entries);
-    }
     
     mesh->material_id = material_id;
     printf("[webgpu.c] Created instanced mesh %d with %d vertices, %d indices, and %d instances for pipeline %d\n",
@@ -565,61 +614,37 @@ int createGPUMesh(WebGPUContext *context, int material_id, void *v, int vc, void
 int createGPUTexture(WebGPUContext *context, int mesh_id, void *data, int w, int h) {
     GpuMesh* mesh = &context->meshes[mesh_id];
     GpuMaterial* material = &context->materials[mesh->material_id];
-    int max_textures = TEXTURE_LAYOUT_DESCRIPTORS[0].entryCount-1;
-    if (mesh->textureCount >= max_textures) {
+    int max_textures = TEXTURE_LAYOUT_DESCRIPTOR.entryCount-1;
+    if (material->textureCount >= max_textures) {
         fprintf(stderr, "No more texture slots in mesh!");
         return -1;
     }
-    int slot = mesh->textureCount; // e.g. 0 => binding=1, etc.
+    int slot = material->textureCount; // e.g. 0 => binding=1, etc.
 
-    // Create texture with the given dimensions and RGBA format.
-    WGPUTextureDescriptor td = {0};
-    td.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
-    td.dimension = WGPUTextureDimension_2D;
-    td.format    = WGPUTextureFormat_RGBA8Unorm;
-    td.size.width  = w;
-    td.size.height = h;
-    td.size.depthOrArrayLayers = 1;
-    td.mipLevelCount = 1;
-    td.sampleCount   = 1;
-    WGPUTexture tex = wgpuDeviceCreateTexture(context->device, &td);
+    // Define destination layer
+    WGPUImageCopyTexture dst = {
+        .texture = context->defaultTextureArray, // todo; put this texture array in the pipeline instead of the global context
+        .mipLevel = 0,
+        .origin = {0, 0, 0}, // <-- Change `z` to overwrite a specific layer
+        .aspect = WGPUTextureAspect_All,
+    };
 
-    // Upload the pixel data.
-    WGPUImageCopyTexture ict = {0};
-    ict.texture = tex;
-    WGPUTextureDataLayout tdl = {0};
-    tdl.bytesPerRow  = 4 * w; // 4 bytes per pixel (RGBA)
-    tdl.rowsPerImage = h;
-    WGPUExtent3D ext = { .width = (uint32_t)w, .height = (uint32_t)h, .depthOrArrayLayers = 1 };
-    wgpuQueueWriteTexture(context->queue, &ict, data, (size_t)(4 * w * h), &tdl, &ext);
+    // Define source layout
+    WGPUTextureDataLayout srcLayout = {
+        .offset = 0,
+        .bytesPerRow = w * 4,   // w * 4 bytes per pixel
+        .rowsPerImage = h,      // Full image height
+    };
 
-    // Create view
-    WGPUTextureView view = wgpuTextureCreateView(tex, NULL);
+    // Define texture size (just 1 layer)
+    WGPUExtent3D copySize = {
+        .width = w,
+        .height = h,
+        .depthOrArrayLayers = 1, // Only updating one layer!
+    };
 
-    mesh->textureObjects[slot] = tex;
-    mesh->textureViews[slot]   = view;
-    mesh->textureCount++;
-
-    // Now rebuild the bind group
-    int totalEntries = 1 + max_textures; // + 1 is because we have at index 0 the sampler binding
-    WGPUBindGroupEntry* e = calloc(totalEntries, sizeof(WGPUBindGroupEntry));
-    e[0].binding = 0;
-    e[0].sampler = material->textureSampler;
-    for (int i=0; i<max_textures; i++) {
-        e[i+1].binding = i+1;
-        e[i+1].textureView = (i < mesh->textureCount) 
-                             ? mesh->textureViews[i]
-                             : context->defaultTextureView;
-    }
-    if (mesh->textureBindGroup) {
-        wgpuBindGroupRelease(mesh->textureBindGroup);
-    }
-    WGPUBindGroupDescriptor bgDesc = {0};
-    bgDesc.layout     = context->texture_layouts[0];
-    bgDesc.entryCount = totalEntries;
-    bgDesc.entries    = e;
-    mesh->textureBindGroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
-    free(e);
+    // Perform the update
+    wgpuQueueWriteTexture(context->queue, &dst, data, w * h * 4, &srcLayout, &copySize);
 
     printf("Added texture to mesh %d at slot %d (binding=%d)\n", mesh_id, slot, slot+1);
 
@@ -635,27 +660,27 @@ int addGPUUniform(WebGPUContext *context, int material_id, const void* data, int
                     (data_size <= 8) ? 8 :
                     16; // Default for vec3, vec4, mat4x4, or larger
     // Align the offset to the correct boundary (based on WGSL rules)
-    int aligned_offset = (material->current_uniform_offset + (alignment - 1)) & ~(alignment - 1);
+    int aligned_offset = (material->global_uniform_offset + (alignment - 1)) & ~(alignment - 1);
     // Check if the new offset exceeds buffer capacity
-    if (aligned_offset + data_size > UNIFORM_BUFFER_CAPACITY) {
+    if (aligned_offset + data_size > GLOBAL_UNIFORM_CAPACITY) {
         // todo: print warning on screen or in log that this failed
         return -1;
     }
     // Copy the data into the aligned buffer
-    memcpy(material->uniform_data + aligned_offset, data, data_size);
+    memcpy(material->global_uniform_data + aligned_offset, data, data_size);
     // Update the current offset
-    material->current_uniform_offset = aligned_offset + data_size;
+    material->global_uniform_offset = aligned_offset + data_size;
     // todo: print on screen that uniform changed
     return aligned_offset;
 }
 
 void setGPUUniformValue(WebGPUContext *context, int material_id, int offset, const void* data, int dataSize) {
     GpuMaterial *material = &context->materials[material_id];
-    if (offset < 0 || offset + dataSize > material->current_uniform_offset) {
+    if (offset < 0 || offset + dataSize > material->global_uniform_offset) {
         // todo: print warning on screen or in log that this failed
         return;
     }
-    memcpy(material->uniform_data + offset, data, dataSize);
+    memcpy(material->global_uniform_data + offset, data, dataSize);
 }
 #pragma endregion
 
@@ -712,35 +737,45 @@ float drawGPUFrame(WebGPUContext *context) {
 
             GpuMaterial *gpu_material = &context->materials[material_id];
             // Write CPU–side uniform data to GPU. // todo: does every material need to update uniforms every frame?
-            wgpuQueueWriteBuffer(context->queue, gpu_material->uniformBuffer, 0, gpu_material->uniform_data, UNIFORM_BUFFER_CAPACITY);
+            wgpuQueueWriteBuffer(context->queue, gpu_material->globalUniformBuffer, 0, gpu_material->global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
             // Bind uniform bind group (group 0).
             // todo: potentially we could do per-mesh uniform values like we do for textures
-            wgpuRenderPassEncoderSetBindGroup(context->currentPass, 0, gpu_material->uniformBindGroup, 0, NULL);
+            wgpuRenderPassEncoderSetBindGroup(context->currentPass, 0, gpu_material->globalUniformBindGroup, 0, NULL); // group 0 for global uniforms
+            wgpuRenderPassEncoderSetBindGroup(context->currentPass, 2, context->materials[material_id].textureBindGroup, 0, NULL); // group 2 for textures
             // Set the render pipeline.
             wgpuRenderPassEncoderSetPipeline(context->currentPass, gpu_material->pipeline);
 
             // Iterate over all meshes that use this material. // todo: more efficient if material has array of meshes instead
             for (int i = 0; i < MAX_MESHES; i++) {
-                if (context->meshes[i].used && context->meshes[i].material_id == material_id) {
-                    // If the material requires instance data updates, update the instance buffer.
+                GpuMesh *mesh = &context->meshes[i];
+                if (mesh->used && mesh->material_id == material_id) {
+                    uint32_t mesh_uniform_offset = (uint32_t) (i * MESH_UNIFORM_CAPACITY);
+                    // todo: mesh settings: UPDATE_INSTANCES, UPDATE_MESH_UNIFORMS
+                    // If the mesh requires uniform data updates, update the mesh uniform buffer
+                    if (1) {
+                        size_t instanceDataSize = VERTEX_LAYOUT[1].arrayStride * mesh->instance_count;
+                        wgpuQueueWriteBuffer(context->queue, gpu_material->meshUniformBuffer, mesh_uniform_offset, mesh->instances, MESH_UNIFORM_CAPACITY);
+                    }
+                    // If the mesh requires instance data updates, update the instance buffer
                     // todo: make this a mesh value, then we don't need to do this for static meshes
                     if (1) {
-                        context->meshes[i].instance_count = context->meshes[i].instance_count;
-                        size_t instanceDataSize = VERTEX_LAYOUTS[0][1].arrayStride *
-                                                  context->meshes[i].instance_count;
+                        size_t instanceDataSize = VERTEX_LAYOUT[1].arrayStride * mesh->instance_count;
                         // write RAM instances to GPU instances
-                        wgpuQueueWriteBuffer(context->queue,context->meshes[i].instanceBuffer,0,context->meshes[i].instances,instanceDataSize);
+                        wgpuQueueWriteBuffer(context->queue,mesh->instanceBuffer,0,mesh->instances,instanceDataSize);
                     }
-                    // todo: use a uniform buffer per mesh (on top of global uniform buffer)
-                    // todo: a second uniform buffer that is global, so never has to switch
+                    // todo: divide meshes by new 'material', reusing the same mesh uniforms for different meshes with the same settings and texture and shader id etc.
+                    // Set the dynamic offset to point to the uniform values for this mesh
+                    // *info* max size of 64kb -> with 1000 meshes we can have at most 64 bytes of uniform data per mesh (!)
+                    wgpuRenderPassEncoderSetBindGroup(context->currentPass, 1, gpu_material->meshUniformBindGroup, 1, &mesh_uniform_offset); // group 1 for per-mesh uniforms
+                    // todo: long term: use one big buffer for all meshes' uniform data and use offset per mesh
                     // todo: use one texture array for all pipeline textures instead, and use per-mesh uniform for index
                     // todo: that way we can still differentiate per mesh/instance and never switch bindgroup
-                    wgpuRenderPassEncoderSetBindGroup(context->currentPass, 1, context->meshes[i].textureBindGroup, 0, NULL); // group 1 for textures
-                    // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count.
-                    wgpuRenderPassEncoderSetVertexBuffer(context->currentPass, 0, context->meshes[i].vertexBuffer, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderSetVertexBuffer(context->currentPass, 1, context->meshes[i].instanceBuffer, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderSetIndexBuffer(context->currentPass, context->meshes[i].indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderDrawIndexed(context->currentPass, context->meshes[i].indexCount,context->meshes[i].instance_count,0,0,0);
+                    // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count
+                    // todo: could it be possible to set all vertex buffers here and deal with it in the shader (?)
+                    wgpuRenderPassEncoderSetVertexBuffer(context->currentPass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderSetVertexBuffer(context->currentPass, 1, mesh->instanceBuffer, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderSetIndexBuffer(context->currentPass, mesh->indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderDrawIndexed(context->currentPass, mesh->indexCount,mesh->instance_count,0,0,0);
                 }
             }
         }
