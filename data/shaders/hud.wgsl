@@ -15,7 +15,7 @@
 @group(2) @binding(0)
 var tex_sampler: sampler;
 @group(2) @binding(1)
-var font_atlas: texture_2d_array<f32>;
+var font_atlas: texture_2d<f32>;
 
 struct VertexInput {
     // From Vertex buffer:
@@ -61,7 +61,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the font atlas at the computed coordinate.
-    let color = textureSample(font_atlas, tex_sampler, input.uv, 0);
+    let color = textureSample(font_atlas, tex_sampler, input.uv);
     // Return the color with an alpha computed as the average of the rgb channels.
     return vec4<f32>(color.rgb, (color.r + color.g + color.b) / 3.0);
 }

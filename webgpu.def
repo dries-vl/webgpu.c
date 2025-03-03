@@ -6,10 +6,11 @@ _dllstart
 _edata
 _end
 _etext
-addGPUUniform
+addGPUGlobalUniform
+addGPUMaterialUniform
 createGPUContext
-createGPUMaterial
 createGPUMesh
+createGPUPipeline
 createGPUTexture
 current_screen_char
 drawGPUFrame
@@ -20,5 +21,6 @@ frmwrk_print_global_report
 frmwrk_setup_logging
 print_on_screen
 screen_chars_index
+setGPUGlobalUniformValue
 setGPUInstanceBuffer
-setGPUUniformValue
+setGPUMaterialUniformValue

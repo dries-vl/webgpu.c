@@ -458,9 +458,9 @@ unsigned int fnv1a(const char *s) {
 
 /*int find_material_index(const int hash) {
     int empty_index = -1;
-    for (int i = 0; i < MAX_MATERIALS; i++) {
-        if (game_data.materials[i].used) {
-            if (game_data.materials[i].hash == hash) {
+    for (int i = 0; i < MAX_PIPELINES; i++) {
+        if (game_data.pipelines[i].used) {
+            if (game_data.pipelines[i].hash == hash) {
                 return i; // already exists
             }
         } else if (empty_index == -1) {

@@ -2,12 +2,12 @@
 #define GAME_DATA_H_
 // todo: avoid this header file, just have it in one of the C files, ideally game.c (it compiles like that, but ide errors annoying) 
 
-#define MAX_MATERIALS             16 // todo: remove, only one pipeline
+#define MAX_PIPELINES             2 // todo: remove, only one pipeline
 #define MAX_MESHES                128
-#define MAX_MESH_CONFIGS          4 // todo: MAX_MATERIALS that matches with the 256 bytes x 256 materials limit -> can reuse material for different mesh by using atlas for textures + instance atlas uv
-#define MESH_UNIFORM_CAPACITY     256  // bytes per mesh in mesh uniform buffer (dynamic offset blocks in uniform buffer cannot be smaller than 256 bytes)
+#define MAX_MATERIALS          256 // todo: MAX_MATERIALS that matches with the 256 bytes x 256 materials limit -> can reuse material for different mesh by using atlas for textures + instance atlas uv
+#define MATERIAL_UNIFORM_CAPACITY     256  // bytes per mesh in mesh uniform buffer (dynamic offset blocks in uniform buffer cannot be smaller than 256 bytes)
 #define GLOBAL_UNIFORM_CAPACITY   1024  // bytes per pipeline uniform buffer
-#define MESH_UNIFORM_BUFFER_TOTAL_SIZE (MAX_MESH_CONFIGS * MESH_UNIFORM_CAPACITY) // this cannot be bigger than 65536 bytes
+#define MATERIALS_UNIFORM_BUFFER_TOTAL_SIZE (MAX_MATERIALS * MATERIAL_UNIFORM_CAPACITY) // this cannot be bigger than 65536 bytes
 
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
 #define WINDOW_WIDTH (1920 * 1.5) // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
@@ -88,7 +88,7 @@ struct Instance { // 96 bytes
 // todo: 
 
 // todo: much more high level text files with mesh + textures + instances + scene
-// todo: materials are still in C for now
+// todo: pipelines are still in C for now
 // todo; script that converts those text files to binary data that we load in at runtime
 struct LoadMesh { // todo: isn't it wasteful to put this in static memory when it's only used for loading in?
     struct Material *material;

@@ -6,16 +6,18 @@
 #include <stdio.h>
 
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
-// todo: add functions to remove meshes from the scene, and automatically remove materials/pipelines that have no meshes anymore (?)
+// todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
 /* GRAPHICS LAYER API */
 // todo : platform provides these functions to presentation layer via a struct (then they don't need to be compiled together)
 typedef void* GPUContext;
 extern GPUContext createGPUContext(void *hInstance, void *hwnd, int width, int height);
-extern int   createGPUMaterial(GPUContext context, const char *shader);
+extern int   createGPUPipeline(GPUContext context, const char *shader);
 extern int   createGPUMesh(GPUContext context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
 extern int   createGPUTexture(GPUContext context, int mesh_id, void *data, int w, int h);
-int          addGPUUniform(GPUContext context, int material_id, const void* data, int data_size);
-void         setGPUUniformValue(GPUContext context, int material_id, int offset, const void* data, int dataSize);
+int          addGPUGlobalUniform(GPUContext context, int pipeline_id, const void* data, int data_size);
+void         setGPUGlobalUniformValue(GPUContext context, int pipeline_id, int offset, const void* data, int dataSize);
+int          addGPUMaterialUniform(GPUContext context, int material_id, const void* data, int data_size);
+void         setGPUMaterialUniformValue(GPUContext context, int material_id, int offset, const void* data, int dataSize);
 extern void  setGPUInstanceBuffer(GPUContext context, int mesh_id, void* ii, int iic);
 extern float drawGPUFrame(GPUContext context);
 /* PLATFORM LAYER API */
@@ -435,7 +437,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         FreeLibrary(shcore);
     }
     // *info* this sets the window to exclusive fullscreen bypassing the window manager
-    // set_fullscreen(hwnd, WINDOW_WIDTH, WINDOW_HEIGHT, 60); // need to specify refresh rate of monitor (?)
+    set_fullscreen(hwnd, WINDOW_WIDTH, WINDOW_HEIGHT, 60); // need to specify refresh rate of monitor (?)
     RECT screen;
     GetClientRect(GetDesktopWindow(), &screen);
     int x = (screen.right - WINDOW_WIDTH) / 2;
@@ -458,8 +460,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // CREATE MATERIALS
     // todo: create a function that does this automatically based on game state object
-    int basic_material_id = createGPUMaterial(context, "data/shaders/shader.wgsl");
-    int hud_material_id = createGPUMaterial(context, "data/shaders/hud.wgsl");
+    
+    int basic_material_id = createGPUPipeline(context, "data/shaders/shader.wgsl");
+    int hud_material_id = createGPUPipeline(context, "data/shaders/hud.wgsl");
     // CREATE MATERIALS
 
     // LOAD MESHES FROM DISK
@@ -496,7 +499,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // TEXTURE
     int w, h = 0;
-    struct MappedMemory font_texture_mm = load_texture("data/textures/bin/font_atlas.bin", &w, &h);
+    struct MappedMemory font_texture_mm = load_texture("data/textures/bin/font_atlas_small.bin", &w, &h);
     int cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
     int quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
     unmap_file(&font_texture_mm);
@@ -513,10 +516,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
         0.0f,  0.0f, -1.0f,                               0.0f
     };
-    int brightnessOffset = addGPUUniform(context, basic_material_id, &brightness, sizeof(float));
-    int timeOffset = addGPUUniform(context, basic_material_id, &timeVal, sizeof(float));
-    int cameraOffset = addGPUUniform(context, basic_material_id, camera, sizeof(camera));
-    int viewOffset = addGPUUniform(context, basic_material_id, view, sizeof(view));
+    int brightnessOffset = addGPUGlobalUniform(context, basic_material_id, &brightness, sizeof(float));
+    int timeOffset = addGPUGlobalUniform(context, basic_material_id, &timeVal, sizeof(float));
+    int cameraOffset = addGPUGlobalUniform(context, basic_material_id, camera, sizeof(camera));
+    int viewOffset = addGPUGlobalUniform(context, basic_material_id, view, sizeof(view));
 
     /* MAIN LOOP */
     init_debug_info();
@@ -544,8 +547,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         //camera[7] = cameraLocation[1];
         float inv[16];
         inverseViewMatrix(camera, inv);
-        setGPUUniformValue(context, basic_material_id, timeOffset, &timeVal, sizeof(float));
-        setGPUUniformValue(context, basic_material_id, cameraOffset, &inv, sizeof(camera));
+        setGPUGlobalUniformValue(context, basic_material_id, timeOffset, &timeVal, sizeof(float));
+        setGPUGlobalUniformValue(context, basic_material_id, cameraOffset, &inv, sizeof(camera));
 
         // update the instances of the text
         setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
@@ -566,9 +569,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
 
         draw_debug_info();
-        if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {
-            printf("Camera speed: %4.2f %4.2f %4.2f\n", cameraSpeed.x, cameraSpeed.y, cameraSpeed.z);
-        }
+        // if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {
+        //     printf("Camera speed: %4.2f %4.2f %4.2f\n", cameraSpeed.x, cameraSpeed.y, cameraSpeed.z);
+        // }
     }
     
     return 0;

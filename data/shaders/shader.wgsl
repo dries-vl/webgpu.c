@@ -13,9 +13,9 @@ var<uniform> global_uniforms: GlobalUniforms;
 @group(1) @binding(0)
 var<uniform> mesh_uniforms: MeshUniforms;
 @group(2) @binding(0)
-var texture_sampler: sampler;
+var textureSampler: sampler;
 @group(2) @binding(1)
-var texture: texture_2d_array<f32>;
+var texture0: texture_2d<f32>;
 
 struct VertexInput {
     // Vertex buffer attributes (stepMode: Vertex)
@@ -71,7 +71,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the texture using the interpolated UV coordinates.
-    let tex_color = textureSample(texture, texture_sampler, input.uv, 0);
+    let tex_color = textureSample(texture0, textureSampler, input.uv);
     var color = tex_color.rgb;
     // Darken the color if the per-vertex color is dark.
     if (input.color.x < 0.1 || input.color.y < 0.1 || input.color.z < 0.1) {
