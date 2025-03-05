@@ -1,12 +1,61 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebGPU + Wasm</title>
-</head>
-<body>
-    <canvas id="webgpu-canvas"></canvas>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>WebGPU WASM Example</title>
+  </head>
+  <body>
+    <!-- Include the WebGPU JS glue file -->
     <script src="webgpu.js"></script>
-</body>
+    <script>
+      // Pre-initialize the GPU context.
+      // We call the asynchronous createGPUContext from webgpu.js
+      // and store its result in a global variable.
+      let preinitializedGPUContext = null;
+      // Here we create a context with desired dimensions (e.g. 640x480).
+      window.createGPUContext(640, 480).then(ctx => {
+        preinitializedGPUContext = ctx;
+        console.log("Preinitialized GPU context", preinitializedGPUContext);
+        // Now that the GPU context is ready, load the WASM module.
+        loadWasmModule();
+      }).catch(e => {
+        console.error("Error creating GPU context:", e);
+      });
+
+      // Synchronous wrappers for the imports.
+      function import_createGPUContext(width, height) {
+        // We ignore the parameters and return the pre-initialized context.
+        // (The C code expects a synchronous function.)
+        return preinitializedGPUContext;
+      }
+      // Other imported functions are taken directly from our window (from webgpu.js).
+      const imports = {
+        env: {
+          createGPUContext: import_createGPUContext,
+          createGPUPipeline: window.createGPUPipeline,
+          createGPUMesh: window.createGPUMesh,
+          createGPUTexture: window.createGPUTexture,
+          addGPUGlobalUniform: window.addGPUGlobalUniform,
+          setGPUGlobalUniformValue: window.setGPUGlobalUniformValue,
+          addGPUMaterialUniform: window.addGPUMaterialUniform,
+          setGPUMaterialUniformValue: window.setGPUMaterialUniformValue,
+          setGPUInstanceBuffer: window.setGPUInstanceBuffer,
+          drawGPUFrame: window.drawGPUFrame
+        }
+      };
+
+      function loadWasmModule() {
+        fetch("main.wasm")
+          .then(response => response.arrayBuffer())
+          .then(buffer => WebAssembly.instantiate(buffer, imports))
+          .then(obj => {
+            window.wasmMemory = obj.instance.exports.memory;
+            console.log("WASM module loaded.");
+            // Call the exported main() to run our example.
+            obj.instance.exports.main();
+          })
+          .catch(console.error);
+      }
+    </script>
+  </body>
 </html>

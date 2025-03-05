@@ -1,7 +1,3 @@
-// todo: do not import these here, either just have print_on_screen function passed in or defined here instead
-#include "game_data.h"
-#include "game_data.c"
-
 #ifndef __wasm__
 #include <math.h>
 #endif

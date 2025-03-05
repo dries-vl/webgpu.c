@@ -1,27 +1,12 @@
-#include "game.c"
+#include "present.c"
 
 #include <windows.h>
 #include <stdbool.h>
 #include <assert.h>
 #include <stdio.h>
 
-// todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
-// todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
-/* GRAPHICS LAYER API */
-// todo : platform provides these functions to presentation layer via a struct (then they don't need to be compiled together)
-typedef void* GPUContext;
-extern GPUContext createGPUContext(void *hInstance, void *hwnd, int width, int height);
-extern int   createGPUPipeline(GPUContext context, const char *shader);
-extern int   createGPUMesh(GPUContext context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
-extern int   createGPUTexture(GPUContext context, int mesh_id, void *data, int w, int h);
-int          addGPUGlobalUniform(GPUContext context, int pipeline_id, const void* data, int data_size);
-void         setGPUGlobalUniformValue(GPUContext context, int pipeline_id, int offset, const void* data, int dataSize);
-int          addGPUMaterialUniform(GPUContext context, int material_id, const void* data, int data_size);
-void         setGPUMaterialUniformValue(GPUContext context, int material_id, int offset, const void* data, int dataSize);
-extern void  setGPUInstanceBuffer(GPUContext context, int mesh_id, void* ii, int iic);
-extern float drawGPUFrame(GPUContext context);
 /* PLATFORM LAYER API */
-// todo: pass these by struct to game.c
+// todo: pass these by struct to present.c
 // memory map file / load file
 // networking functions
 // audio
@@ -46,10 +31,6 @@ static bool g_Running = true;
 
 
 #pragma region FILE MAPPING
-struct MappedMemory {
-    void *data;     // Base pointer to mapped file data
-    void *mapping;  // Opaque handle for the mapping (ex. Windows HANDLE)
-};
 struct MappedMemory map_file(const char *filename) {
     struct MappedMemory mm = {0};
     HANDLE hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL,
@@ -84,50 +65,11 @@ void unmap_file(struct MappedMemory *mm) {
     mm->data = NULL;
     mm->mapping = NULL;
 }
-/* FILE MAPPING */
-/* MEMORY MAPPING MESH */
-typedef struct {
-    unsigned int vertexCount;
-    unsigned int indexCount;
-    unsigned int vertexArrayOffset;
-    unsigned int indexArrayOffset;
-} MeshHeader;
-struct MappedMemory load_mesh(const char *filename, void** v, int *vc, void** i, int *ic) {
-    struct MappedMemory mm = map_file(filename);
-    if (!mm.data) {
-        fprintf(stderr, "Failed to load mesh: %s\n", filename);
-        exit(1);
-    }
-    
-    MeshHeader *header = (MeshHeader*)mm.data;
-    // Set pointers into the mapped memory using the header's offsets
-    *vc = header->vertexCount;
-    *v = (unsigned char*)mm.data + header->vertexArrayOffset;
-    *ic  = header->indexCount;
-    *i  = (unsigned int*)((unsigned char*)mm.data + header->indexArrayOffset);
-    
-    return mm;
-}
-/* MEMORY MAPPING MESH */
-/* MEMORY MAPPING TEXTURE */
-typedef struct {
-    int width;
-    int height;
-} ImageHeader;  
-struct MappedMemory load_texture(const char *filename, int *out_width, int *out_height) {
-    struct MappedMemory mm = map_file(filename);
-
-    ImageHeader *header = (ImageHeader*)mm.data;
-    *out_width  = header->width;
-    *out_height = header->height;
-    return mm;
-}
-/* MEMORY MAPPING TEXTURE */
 #pragma endregion
 
 
 
-/* CYCLE COUNT */
+#pragma region CYCLES
 #if defined(_MSC_VER)
 #include <intrin.h>
 #pragma intrinsic(__rdtsc)
@@ -144,11 +86,7 @@ inline unsigned long long read_cycle_count() {
     return ((unsigned long long)hi << 32) | lo;
 }
 #endif
-/* CYCLE COUNT */
-
-
-
-
+#pragma endregion
 
 #pragma region RAW INPUT SETUP
 typedef BOOL (WINAPI *RegisterRawInputDevices_t)(PCRAWINPUTDEVICE, UINT, UINT);
@@ -174,9 +112,6 @@ void load_raw_input_functions() {
     }
 }
 #pragma endregion
-
-
-
 
 #pragma region INPUT EVENTS
 RAWINPUTDEVICE rid[2];
@@ -351,6 +286,12 @@ void init_debug_info() {
     debug_info.ms_last_frame = 0.0f;
     debug_info.ms_waited_on_gpu = 0.0f;
 }
+double current_time_ms() {
+    LARGE_INTEGER new_tick_count;
+    QueryPerformanceCounter(&new_tick_count);
+    double s = ((double) (new_tick_count.QuadPart) / (double) debug_info.ticks_per_second);
+    return s * 1000.0;
+}
 void draw_debug_info() {
     // todo: way to not have any of the debug HUD and fps and timing code at all when not in debug mode
     // todo: create a function that we can use as oneliner measuring timing here
@@ -370,7 +311,6 @@ void draw_debug_info() {
 
     debug_info.ms_last_frame = ((float) (1000*ticks_elapsed) / (float) debug_info.ticks_per_second);
     int fps = debug_info.ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
-    // todo: render in bitmap font to screen instead of printf IO
     char perf_output_string[256];
     snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s,  %4.2fgpu-ms/f\n", debug_info.ms_last_frame, fps, debug_info.ms_waited_on_gpu);
     print_on_screen(perf_output_string);
@@ -437,7 +377,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         FreeLibrary(shcore);
     }
     // *info* this sets the window to exclusive fullscreen bypassing the window manager
-    set_fullscreen(hwnd, WINDOW_WIDTH, WINDOW_HEIGHT, 60); // need to specify refresh rate of monitor (?)
+    // set_fullscreen(hwnd, WINDOW_WIDTH, WINDOW_HEIGHT, 60); // need to specify refresh rate of monitor (?)
     RECT screen;
     GetClientRect(GetDesktopWindow(), &screen);
     int x = (screen.right - WINDOW_WIDTH) / 2;
@@ -446,80 +386,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ShowCursor(FALSE); // hide the cursor
     /* WINDOWS-ONLY SPECIFIC SETTINGS */
     #pragma endregion
-    
-    GPUContext context = createGPUContext(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    // todo: lighting
-    // todo: cubemap sky
-    // todo: LOD: how to most efficiently swap out the mesh with a lower/higher res one? -> put instance in instance buffer of the LOD mesh instead
-    // todo: character mesh
-    // todo: animate the character mesh (skeleton?)
-    
-    // todo: use precompiled shader for faster loading
-    // todo: use glsl instead of wgsl for C-style syntax
-    
-    // CREATE MATERIALS
-    // todo: create a function that does this automatically based on game state object
-    
-    int basic_material_id = createGPUPipeline(context, "data/shaders/shader.wgsl");
-    int hud_material_id = createGPUPipeline(context, "data/shaders/hud.wgsl");
-    // CREATE MATERIALS
+    void *context = createGPUContext(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    // LOAD MESHES FROM DISK
-    int vc, ic; void *v, *i;
-    
-    struct MappedMemory teapot_mm = load_mesh("data/models/bin/teapot.bin", &v, &vc, &i, &ic);
-    float identity_matrix[16] = {
-        1, 0, 0, 0,
-        0, -1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
+    struct Platform p = {
+        .current_time_ms = current_time_ms,
+        .map_file = map_file,
+        .unmap_file = unmap_file
     };
-    struct Instance ii[2] = {0};
-    for (int i = 0; i < 16; i++) {
-        ii[0].transform[i] = identity_matrix[i];
-        ii[1].transform[i] = identity_matrix[i];
-    }
-    int teapot_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 2);
-    unmap_file(&teapot_mm);
-
-    struct MappedMemory cube_mm = load_mesh("data/models/bin/cube.bin", &v, &vc, &i, &ic);
-    struct Instance cube = {0};
-    for (int i = 0; i < 16; i++) {
-        cube.transform[i] = identity_matrix[i];
-    }
-    int cube_mesh_id = createGPUMesh(context, basic_material_id, v, vc, i, ic, &ii, 1);
-    unmap_file(&cube_mm);
-    // LOAD MESHES FROM DISK
-
-    // PREDEFINED MESHES
-    int ground_mesh_id = createGPUMesh(context, basic_material_id, &ground_verts, 4, &ground_indices, 6, &ground_instance, 1);
-    int quad_mesh_id = createGPUMesh(context, hud_material_id, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
-    // PREDEFINED MESHES
-
-    // TEXTURE
-    int w, h = 0;
-    struct MappedMemory font_texture_mm = load_texture("data/textures/bin/font_atlas_small.bin", &w, &h);
-    int cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
-    int quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
-    unmap_file(&font_texture_mm);
-    struct MappedMemory crabby_mm = load_texture("data/textures/bin/texture_2.bin", &w, &h);
-    int ground_texture_id = createGPUTexture(context, ground_mesh_id, crabby_mm.data, w, h);
-    unmap_file(&crabby_mm);
-    // TEXTURE
-
-
-
-    float view[16] = {
-        1.0 / (tan(fov / 2.0) * ASPECT_RATIO), 0.0f,  0.0f,                               0.0f,
-        0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
-        0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
-        0.0f,  0.0f, -1.0f,                               0.0f
+    struct Graphics g = {
+        .context = context,
+        .createGPUPipeline = createGPUPipeline,
+        .createGPUMesh = createGPUMesh,
+        .createGPUTexture = createGPUTexture,
+        .addGPUGlobalUniform = addGPUGlobalUniform,
+        .setGPUGlobalUniformValue = setGPUGlobalUniformValue,
+        .addGPUMaterialUniform = addGPUMaterialUniform,
+        .setGPUMaterialUniformValue = setGPUMaterialUniformValue,
+        .setGPUInstanceBuffer = setGPUInstanceBuffer,
+        .drawGPUFrame = drawGPUFrame
     };
-    int brightnessOffset = addGPUGlobalUniform(context, basic_material_id, &brightness, sizeof(float));
-    int timeOffset = addGPUGlobalUniform(context, basic_material_id, &timeVal, sizeof(float));
-    int cameraOffset = addGPUGlobalUniform(context, basic_material_id, camera, sizeof(camera));
-    int viewOffset = addGPUGlobalUniform(context, basic_material_id, view, sizeof(view));
 
     /* MAIN LOOP */
     init_debug_info();
@@ -535,38 +421,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         if (!g_Running) break;
 
-        // Update uniforms
-        timeVal += 0.016f; // pretend 16ms per frame
-        //yaw(0.001f * ms_last_frame, camera);
-        cameraMovement(camera, movementSpeed, debug_info.ms_last_frame);
-        float cameraLocation[3] = {camera[3], camera[7], camera[11]};
-        applyGravity(&cameraSpeed, cameraLocation, debug_info.ms_last_frame);
-        //collisionDetectionCamera(cubeCollisionBox);
-        // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
-        //printf("Collision detected: %4.2f\n", separation.x);
-        //camera[7] = cameraLocation[1];
-        float inv[16];
-        inverseViewMatrix(camera, inv);
-        setGPUGlobalUniformValue(context, basic_material_id, timeOffset, &timeVal, sizeof(float));
-        setGPUGlobalUniformValue(context, basic_material_id, cameraOffset, &inv, sizeof(camera));
-
-        // update the instances of the text
-        setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
+        tick(&p, &g);
 
         // Actual frame rendering
         // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure
         // *info* forces the cpu to wait before pushing another frame, bringing the cpu speed down to the gpu speed
         // *info* we can force the cpu to wait regardless by using the fence in wgpuEndFrame()
-        debug_info.ms_waited_on_gpu = drawGPUFrame(context);
+        debug_info.ms_waited_on_gpu = 0;
         
         // todo: create a central place for things that need to happen to initialize every frame iteration correctly
         // Set the printed chars to 0 to reset the text in the HUD
-        {
-            screen_chars_index = 0;
-            current_screen_char = 0; // todo: replace with function that resets instead of spaghetti
-            memset(char_instances, 0, sizeof(char_instances));
-            setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
-        }
 
         draw_debug_info();
         // if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {

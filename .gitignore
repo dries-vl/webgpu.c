@@ -7,3 +7,4 @@
 *.wasm
 *.ttf
 /.vscode
+/node_modules

@@ -14,8 +14,21 @@
 #define WINDOW_HEIGHT (1080 * 1.5) // todo: make this global variable that can be modified
 #define ASPECT_RATIO ((float) WINDOW_WIDTH / (float) WINDOW_HEIGHT)
 
-// todo: store all this in rust, make the connection agnostic by using functions only
-// todo: make the to_binary scripts based and connected with the rust WGPU backend only
+// todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
+// todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
+/* GRAPHICS LAYER API */
+// todo : platform provides these functions to presentation layer via a struct (then they don't need to be compiled together)
+extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height);
+extern int   createGPUPipeline(void *context, const char *shader);
+extern int   createGPUMesh(void *context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
+extern int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
+extern int   addGPUGlobalUniform(void *context, int pipeline_id, const void* data, int data_size);
+extern void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset, const void* data, int dataSize);
+extern int   addGPUMaterialUniform(void *context, int material_id, const void* data, int data_size);
+extern void  setGPUMaterialUniformValue(void *context, int material_id, int offset, const void* data, int dataSize);
+extern void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
+extern float drawGPUFrame(void *context);
+
 struct Vertex { // 48 bytes
     unsigned int data[4]; // 16 bytes u32 // *info* raw data
     float position[3]; // 12 bytes f32

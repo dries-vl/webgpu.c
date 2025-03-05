@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "wgpu.h"
+#include "game_data.h"
 
 #pragma region PREDEFINED DATA
 #define MAX_TEXTURES 4
@@ -24,7 +25,6 @@ static const WGPUBindGroupLayoutDescriptor TEXTURE_LAYOUT_DESCRIPTOR = {
         {.binding = 4, .visibility = WGPUShaderStage_Fragment, .texture = STANDARD_TEXTURE},
     }
 };
-#include "game_data.c" // todo: just one big file instead
 static const WGPUVertexBufferLayout VERTEX_LAYOUT[2] = {
     {   // Vertex layout
         .arrayStride = 48,
@@ -153,7 +153,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     // Instance creation (your instance extras, etc.)
     WGPUInstanceExtras extras = {0};
     extras.chain.sType = WGPUSType_InstanceExtras;
-    extras.backends   = WGPUInstanceBackend_Primary;
+    extras.backends   = WGPUInstanceBackend_GL;
     extras.flags      = 0;
     extras.dx12ShaderCompiler = WGPUDx12Compiler_Undefined;
     extras.gles3MinorVersion  = WGPUGles3MinorVersion_Automatic;
@@ -180,6 +180,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     WGPURequestAdapterOptions adapter_opts = {0};
     adapter_opts.compatibleSurface = context.surface;
+    adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance; // Request the dedicated GPU
     wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
     assert(context.adapter);
     wgpuAdapterRequestDevice(context.adapter, NULL, handle_request_device, &context);
@@ -354,7 +355,8 @@ static WGPUShaderModule loadWGSL(WGPUDevice device, const char* filePath) {
     return module;
 }
 // todo: only one pipeline, init in context creation, remove this function (?)
-int createGPUPipeline(WebGPUContext *context, const char *shader) {
+int createGPUPipeline(void *context_ptr, const char *shader) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     if (!context->initialized) {
         fprintf(stderr, "[webgpu.c] wgpuCreatePipeline called before init!\n");
         return -1;
@@ -433,7 +435,7 @@ int createGPUPipeline(WebGPUContext *context, const char *shader) {
     WGPUPrimitiveState prim = {0};
     prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe (line width?)
     prim.cullMode = WGPUCullMode_Back;
-    prim.frontFace = WGPUFrontFace_CW;
+    prim.frontFace = WGPUFrontFace_CCW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
     ms.count = 1;
@@ -491,7 +493,8 @@ int createGPUPipeline(WebGPUContext *context, const char *shader) {
     return pipeline_id;
 }
 
-int createGPUMesh(WebGPUContext *context, int pipeline_id, void *v, int vc, void *i, int ic, void *ii, int iic) {
+int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, int ic, void *ii, int iic) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     if (!context->initialized) {
         fprintf(stderr, "[webgpu.c] wgpuCreateInstancedMesh called before init!\n");
         return -1;
@@ -634,7 +637,8 @@ int createGPUMesh(WebGPUContext *context, int pipeline_id, void *v, int vc, void
     return mesh_id;
 }
 
-int createGPUTexture(WebGPUContext *context, int mesh_id, void *data, int w, int h) {
+int createGPUTexture(void *context_ptr, int mesh_id, void *data, int w, int h) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     Mesh* mesh = &context->meshes[mesh_id];
     Material* material = &context->materials[mesh->material_id];
     Pipeline* pipeline = &context->pipelines[material->pipeline_id];
@@ -700,7 +704,8 @@ int createGPUTexture(WebGPUContext *context, int mesh_id, void *data, int w, int
 }
 
 #pragma region UNIFORMS
-int addGPUGlobalUniform(WebGPUContext *context, int pipeline_id, const void* data, int data_size) {
+int addGPUGlobalUniform(void *context_ptr, int pipeline_id, const void* data, int data_size) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     Pipeline *pipeline = &context->pipelines[pipeline_id];
     // Inline alignment determination using ternary operators
     int alignment = (data_size <= 4) ? 4 :
@@ -721,7 +726,8 @@ int addGPUGlobalUniform(WebGPUContext *context, int pipeline_id, const void* dat
     return aligned_offset;
 }
 
-void setGPUGlobalUniformValue(WebGPUContext *context, int pipeline_id, int offset, const void* data, int dataSize) {
+void setGPUGlobalUniformValue(void *context_ptr, int pipeline_id, int offset, const void* data, int dataSize) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     Pipeline *pipeline = &context->pipelines[pipeline_id];
     if (offset < 0 || offset + dataSize > pipeline->global_uniform_offset) {
         // todo: print warning on screen or in log that this failed
@@ -729,7 +735,8 @@ void setGPUGlobalUniformValue(WebGPUContext *context, int pipeline_id, int offse
     }
     memcpy(pipeline->global_uniform_data + offset, data, dataSize);
 }
-int addGPUMaterialUniform(WebGPUContext *context, int material_id, const void* data, int data_size) {
+int addGPUMaterialUniform(void *context_ptr, int material_id, const void* data, int data_size) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     Material *material = &context->materials[material_id];
     // Inline alignment determination using ternary operators
     int alignment = (data_size <= 4) ? 4 :
@@ -749,7 +756,8 @@ int addGPUMaterialUniform(WebGPUContext *context, int material_id, const void* d
     return aligned_offset;
 }
 
-void setGPUMaterialUniformValue(WebGPUContext *context, int material_id, int offset, const void* data, int dataSize) {
+void setGPUMaterialUniformValue(void *context_ptr, int material_id, int offset, const void* data, int dataSize) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     Material *material = &context->materials[material_id];
     if (offset < 0 || offset + dataSize > material->uniform_offset) {
         // todo: print warning on screen or in log that this failed
@@ -759,7 +767,8 @@ void setGPUMaterialUniformValue(WebGPUContext *context, int material_id, int off
 }
 #pragma endregion
 
-void setGPUInstanceBuffer(WebGPUContext *context, int mesh_id, void* ii, int iic) {
+void setGPUInstanceBuffer(void *context_ptr, int mesh_id, void* ii, int iic) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     // freeing the previous buffer is the responsibility of the caller
     Mesh *mesh = &context->meshes[mesh_id];
     mesh->instances = ii;
@@ -785,7 +794,8 @@ static float fenceAndWait(WebGPUContext *context) {
     float ms_waited_on_gpu = (float) (time_after_ns - time_before_ns);
     return ms_waited_on_gpu;
 }
-float drawGPUFrame(WebGPUContext *context) {
+float drawGPUFrame(void *context_ptr) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     // Start the frame.
     wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
     if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success)
@@ -840,7 +850,6 @@ float drawGPUFrame(WebGPUContext *context) {
                 wgpuRenderPassEncoderSetBindGroup(context->currentPass, 2, material->texture_bindgroup, 0, NULL); // group 2 for textures
 
                 for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
-
                     int mesh_id = material->mesh_ids[k];
                     if (!context->meshes[mesh_id].used) printf("[FATAL WARNING] An unused mesh was left in the material's list of mesh ids");;
                     Mesh *mesh = &context->meshes[mesh_id];

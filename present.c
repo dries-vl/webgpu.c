@@ -1,0 +1,190 @@
+#include "game_data.h" // todo: rename to webgpu.c
+#include "game_data.c" // todo: inline this here and remove file
+
+#include<stdio.h> // REMOVE, for debugging only
+
+#include "game.c"
+
+#pragma region GRAPHICS
+struct Graphics {
+    void *context;
+    int   (*createGPUPipeline)(void *context, const char *shader);
+    int   (*createGPUMesh)(void *context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
+    int   (*createGPUTexture)(void *context, int mesh_id, void *data, int w, int h);
+    int   (*addGPUGlobalUniform)(void *context, int pipeline_id, const void* data, int data_size);
+    void  (*setGPUGlobalUniformValue)(void *context, int pipeline_id, int offset, const void* data, int dataSize);
+    int   (*addGPUMaterialUniform)(void *context, int material_id, const void* data, int data_size);
+    void  (*setGPUMaterialUniformValue)(void *context, int material_id, int offset, const void* data, int dataSize);
+    void  (*setGPUInstanceBuffer)(void *context, int mesh_id, void* ii, int iic);
+    float (*drawGPUFrame)(void *context);
+};
+#pragma endregion
+
+#pragma region PLATFORM
+struct MappedMemory {
+    void *data;     // Base pointer to mapped file data
+    void *mapping;  // Opaque handle for the mapping (ex. Windows HANDLE)
+};
+struct Platform {
+    struct MappedMemory (*map_file)(const char *filename);
+    void (*unmap_file)(struct MappedMemory *mm);
+    double (*current_time_ms)();
+};
+/* MEMORY MAPPING MESH */
+typedef struct {
+    unsigned int vertexCount;
+    unsigned int indexCount;
+    unsigned int vertexArrayOffset;
+    unsigned int indexArrayOffset;
+} MeshHeader;
+struct MappedMemory load_mesh(struct Platform *p, const char *filename, void** v, int *vc, void** i, int *ic) {
+    struct MappedMemory mm = p->map_file(filename);
+    
+    MeshHeader *header = (MeshHeader*)mm.data;
+    // Set pointers into the mapped memory using the header's offsets
+    *vc = header->vertexCount;
+    *v = (unsigned char*)mm.data + header->vertexArrayOffset;
+    *ic  = header->indexCount;
+    *i  = (unsigned int*)((unsigned char*)mm.data + header->indexArrayOffset);
+    
+    return mm;
+}
+/* MEMORY MAPPING TEXTURE */
+typedef struct {
+    int width;
+    int height;
+} ImageHeader;  
+struct MappedMemory load_texture(struct Platform *p, const char *filename, int *out_width, int *out_height) {
+    struct MappedMemory mm = p->map_file(filename);
+
+    ImageHeader *header = (ImageHeader*)mm.data;
+    *out_width  = header->width;
+    *out_height = header->height;
+    return mm;
+}
+#pragma endregion
+
+// todo: we need a much better way to manage meshes etc.
+// todo: use tsoding's nob.h header to build to avoid bat files
+int tick(struct Platform *p, struct Graphics *g) {
+
+    static double ms = 0;
+    static double ms_last_frame = 0;
+    ms_last_frame = p->current_time_ms() - ms;
+    ms = p->current_time_ms();
+
+    // todo: lighting
+    // todo: cubemap sky
+    // todo: character mesh
+    // todo: animate the character mesh (skeleton?)
+    // todo: use precompiled shader for faster loading
+    
+    static int basic_material_id;
+    static int hud_material_id;
+    
+    static int teapot_mesh_id;
+    static int cube_mesh_id;
+
+    static int ground_mesh_id;
+    static int quad_mesh_id;
+
+    static int cube_texture_id;
+    static int quad_texture_id;
+    static int ground_texture_id;
+
+    float view[16] = {
+        1.0 / (tan(fov / 2.0) * ASPECT_RATIO), 0.0f,  0.0f,                               0.0f,
+        0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
+        0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
+        0.0f,  0.0f, -1.0f,                               0.0f
+    };
+    static int brightnessOffset;
+    static int timeOffset;
+    static int cameraOffset; 
+    static int viewOffset;
+
+    // instance data cannot go out of scope!
+    static struct Instance ii[2] = {0};
+    static struct Instance cube = {0};
+
+    static int init_done = 0;
+    if (!init_done) {
+        init_done = 1;
+        // CREATE MATERIALS
+        basic_material_id = createGPUPipeline(g->context, "data/shaders/shader.wgsl");
+        hud_material_id = createGPUPipeline(g->context, "data/shaders/hud.wgsl");
+
+        // LOAD MESHES FROM DISK
+        int vc, ic; void *v, *i;
+        struct MappedMemory teapot_mm = load_mesh(p, "data/models/bin/teapot.bin", &v, &vc, &i, &ic);
+        float identity_matrix[16] = {
+            1, 0, 0, 0,
+            0, -1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+        };
+        for (int i = 0; i < 16; i++) {
+            ii[0].transform[i] = identity_matrix[i];
+            ii[1].transform[i] = identity_matrix[i];
+        }
+        teapot_mesh_id = createGPUMesh(g->context, basic_material_id, v, vc, i, ic, &ii, 2);
+        p->unmap_file(&teapot_mm);
+
+        struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
+        for (int i = 0; i < 16; i++) {
+            cube.transform[i] = identity_matrix[i];
+        }
+        cube_mesh_id = createGPUMesh(g->context, basic_material_id, v, vc, i, ic, &cube, 1);
+        p->unmap_file(&cube_mm);
+
+        // PREDEFINED MESHES
+        ground_mesh_id = createGPUMesh(g->context, basic_material_id, &ground_verts, 4, &ground_indices, 6, &ground_instance, 1);
+        quad_mesh_id = createGPUMesh(g->context, hud_material_id, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
+
+        // TEXTURE
+        int w, h = 0;
+        struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
+        cube_texture_id = createGPUTexture(g->context, cube_mesh_id, font_texture_mm.data, w, h);
+        quad_texture_id = createGPUTexture(g->context, quad_mesh_id, font_texture_mm.data, w, h);
+        p->unmap_file(&font_texture_mm);
+
+        struct MappedMemory crabby_mm = load_texture(p, "data/textures/bin/texture_2.bin", &w, &h);
+        ground_texture_id = createGPUTexture(g->context, ground_mesh_id, crabby_mm.data, w, h);
+        p->unmap_file(&crabby_mm);
+
+        // UNIFORMS
+        brightnessOffset = addGPUGlobalUniform(g->context, basic_material_id, &brightness, sizeof(float));
+        timeOffset = addGPUGlobalUniform(g->context, basic_material_id, &timeVal, sizeof(float));
+        cameraOffset = addGPUGlobalUniform(g->context, basic_material_id, camera, sizeof(camera));
+        viewOffset = addGPUGlobalUniform(g->context, basic_material_id, view, sizeof(view));
+    }
+
+    // Update uniforms
+    timeVal += 0.016f; // pretend 16ms per frame
+    //yaw(0.001f * ms_last_frame, camera);
+    cameraMovement(camera, movementSpeed, ms_last_frame);
+    float cameraLocation[3] = {camera[3], camera[7], camera[11]};
+    applyGravity(&cameraSpeed, cameraLocation, ms_last_frame);
+    //collisionDetectionCamera(cubeCollisionBox);
+    // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
+    //printf("Collision detected: %4.2f\n", separation.x);
+    //camera[7] = cameraLocation[1];
+    float inv[16];
+    inverseViewMatrix(camera, inv);
+    setGPUGlobalUniformValue(g->context, basic_material_id, timeOffset, &timeVal, sizeof(float));
+    setGPUGlobalUniformValue(g->context, basic_material_id, cameraOffset, &inv, sizeof(camera));
+
+    // update the instances of the text
+    setGPUInstanceBuffer(g->context, quad_mesh_id, &char_instances, screen_chars_index);
+
+    g->drawGPUFrame(g->context);
+
+    {
+        screen_chars_index = 0;
+        current_screen_char = 0; // todo: replace with function that resets instead of spaghetti
+        memset(char_instances, 0, sizeof(char_instances));
+        setGPUInstanceBuffer(g->context, quad_mesh_id, &char_instances, screen_chars_index);
+    }
+
+    return 0;
+}

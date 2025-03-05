@@ -1,4 +1,3 @@
-#include "game_data.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -49,7 +48,7 @@ static struct Vertex ground_verts[4] = {
     }
 };
 
-static uint32_t ground_indices[6] = {0, 2, 1, 2, 3, 1};
+static uint32_t ground_indices[6] = {0, 1, 2, 3, 2, 1};
 
 // Ground instance (for the entire ground mesh)
 // Here we use an identity transform (no translation, rotation or scale change)
@@ -106,7 +105,7 @@ static struct Vertex quad_vertices[4] = {
         .bone_indices = {0}
     }
 };
-static uint32_t quad_indices[6] = {0, 2, 1, 2, 3, 1};
+static uint32_t quad_indices[6] = {0, 1, 2, 3, 2, 1};
 
 #define CHAR_COLUMNS 48 // columns of text that fit across half of the screen
 #define CHAR_ROWS 24 // rows that fit across half of the screen
