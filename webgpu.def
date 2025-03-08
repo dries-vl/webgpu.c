@@ -18,6 +18,7 @@ frmwrk_load_shader_module
 frmwrk_print_adapter_info
 frmwrk_print_global_report
 frmwrk_setup_logging
+selectDiscreteGPU
 setGPUGlobalUniformValue
 setGPUInstanceBuffer
 setGPUMaterialUniformValue

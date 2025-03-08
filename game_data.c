@@ -17,7 +17,7 @@ static struct Instance ground_instance = {
          0, 10000, 0, 0,
          0, 0, 0, 1
     },
-    .data = {0},
+    .data = {20, 0, 0},
     .norms = {0},
     .animation = 0,
     .animation_phase = 0.0f,
@@ -63,7 +63,7 @@ static struct Vertex quad_vertices[4] = {
         .bone_indices = {0}
     }
 };
-static uint32_t quad_indices[6] = {2, 0, 1, 3, 2, 1};
+static uint32_t quad_indices[6] = {0, 2, 1, 2, 3, 1};
 
 #define CHAR_COLUMNS 48 // columns of text that fit across half of the screen
 #define CHAR_ROWS 24 // rows that fit across half of the screen

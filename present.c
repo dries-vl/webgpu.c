@@ -5,7 +5,7 @@
 #pragma region GLOBALS
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
 int FORCE_RESOLUTION = 0;
-int FULLSCREEN = 0;
+int FULLSCREEN = 1;
 int WINDOW_WIDTH = 1280; // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
 int WINDOW_HEIGHT = 720; // todo: make this global variable that can be modified
 int VIEWPORT_WIDTH = 1280;
@@ -137,7 +137,8 @@ int tick(struct Platform *p, struct Graphics *g) {
             0, 100, 0, 0,
             0, 0, 100, 0,
             0, 0, 0, 1
-        }
+        },
+        .data = {7, 0, 0},
     };
 
     if (!init_done) {
@@ -168,14 +169,16 @@ int tick(struct Platform *p, struct Graphics *g) {
 
         // TEXTURE
         int w, h = 0;
+        struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
+        cube_texture_id = createGPUTexture(g->context, cube_mesh_id, china_texture_mm.data, w, h);
         struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
-        cube_texture_id = createGPUTexture(g->context, cube_mesh_id, font_texture_mm.data, w, h);
         quad_texture_id = createGPUTexture(g->context, quad_mesh_id, font_texture_mm.data, w, h);
         p->unmap_file(&font_texture_mm);
+        p->unmap_file(&china_texture_mm);
 
-        struct MappedMemory crabby_mm = load_texture(p, "data/textures/bin/texture_2.bin", &w, &h);
-        ground_texture_id = createGPUTexture(g->context, ground_mesh_id, crabby_mm.data, w, h);
-        p->unmap_file(&crabby_mm);
+        struct MappedMemory ground_texture_mm = load_texture(p, "data/textures/bin/stone.bin", &w, &h);
+        ground_texture_id = createGPUTexture(g->context, ground_mesh_id, ground_texture_mm.data, w, h);
+        p->unmap_file(&ground_texture_mm);
 
         // UNIFORMS
         brightnessOffset = addGPUGlobalUniform(g->context, main_pipeline, &brightness, sizeof(float));

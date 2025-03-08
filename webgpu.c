@@ -148,7 +148,7 @@ static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice dev
         fprintf(stderr, "[webgpu.c] RequestDevice failed: %s\n", message);
 }
 // Code to force select dedicated gpu if possible
-/*WGPUAdapter selectDiscreteGPU(WGPUInstance instance) {
+WGPUAdapter selectDiscreteGPU(WGPUInstance instance) {
     // First call to get the number of available adapters.
     WGPUInstanceEnumerateAdapterOptions opts = {.backends = WGPUInstanceBackend_All};
     size_t adapterCount = wgpuInstanceEnumerateAdapters(instance, &opts, NULL);
@@ -193,7 +193,7 @@ static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice dev
 
     free(adapters);
     return selectedAdapter;
-}*/
+}
 void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     static WebGPUContext context = {0}; // initialize all fields to zero
 
@@ -228,8 +228,8 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     WGPURequestAdapterOptions adapter_opts = {0};
     adapter_opts.compatibleSurface = context.surface;
     adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance;
-    wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
-    // context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
+    //wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
+    context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
     assert(context.adapter);
     wgpuAdapterRequestDevice(context.adapter, NULL, handle_request_device, &context);
     assert(context.device);
@@ -485,7 +485,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     WGPUPrimitiveState prim = {0};
     prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe (line width?)
     prim.cullMode = WGPUCullMode_Back;
-    prim.frontFace = WGPUFrontFace_CW;
+    prim.frontFace = WGPUFrontFace_CCW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
     ms.count = 1;
