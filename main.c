@@ -522,18 +522,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         .map_file = map_file,
         .unmap_file = unmap_file
     };
-    struct Graphics g = {
-        .context = context,
-        .createGPUPipeline = createGPUPipeline,
-        .createGPUMesh = createGPUMesh,
-        .createGPUTexture = createGPUTexture,
-        .addGPUGlobalUniform = addGPUGlobalUniform,
-        .setGPUGlobalUniformValue = setGPUGlobalUniformValue,
-        .addGPUMaterialUniform = addGPUMaterialUniform,
-        .setGPUMaterialUniformValue = setGPUMaterialUniformValue,
-        .setGPUInstanceBuffer = setGPUInstanceBuffer,
-        .drawGPUFrame = drawGPUFrame
-    };
 
     /* MAIN LOOP */
     init_debug_info();
@@ -549,7 +537,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         if (!g_Running) break;
 
-        tick(&p, &g);
+        tick(&p, context);
 
         // Actual frame rendering
         // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure

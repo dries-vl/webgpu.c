@@ -33,10 +33,6 @@ struct Vertex { // 48 bytes
     unsigned char bone_weights[4]; // 4 bytes n8
     unsigned char bone_indices[4]; // 4 bytes u8 // *info* max 256 bones
 };
-// todo: use texture arrays instead of texture layouts -> per-mesh index (use atlas for per-instance differences)
-// todo: use mesh uniforms and per-instance data to store material-like settings while keeping the same pipeline (eg. metallic, ...)
-// todo: have only 1 pipeline for everything, except for exceptional cases like HUD
-// todo: Uber-shader -> use per-draw-call (ie. mesh) uniform to select branch for shader logic
 struct Instance { // 96 bytes
     float transform[16]; // 64 bytes f32 // *info* translation + rotation + scale
     unsigned int data[3]; // 12 bytes u32 // *info* raw data

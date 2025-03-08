@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdbool.h>
 #include <time.h>
+#include <math.h>
+#include <limits.h>
 
 #include "wgpu.h"
 #include "game_data.h"
@@ -101,6 +103,10 @@ typedef struct {
     WGPUBuffer instanceBuffer;
     void      *instances; // instances in RAM (verts and indices are not kept in RAM) // todo: Instance instead of void
     int        instance_count;
+    // animation
+    WGPUBindGroup bones_bindgroup;
+    WGPUBuffer bone_buffer;
+    void      *bones;
 } Mesh;
 
 typedef struct {
@@ -123,6 +129,10 @@ typedef struct {
     // Default 1 pixel texture global to assign to every empty texture slot for new meshes
     WGPUTexture      defaultTexture;
     WGPUTextureView  defaultTextureView;
+    // Default identity bones for meshes that are not animated
+    WGPUBuffer defaultBoneBuffer;
+    WGPUBindGroup defaultBoneBindGroup;
+    float default_bones[UCHAR_MAX][16];
     // global depth texture
     WGPUDepthStencilState depthStencilState;
     WGPURenderPassDepthStencilAttachment depthAttachment;
@@ -130,6 +140,7 @@ typedef struct {
     WGPUBindGroupLayout global_uniform_layout;
     WGPUBindGroupLayout mesh_uniforms_layout;
     WGPUBindGroupLayout texture_layout;
+    WGPUBindGroupLayout bone_uniform_layout;
 } WebGPUContext;
 #pragma endregion
 
@@ -269,6 +280,58 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         context.texture_layout = wgpuDeviceCreateBindGroupLayout(context.device, &TEXTURE_LAYOUT_DESCRIPTOR);
     }
 
+    // Create animation buffer bindgroup
+    {
+        WGPUBufferDescriptor boneBufferDesc = {0};
+        boneBufferDesc.size = sizeof(float) * 16 * UCHAR_MAX; // 16 floats per 4x4 matrix
+        boneBufferDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+        WGPUBuffer boneUniformBuffer = wgpuDeviceCreateBuffer(context.device, &boneBufferDesc);
+
+        // Define a bind group layout for bones (similar to your global uniform layout)
+        WGPUBindGroupLayoutEntry boneEntry = {0};
+        boneEntry.binding = 0;
+        boneEntry.visibility = WGPUShaderStage_Vertex;
+        boneEntry.buffer.type = WGPUBufferBindingType_Uniform;
+        boneEntry.buffer.minBindingSize = sizeof(float) * 16 * UCHAR_MAX;
+        WGPUBindGroupLayoutDescriptor boneBGLDesc = {0};
+        boneBGLDesc.entryCount = 1;
+        boneBGLDesc.entries = &boneEntry;
+        context.bone_uniform_layout = wgpuDeviceCreateBindGroupLayout(context.device, &boneBGLDesc);
+    }
+
+    // Create default dummy bone data
+    {
+        // identity matrices
+        for (int i = 0; i < UCHAR_MAX; i++) {
+            for (int j = 0; j < 16; j++) {
+                context.default_bones[i][j] = (j % 5 == 0) ? 1.0f : 0.0f;
+            }
+        }
+
+        {
+            WGPUBufferDescriptor bufDesc = {0};
+            bufDesc.size = sizeof(context.default_bones);
+            bufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+            context.defaultBoneBuffer = wgpuDeviceCreateBuffer(context.device, &bufDesc);
+
+            // Upload the identity matrix to the buffer.
+            wgpuQueueWriteBuffer(context.queue, context.defaultBoneBuffer, 0, context.default_bones, sizeof(context.default_bones));
+        }
+
+        // Create the default bind group with our minimal bone buffer.
+        WGPUBindGroupEntry bgEntry = {0};
+        bgEntry.binding = 0;
+        bgEntry.buffer = context.defaultBoneBuffer;
+        bgEntry.offset = 0;
+        bgEntry.size = sizeof(context.default_bones);
+
+        WGPUBindGroupDescriptor bgDesc = {0};
+        bgDesc.layout = context.bone_uniform_layout;
+        bgDesc.entryCount = 1;
+        bgDesc.entries = &bgEntry;
+        context.defaultBoneBindGroup = wgpuDeviceCreateBindGroup(context.device, &bgDesc);
+    }
+
     // Create a 1×1 texture to use as default value for empty texture slots
     {
         unsigned char whitePixel[4] = {127,127,127,127};
@@ -302,7 +365,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .usage = WGPUTextureUsage_RenderAttachment,
             .dimension = WGPUTextureDimension_2D,
             .size = { .width = width, .height = height, .depthOrArrayLayers = 1 },
-            .format = WGPUTextureFormat_Depth24Plus, // Or Depth32Float if supported
+            .format = WGPUTextureFormat_Depth24PlusStencil8, // Or Depth32Float if supported
             .mipLevelCount = 1,
             .sampleCount = 1,
             .nextInChain = NULL,
@@ -329,7 +392,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         context.depthStencilState = (WGPUDepthStencilState){
             .format = depthTextureDesc.format,
             .depthWriteEnabled = true,
-            .depthCompare = WGPUCompareFunction_Less, // Pass fragments with lesser depth values
+            .depthCompare = WGPUCompareFunction_LessEqual, // Pass fragments with lesser depth values
             // For stencil operations (if unused, defaults are fine):
             .stencilFront = defaultStencilState, // Properly initialized
             .stencilBack = defaultStencilState,  // Same for the back face
@@ -364,7 +427,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
         .alphaMode = WGPUCompositeAlphaMode_Opaque,
-        .presentMode = WGPUPresentMode_Immediate // *info* use fifo for vsync
+        .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(context.surface, &context.config);
 
@@ -437,11 +500,11 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
 
     Pipeline *pipeline = &context->pipelines[pipeline_id];
 
-    // Create a pipeline layout with 3 bind groups:
-    // group 0 and 1: uniform buffers, group 2: textures
-    WGPUBindGroupLayout bgls[3] = { context->global_uniform_layout, context->mesh_uniforms_layout, context->texture_layout };
+    // Create a pipeline layout with 4 bind groups:
+    // group 0 and 1: uniform buffers, group 2: textures, group 3: bones
+    WGPUBindGroupLayout bgls[4] = { context->global_uniform_layout, context->mesh_uniforms_layout, context->texture_layout, context->bone_uniform_layout };
     WGPUPipelineLayoutDescriptor layoutDesc = {0};
-    layoutDesc.bindGroupLayoutCount = 3;
+    layoutDesc.bindGroupLayoutCount = 4;
     layoutDesc.bindGroupLayouts = bgls;
     WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(context->device, &layoutDesc);
     assert(pipelineLayout);
@@ -485,7 +548,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     WGPUPrimitiveState prim = {0};
     prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe (line width?)
     prim.cullMode = WGPUCullMode_Back;
-    prim.frontFace = WGPUFrontFace_CW;
+    prim.frontFace = WGPUFrontFace_CCW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
     ms.count = 1;
@@ -637,7 +700,7 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
     mesh->instances = ii;
     mesh->instance_count = iic;
 
-    // Create the texture setup // todo: separate mesh config (and call it pipeline instead)
+    // Create the texture setup
     {
         // Create a sampler
         WGPUSamplerDescriptor samplerDesc = {0};
@@ -678,6 +741,13 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
         material->texture_bindgroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
 
         free(entries);
+    }
+
+    // Set default bone uniform bindgroup & buffer
+    {
+        mesh->bones_bindgroup = context->defaultBoneBindGroup;
+        mesh->bone_buffer = context->defaultBoneBuffer;
+        mesh->bones = context->default_bones;
     }
     
     mesh->material_id = mesh_id;
@@ -887,6 +957,16 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         (uint32_t)viewport_width, (uint32_t)viewport_height
     );
 
+    // Animate a specific bone—for example, rotate bone 0 around the Y axis.
+    static float angle = 1.; // Your time value (e.g. from a timer)
+    angle += 0.01;
+    float cosA = cos(angle);
+    float sinA = sin(angle);
+    context->default_bones[0][0] = cosA;
+    context->default_bones[0][2] = sinA;
+    context->default_bones[0][8] = -sinA;
+    context->default_bones[0][10] = cosA;
+
     // Loop through all pipelines and draw each one
     for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
         if (context->pipelines[pipeline_id].used) {
@@ -923,16 +1003,24 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                 wgpuRenderPassEncoderSetBindGroup(context->currentPass, 2, material->texture_bindgroup, 0, NULL); // group 2 for textures
 
                 for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
+                    
                     int mesh_id = material->mesh_ids[k];
                     if (!context->meshes[mesh_id].used) printf("[FATAL WARNING] An unused mesh was left in the material's list of mesh ids");;
                     Mesh *mesh = &context->meshes[mesh_id];
-
+                    
+                    // todo: based on mesh setting UPDATE_MESH_BONES
+                    if (1) {
+                        wgpuQueueWriteBuffer(context->queue,mesh->bone_buffer,0,mesh->bones, sizeof(context->default_bones));
+                    }
+                    // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
+                    if (1) {
+                        wgpuRenderPassEncoderSetBindGroup(context->currentPass, 3, mesh->bones_bindgroup, 0, NULL);
+                    }
                     // todo: make this based on mesh setting UPDATE_MESH_INSTANCES, then we don't need to do this for static meshes
                     // If the mesh requires instance data updates, update the instance buffer (this is really expensive!)
                     if (1) {
                         unsigned long long instanceDataSize = VERTEX_LAYOUT[1].arrayStride * mesh->instance_count;
                         // write RAM instances to GPU instances
-                        // todo: we could 
                         wgpuQueueWriteBuffer(context->queue,mesh->instanceBuffer,0,mesh->instances, instanceDataSize);
                     }
 

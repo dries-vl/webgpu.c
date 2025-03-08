@@ -7,6 +7,9 @@ struct GlobalUniforms {
 struct MaterialUniforms {
     shader: u32,
 };
+struct BoneUniforms {
+    bones: array<mat4x4<f32>, 256>, // 256 bones
+};
 
 @group(0) @binding(0)
 var<uniform> g_uniforms: GlobalUniforms;
@@ -16,18 +19,20 @@ var<uniform> m_uniforms: MaterialUniforms;
 var texture_sampler: sampler;
 @group(2) @binding(1)
 var tex_0: texture_2d<f32>;
+@group(3) @binding(0)
+var<uniform> b_uniforms: BoneUniforms;
 
 struct VertexInput {
-    // Vertex buffer attributes (stepMode: Vertex)
     @location(1) position: vec3<f32>,
     @location(2) normal: vec4<f32>,
     @location(3) tangent: vec4<f32>,
     @location(4) uv: vec2<f32>,
-    // Instance buffer attributes (stepMode: Instance)
-    @location(7) t0: vec4<f32>, // transform row 0
-    @location(8) t1: vec4<f32>, // transform row 1
-    @location(9) t2: vec4<f32>, // transform row 2
-    @location(10) t3: vec4<f32>,// transform row 3
+    @location(5) bone_weights: vec4<f32>, // weights (assumed normalized)
+    @location(6) bone_indices: vec4<u32>,  // indices into bone_uniforms.bones
+    @location(7) i_pos_0: vec4<f32>,  // instance transform row 0
+    @location(8) i_pos_1: vec4<f32>,  // instance transform row 1
+    @location(9) i_pos_2: vec4<f32>,  // instance transform row 2
+    @location(10) i_pos_3: vec4<f32>, // instance transform row 3
     @location(15) i_atlas_uv: vec2<f32>,
 };
 
@@ -40,14 +45,21 @@ struct VertexOutput {
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var output: VertexOutput;
-    let i_transform = mat4x4<f32>(input.t0, input.t1,input.t2,input.t3);
+    let i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
     let vertex_position = vec4<f32>(input.position, 1.0);
     if (m_uniforms.shader == 1u) {
         // BASE SHADER
+        // Skin the vertex by blending bone transforms
+        var skinned_pos: vec4<f32> = vec4<f32>(0.0);
+        for (var i: u32 = 0u; i < 4u; i = i + 1u) {
+            let bone_idx = input.bone_indices[i];
+            let weight = input.bone_weights[i];
+            skinned_pos += weight * (b_uniforms.bones[bone_idx] * vertex_position);
+        }
         let i = vertex_index % 3u;
         output.color = vec3<f32>(select(0.0, 1.0, i == 0u), select(0.0, 1.0, i == 1u), select(0.0, 1.0, i == 2u)); // barycentric coords
-        output.pos = i_transform * vertex_position * g_uniforms.camera * g_uniforms.view; // *important* order of multiplication matters here (!)
-        output.uv = input.uv;
+        output.pos = i_transform * skinned_pos * g_uniforms.camera * g_uniforms.view; // *important* order of multiplication matters here (!)
+        output.uv = input.i_atlas_uv + input.uv;
     } else if (m_uniforms.shader == 0u) {
         // HUD SHADER
         // let i = vertex_index % 3u;

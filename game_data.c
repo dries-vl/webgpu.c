@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 
 // Helper macro to convert a float UV (assumed to be in the range [-1,1] or [0,1])
 // to an unsigned short (mapping -1 => 0 and 1 => 65535).
@@ -32,7 +33,7 @@ static struct Vertex quad_vertices[4] = {
         .normal = {0},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(0.0f), FLOAT_TO_U16(0.0f)},
-        .bone_weights = {0},
+        .bone_weights = {UCHAR_MAX, 0, 0, 0},
         .bone_indices = {0}
     },
     {
@@ -41,7 +42,7 @@ static struct Vertex quad_vertices[4] = {
         .normal = {0},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(1.0f), FLOAT_TO_U16(0.0f)},
-        .bone_weights = {0},
+        .bone_weights = {UCHAR_MAX, 0, 0, 0},
         .bone_indices = {0}
     },
     {
@@ -50,7 +51,7 @@ static struct Vertex quad_vertices[4] = {
         .normal = {0},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(0.0f), FLOAT_TO_U16(1.0f)},
-        .bone_weights = {0},
+        .bone_weights = {UCHAR_MAX, 0, 0, 0},
         .bone_indices = {0}
     },
     {
@@ -59,11 +60,11 @@ static struct Vertex quad_vertices[4] = {
         .normal = {0},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(1.0f), FLOAT_TO_U16(1.0f)},
-        .bone_weights = {0},
+        .bone_weights = {UCHAR_MAX, 0, 0, 0},
         .bone_indices = {0}
     }
 };
-static uint32_t quad_indices[6] = {2, 0, 1, 3, 2, 1};
+static uint32_t quad_indices[6] = {0, 2, 1, 2, 3, 1};
 
 #define CHAR_COLUMNS 48 // columns of text that fit across half of the screen
 #define CHAR_ROWS 24 // rows that fit across half of the screen
