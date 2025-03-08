@@ -24,6 +24,21 @@ static struct Instance ground_instance = {
     .atlas_uv = {0}
 };
 
+struct Instance pine = {
+    .transform = {
+        500.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 500.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 500.0f, 0.0f,
+        0.0f, 0.0f, 1000.0f, 1.0f
+    },
+    .data = {0},
+    .norms = {0},
+    .animation = 0,
+    .animation_phase = 0.0f,
+    .atlas_uv = {0}
+};
+struct Instance pines[10];
+
 // HUD quad (2D UI element)
 static struct Vertex quad_vertices[4] = {
     {

@@ -41,6 +41,7 @@ struct GameObject {
 struct GameState {
     struct GameObject player;
     struct GameObject objects[256];
+    int object_count;
 };
 struct GameState gameState = {
     .player = {
@@ -291,6 +292,32 @@ struct Rigid_Body cubeCollisionBox = {
     .radius = 3.0f
 };
 
+// add pine collision box
+struct Rigid_Body pineCollisionBox = {
+    .vertices = (struct Vector3[]) {
+        {100.0f, 850.0f, 100.0f},
+        {100.0f, 850.0f, -100.0f},
+        {100.0f, 0.0f, 100.0f},
+        {100.0f, 0.0f, -100.0f},
+        {-100.0f, 850.0f, 100.0f},
+        {-100.0f, 850.0f, -100.0f},
+        {-100.0f, 0.0f, 100.0f},
+        {-100.0f, 0.0f, -100.0f}
+    },
+    .normals = (struct Vector3[]) {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+        {-1.0f, 0.0f, 0.0f},
+        {0.0f, -1.0f, 0.0f},
+        {0.0f, 0.0f, -1.0f}
+    },
+    .normal_count = 6,
+    .vertex_count = 32,
+    .position = {0.0f, 0.0f, 1000.0f},
+    .radius = 3.0f // not used
+};
+
 struct Rigid_Body cameraCollisionBox = {
     .vertices = (struct Vector3[]) {
         {20.0f, 20.0f, 20.0f},
@@ -507,18 +534,12 @@ void playerMovement(float speed, float ms, struct GameObject *player) {
     player->collisionBox.position.y = player->instance->transform[7];
     player->collisionBox.position.z = player->instance->transform[11];
     
-    collision(player, &gameState.objects[0]); // TEMP
+    for (int i = 0; i < gameState.object_count; i++) {
+        collision(player, &gameState.objects[i]);
+    }
     char output_string2[256];
     snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", player->velocity.x, player->velocity.y, player->velocity.z);
     print_on_screen(output_string2);
-    /*
-    char output_string[256];
-    snprintf(output_string, sizeof(output_string), "%4.2f,%4.2f,%4.2f\n", cameraCollisionBox.position.x, cameraCollisionBox.position.y, cameraCollisionBox.position.z);
-    print_on_screen(output_string);
-    char output_string2[256];
-    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", camera[3], camera[7], camera[11]);
-    print_on_screen(output_string2);
-    */
 }
 
 void applyGravity(struct Speed *speed, float *pos, float ms) { 
@@ -570,7 +591,11 @@ void initGamestate(struct GameState *gameState) {
     memcpy(gameState->player.instance->transform, camera, sizeof(camera));
     gameState->player.velocity = cameraSpeed;
     // objects
-    gameState->objects[0].collisionBox = cubeCollisionBox;
+    //gameState->objects[0].collisionBox = cubeCollisionBox;
 };
 
+void addGameObject(struct GameState *gameState, struct GameObject *gameObject) {
+    gameState->objects[gameState->object_count] = *gameObject;
+    gameState->object_count++;
+}
 #pragma endregion

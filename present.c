@@ -106,6 +106,10 @@ int tick(struct Platform *p, struct Graphics *g) {
     static int ground_mesh_id;
     static int quad_mesh_id;
 
+    int pine_mesh_id[10];
+    int pine_texture_id[10];
+    struct GameObject pineo[10];
+
     static int cube_texture_id;
     static int quad_texture_id;
     static int ground_texture_id;
@@ -187,7 +191,36 @@ int tick(struct Platform *p, struct Graphics *g) {
 
         // gamestate shit
         initGamestate(&gameState);
-        gameState.objects[0].instance = &cube;
+        struct GameObject cube = {
+            .collisionBox = cubeCollisionBox,
+            .instance = &cube,
+            .velocity = {0}
+        };
+        addGameObject(&gameState, &cube);
+        for (int j = 0; j < 10; j++) {
+            // instance data
+            memcpy(&pines[j], &pine, sizeof(struct Instance));
+            pines[j].transform[12] = 1000.0 * cos(j * 0.314 * 2);
+            pines[j].transform[14] = 1000.0 * sin(j * 0.314 * 2);
+            // mesh
+            struct MappedMemory pine_mm = load_mesh(p, "data/models/bin/pine.bin", &v, &vc, &i, &ic);
+            pine_mesh_id[j] = createGPUMesh(g->context, main_pipeline, v, vc, i, ic, &pines[j], 1);
+            p->unmap_file(&pine_mm);
+            // texture
+            struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
+            pine_texture_id[j] = createGPUTexture(g->context, pine_mesh_id[j], green_texture_mm.data, w, h);
+            addGPUMaterialUniform(g->context, pine_mesh_id[j], &base_shader_id, sizeof(base_shader_id));
+            p->unmap_file(&green_texture_mm);
+            pineo[j] = (struct GameObject){
+                .collisionBox = {0},
+                .instance = &pines[j],
+                .velocity = {0}
+            };
+            memcpy(&pineo[j].collisionBox, &cubeCollisionBox, sizeof(struct Rigid_Body));
+            pineo[j].collisionBox.position.x = pines[j].transform[12];
+            pineo[j].collisionBox.position.z = pines[j].transform[14];
+            addGameObject(&gameState, &pineo[j]);
+        }
     }
 
     // Update uniforms
