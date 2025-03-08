@@ -465,20 +465,20 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     colorTarget.format = context->config.format;
     colorTarget.writeMask = WGPUColorWriteMask_All;
     // --- enable alpha blending --- // todo: maybe later if we want water (?)
-    // {
-    //     colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
-    //         .color = (WGPUBlendComponent){
-    //             .srcFactor = WGPUBlendFactor_SrcAlpha,
-    //             .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
-    //             .operation = WGPUBlendOperation_Add,
-    //         },
-    //         .alpha = (WGPUBlendComponent){
-    //             .srcFactor = WGPUBlendFactor_One,
-    //             .dstFactor = WGPUBlendFactor_Zero,
-    //             .operation = WGPUBlendOperation_Add,
-    //         }
-    //     }};
-    // }
+     {
+         colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
+             .color = (WGPUBlendComponent){
+                 .srcFactor = WGPUBlendFactor_SrcAlpha,
+                 .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
+                 .operation = WGPUBlendOperation_Add,
+             },
+             .alpha = (WGPUBlendComponent){
+                 .srcFactor = WGPUBlendFactor_One,
+                 .dstFactor = WGPUBlendFactor_Zero,
+                 .operation = WGPUBlendOperation_Add,
+             }
+         }};
+     }
     fragState.targets = &colorTarget;
     rpDesc.fragment = &fragState;
     

@@ -69,5 +69,5 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(tex_0, texture_sampler, input.uv);
     var color = tex_color.rgb;
     color += 0.5 * (1.0 - min(min(step(0.02, input.color.x), step(0.02, input.color.y)), step(0.02, input.color.z))); // barys
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(color, tex_color.a);
 }

@@ -15,7 +15,6 @@ int OFFSET_Y = 0;
 float ASPECT_RATIO = 1.77;
 #pragma endregion
 
-#include "game_data.c" // todo: inline this here and remove file
 #include "game.c"
 
 #pragma region GRAPHICS
@@ -185,14 +184,21 @@ int tick(struct Platform *p, struct Graphics *g) {
         timeOffset = addGPUGlobalUniform(g->context, main_pipeline, &timeVal, sizeof(float));
         cameraOffset = addGPUGlobalUniform(g->context, main_pipeline, camera, sizeof(camera));
         viewOffset = addGPUGlobalUniform(g->context, main_pipeline, view, sizeof(view));
+
+        // gamestate shit
+        initGamestate(&gameState);
+        gameState.objects[0].instance = &cube;
     }
 
     // Update uniforms
     timeVal += 0.016f; // pretend 16ms per frame
     //yaw(0.001f * ms_last_frame, camera);
-    cameraMovement(camera, movementSpeed, ms_last_frame);
-    float cameraLocation[3] = {camera[3], camera[7], camera[11]};
-    applyGravity(&cameraSpeed, cameraLocation, ms_last_frame);
+    playerMovement(movementSpeed, ms_last_frame, &gameState.player);
+    float playerLocation[3] = {gameState.player.instance->transform[3], gameState.player.instance->transform[7], gameState.player.instance->transform[11]};
+    applyGravity(&gameState.player.velocity, playerLocation, ms_last_frame);
+    camera[3] = gameState.player.instance->transform[3];
+    camera[7] = gameState.player.instance->transform[7];
+    camera[11] = gameState.player.instance->transform[11];
     //collisionDetectionCamera(cubeCollisionBox);
     // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
     //printf("Collision detected: %4.2f\n", separation.x);
