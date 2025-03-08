@@ -124,7 +124,7 @@ typedef struct {
     WGPUTexture      defaultTexture;
     WGPUTextureView  defaultTextureView;
     // global depth texture
-    WGPUDepthStencilState depthStencilState; 
+    WGPUDepthStencilState depthStencilState;
     WGPURenderPassDepthStencilAttachment depthAttachment;
     // One standard uniform layout for all pipelines
     WGPUBindGroupLayout global_uniform_layout;
@@ -147,6 +147,53 @@ static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice dev
     else
         fprintf(stderr, "[webgpu.c] RequestDevice failed: %s\n", message);
 }
+// Code to force select dedicated gpu if possible
+/*WGPUAdapter selectDiscreteGPU(WGPUInstance instance) {
+    // First call to get the number of available adapters.
+    WGPUInstanceEnumerateAdapterOptions opts = {.backends = WGPUInstanceBackend_All};
+    size_t adapterCount = wgpuInstanceEnumerateAdapters(instance, &opts, NULL);
+    if (adapterCount == 0) {
+        fprintf(stderr, "No adapters found!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Allocate an array to hold the adapter handles.
+    WGPUAdapter* adapters = malloc(sizeof(WGPUAdapter) * adapterCount);
+    if (!adapters) {
+        fprintf(stderr, "Failed to allocate memory for adapters.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Second call: fill the array with adapter handles.
+    adapterCount = wgpuInstanceEnumerateAdapters(instance, &opts, adapters);
+
+    WGPUAdapter selectedAdapter = NULL;
+    for (size_t i = 0; i < adapterCount; i++) {
+        WGPUAdapterInfo info;
+        memset(&info, 0, sizeof(info));
+        wgpuAdapterGetInfo(adapters[i], &info);
+        printf("Adapter %zu: %s, Type: %d\n", i, info.device, info.adapterType);
+
+        // Use the provided enum: select the adapter if it is a discrete GPU.
+        if (info.adapterType == WGPUAdapterType_DiscreteGPU) {
+            selectedAdapter = adapters[i];
+            printf("Selected discrete GPU: %s\n", info.device);
+            break;
+        }
+    }
+
+    if (!selectedAdapter) {
+        // Fallback: use the first adapter if no discrete GPU is found.
+        selectedAdapter = adapters[0];
+        WGPUAdapterInfo info;
+        memset(&info, 0, sizeof(info));
+        wgpuAdapterGetInfo(selectedAdapter, &info);
+        printf("No discrete GPU found; falling back to adapter: %s\n", info.device);
+    }
+
+    free(adapters);
+    return selectedAdapter;
+}*/
 void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     static WebGPUContext context = {0}; // initialize all fields to zero
 
@@ -154,7 +201,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     WGPUInstanceExtras extras = {0};
     extras.chain.sType = WGPUSType_InstanceExtras;
     extras.backends   = WGPUInstanceBackend_GL;
-    extras.flags      = 0;
+    extras.flags      = WGPUInstanceFlag_DiscardHalLabels;
     extras.dx12ShaderCompiler = WGPUDx12Compiler_Undefined;
     extras.gles3MinorVersion  = WGPUGles3MinorVersion_Automatic;
     extras.dxilPath = NULL;
@@ -180,8 +227,9 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     WGPURequestAdapterOptions adapter_opts = {0};
     adapter_opts.compatibleSurface = context.surface;
-    adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance; // Request the dedicated GPU
+    adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance;
     wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
+    // context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
     assert(context.adapter);
     wgpuAdapterRequestDevice(context.adapter, NULL, handle_request_device, &context);
     assert(context.device);
@@ -295,7 +343,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         context.depthAttachment = (WGPURenderPassDepthStencilAttachment){
             .view = depthTextureView,
             .depthLoadOp = WGPULoadOp_Clear,   // Clear depth at start of pass
-            .depthStoreOp = WGPUStoreOp_Store,  // Optionally store depth results
+            .depthStoreOp = WGPUStoreOp_Discard,  // Optionally store depth results
             .depthClearValue = 1.0f,            // Clear value (far plane)
             // Set stencil values if using stencil; otherwise, leave them out.
         };
@@ -303,10 +351,11 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     WGPUSurfaceCapabilities caps = {0};
     wgpuSurfaceGetCapabilities(context.surface, context.adapter, &caps);
-    WGPUTextureFormat chosenFormat = WGPUTextureFormat_BGRA8Unorm;
-    if (caps.formatCount > 0) {
-        chosenFormat = caps.formats[0];
-    }
+    WGPUTextureFormat chosenFormat = WGPUTextureFormat_RGBA8Unorm;
+    // *it used to be Rgba8UnormSrgb, which was slightly slower somehow*
+    // if (caps.formatCount > 0) { // selects Rgba8UnormSrgb it seems
+    //     chosenFormat = caps.formats[0];
+    // }
 
     context.config = (WGPUSurfaceConfiguration){
         .device = context.device,
@@ -314,6 +363,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         .width = width,
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
+        .alphaMode = WGPUCompositeAlphaMode_Opaque,
         .presentMode = WGPUPresentMode_Immediate // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(context.surface, &context.config);
@@ -435,7 +485,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     WGPUPrimitiveState prim = {0};
     prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe (line width?)
     prim.cullMode = WGPUCullMode_Back;
-    prim.frontFace = WGPUFrontFace_CCW;
+    prim.frontFace = WGPUFrontFace_CW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
     ms.count = 1;
@@ -592,14 +642,14 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
         // Create a sampler
         WGPUSamplerDescriptor samplerDesc = {0};
         samplerDesc.minFilter = WGPUFilterMode_Linear;
-        samplerDesc.magFilter = WGPUFilterMode_Linear;
+        samplerDesc.magFilter = WGPUFilterMode_Nearest;
         samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Linear;
         samplerDesc.lodMinClamp = 0;
         samplerDesc.lodMaxClamp = 0;
         samplerDesc.maxAnisotropy = 1;
-        samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
-        samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
-        samplerDesc.addressModeW = WGPUAddressMode_ClampToEdge;
+        samplerDesc.addressModeU = WGPUAddressMode_Repeat;
+        samplerDesc.addressModeV = WGPUAddressMode_Repeat;
+        samplerDesc.addressModeW = WGPUAddressMode_Repeat;
         material->texture_sampler = wgpuDeviceCreateSampler(context->device, &samplerDesc);
         assert(material->texture_sampler != NULL);
 
@@ -794,27 +844,50 @@ static float fenceAndWait(WebGPUContext *context) {
     float ms_waited_on_gpu = (float) (time_after_ns - time_before_ns);
     return ms_waited_on_gpu;
 }
-float drawGPUFrame(void *context_ptr) {
+float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_width, int viewport_height) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     // Start the frame.
     wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
-    if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success)
-        return 0.0f;
-    context->currentView = wgpuTextureCreateView(context->currentSurfaceTexture.texture, NULL);
+    if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success) return 0.0f;
+    WGPUTextureViewDescriptor d = {
+        .format = WGPUTextureFormat_RGBA8Unorm,
+        .dimension = WGPUTextureViewDimension_2D,
+        .baseMipLevel = 0,
+        .mipLevelCount = 1,
+        .baseArrayLayer = 0,
+        .arrayLayerCount = 1,
+        .nextInChain = NULL,
+    };
+    context->currentView = wgpuTextureCreateView(context->currentSurfaceTexture.texture, &d);
     WGPUCommandEncoderDescriptor encDesc = {0};
     context->currentEncoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
     WGPURenderPassColorAttachment colorAtt = {0};
     colorAtt.view = context->currentView;
     colorAtt.loadOp = WGPULoadOp_Clear;
     colorAtt.storeOp = WGPUStoreOp_Store;
-    colorAtt.clearValue = (WGPUColor){0.1, 0.2, 0.3, 1.0};
+    colorAtt.clearValue = (WGPUColor){0., 0., 0., 1.0};
     WGPURenderPassDescriptor passDesc = {0};
     passDesc.colorAttachmentCount = 1;
     passDesc.colorAttachments = &colorAtt;
     passDesc.depthStencilAttachment = &context->depthAttachment,
     context->currentPass = wgpuCommandEncoderBeginRenderPass(context->currentEncoder, &passDesc);
 
-    // Loop through all pipelines and draw each one.
+    wgpuRenderPassEncoderSetViewport(
+        context->currentPass,
+        offset_x,   // x
+        offset_y,   // y
+        viewport_width,   // width
+        viewport_height,   // height
+        0.0f,      // minDepth
+        1.0f       // maxDepth
+    );
+    wgpuRenderPassEncoderSetScissorRect(
+        context->currentPass,
+        (uint32_t)offset_x, (uint32_t)offset_y,
+        (uint32_t)viewport_width, (uint32_t)viewport_height
+    );
+
+    // Loop through all pipelines and draw each one
     for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
         if (context->pipelines[pipeline_id].used) {
 

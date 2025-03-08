@@ -9,11 +9,6 @@
 #define GLOBAL_UNIFORM_CAPACITY   1024  // bytes per pipeline uniform buffer
 #define MATERIALS_UNIFORM_BUFFER_TOTAL_SIZE (MAX_MATERIALS * MATERIAL_UNIFORM_CAPACITY) // this cannot be bigger than 65536 bytes
 
-// todo: this needs to be passed to platform, graphics AND presentation layer somehow
-#define WINDOW_WIDTH (1920 * 1.5) // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
-#define WINDOW_HEIGHT (1080 * 1.5) // todo: make this global variable that can be modified
-#define ASPECT_RATIO ((float) WINDOW_WIDTH / (float) WINDOW_HEIGHT)
-
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
 // todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
 /* GRAPHICS LAYER API */
@@ -27,7 +22,7 @@ extern void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset
 extern int   addGPUMaterialUniform(void *context, int material_id, const void* data, int data_size);
 extern void  setGPUMaterialUniformValue(void *context, int material_id, int offset, const void* data, int dataSize);
 extern void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
-extern float drawGPUFrame(void *context);
+extern float drawGPUFrame(void *context, int offset_x, int offset_y, int viewport_width, int viewport_height);
 
 struct Vertex { // 48 bytes
     unsigned int data[4]; // 16 bytes u32 // *info* raw data

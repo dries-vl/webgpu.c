@@ -26,8 +26,8 @@ struct Rigid_Body {
 /* GLOBAL STATE OF THE GAME */
 float camera[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, -300.0f,
+        0.0f, 1.0f, 0.0f, 1500.0f, // todo: ROW vs COLUMN major ordering
+        0.0f, 0.0f, 1.0f, 0.0f,
         0.0f, 0.0f, 0.0f, 1
 };
 float cameraRotation[2] = {0.0f, 0.0f}; // yaw, pitch
@@ -432,13 +432,14 @@ void cameraMovement(float *camera, float speed, float ms) {
 void applyGravity(struct Speed *speed, float *pos, float ms) { // gravity as velocity instead of acceleration
     float gravity = 9.81f * 0.0005f;
     float gravitySpeed = gravity * ms;
-    if (pos[1] > 0.0f){
+    #define GROUND_LEVEL 100.0f // todo: this is arbitrary based on 'eye-height' set in camera
+    if (pos[1] > GROUND_LEVEL){
         speed->y -= gravitySpeed;
         // if (pos[1] < 0.0f) {pos[1] = 0.0f;}; // this doesn't work
     }
     else { // some sort of hit the ground / collision detection
         speed->y = 0.0f;
-        camera[7] = 0.0f;
+        camera[7] = GROUND_LEVEL;
     }
 }
 

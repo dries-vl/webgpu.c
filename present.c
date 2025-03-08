@@ -1,8 +1,21 @@
 #include "game_data.h" // todo: rename to webgpu.c
+
+#include <stdio.h> // REMOVE, for debugging only
+
+#pragma region GLOBALS
+// todo: this needs to be passed to platform, graphics AND presentation layer somehow
+int FORCE_RESOLUTION = 0;
+int FULLSCREEN = 0;
+int WINDOW_WIDTH = 1280; // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
+int WINDOW_HEIGHT = 720; // todo: make this global variable that can be modified
+int VIEWPORT_WIDTH = 1280;
+int VIEWPORT_HEIGHT = 720;
+int OFFSET_X = 0; // offset to place smaller-than-window viewport at centre of screen
+int OFFSET_Y = 0;
+float ASPECT_RATIO = 1.77;
+#pragma endregion
+
 #include "game_data.c" // todo: inline this here and remove file
-
-#include<stdio.h> // REMOVE, for debugging only
-
 #include "game.c"
 
 #pragma region GRAPHICS
@@ -16,7 +29,7 @@ struct Graphics {
     int   (*addGPUMaterialUniform)(void *context, int material_id, const void* data, int data_size);
     void  (*setGPUMaterialUniformValue)(void *context, int material_id, int offset, const void* data, int dataSize);
     void  (*setGPUInstanceBuffer)(void *context, int mesh_id, void* ii, int iic);
-    float (*drawGPUFrame)(void *context);
+    float (*drawGPUFrame)(void *context, int offset_x, int offset_y, int viewport_width, int viewport_height);
 };
 #pragma endregion
 
@@ -68,9 +81,11 @@ struct MappedMemory load_texture(struct Platform *p, const char *filename, int *
 // todo: use tsoding's nob.h header to build to avoid bat files
 int tick(struct Platform *p, struct Graphics *g) {
 
+    static int init_done = 0;
+
     static double ms = 0;
     static double ms_last_frame = 0;
-    ms_last_frame = p->current_time_ms() - ms;
+    ms_last_frame = init_done ? p->current_time_ms() - ms : 0;
     ms = p->current_time_ms();
 
     // todo: lighting
@@ -79,11 +94,15 @@ int tick(struct Platform *p, struct Graphics *g) {
     // todo: animate the character mesh (skeleton?)
     // todo: use precompiled shader for faster loading
     
-    static int basic_material_id;
-    static int hud_material_id;
+    static int main_pipeline;
     
     static int teapot_mesh_id;
     static int cube_mesh_id;
+
+    // todo: separate material from mesh -> set material when creating mesh, and set shader once in material
+    // todo: RGB 3x8bit textures, no alpha
+    static int hud_shader_id = 0;
+    static int base_shader_id = 1;
 
     static int ground_mesh_id;
     static int quad_mesh_id;
@@ -104,42 +123,48 @@ int tick(struct Platform *p, struct Graphics *g) {
     static int viewOffset;
 
     // instance data cannot go out of scope!
-    static struct Instance ii[2] = {0};
-    static struct Instance cube = {0};
+    static struct Instance teapot = {
+        .transform = {
+            1., 0, 0, 0,
+            0, 1., 0, 0,
+            0, 0, 1., 0,
+            0, 0, -200, 1
+        }
+    };
+    static struct Instance cube = {
+        .transform = {
+            100, 0, 0, 0,
+            0, 100, 0, 0,
+            0, 0, 100, 0,
+            0, 0, 0, 1
+        }
+    };
 
-    static int init_done = 0;
     if (!init_done) {
         init_done = 1;
         // CREATE MATERIALS
-        basic_material_id = createGPUPipeline(g->context, "data/shaders/shader.wgsl");
-        hud_material_id = createGPUPipeline(g->context, "data/shaders/hud.wgsl");
+        main_pipeline = createGPUPipeline(g->context, "data/shaders/shader.wgsl");
+        // hud_material_id = createGPUPipeline(g->context, "data/shaders/hud.wgsl");
 
         // LOAD MESHES FROM DISK
         int vc, ic; void *v, *i;
         struct MappedMemory teapot_mm = load_mesh(p, "data/models/bin/teapot.bin", &v, &vc, &i, &ic);
-        float identity_matrix[16] = {
-            1, 0, 0, 0,
-            0, -1, 0, 0,
-            0, 0, 1, 0,
-            0, 0, 0, 1
-        };
-        for (int i = 0; i < 16; i++) {
-            ii[0].transform[i] = identity_matrix[i];
-            ii[1].transform[i] = identity_matrix[i];
-        }
-        teapot_mesh_id = createGPUMesh(g->context, basic_material_id, v, vc, i, ic, &ii, 2);
+        teapot_mesh_id = createGPUMesh(g->context, main_pipeline, v, vc, i, ic, &teapot, 1);
         p->unmap_file(&teapot_mm);
 
         struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
-        for (int i = 0; i < 16; i++) {
-            cube.transform[i] = identity_matrix[i];
-        }
-        cube_mesh_id = createGPUMesh(g->context, basic_material_id, v, vc, i, ic, &cube, 1);
+        cube_mesh_id = createGPUMesh(g->context, main_pipeline, v, vc, i, ic, &cube, 1);
         p->unmap_file(&cube_mm);
 
         // PREDEFINED MESHES
-        ground_mesh_id = createGPUMesh(g->context, basic_material_id, &ground_verts, 4, &ground_indices, 6, &ground_instance, 1);
-        quad_mesh_id = createGPUMesh(g->context, hud_material_id, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
+        ground_mesh_id = createGPUMesh(g->context, main_pipeline, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
+        quad_mesh_id = createGPUMesh(g->context, main_pipeline, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
+        addGPUMaterialUniform(g->context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
+        // todo: one shared material
+        // todo: why are functions directly available here (should use struct?) ~Instance struct should be known, functions not somehow
+        addGPUMaterialUniform(g->context, teapot_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        addGPUMaterialUniform(g->context, cube_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        addGPUMaterialUniform(g->context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
 
         // TEXTURE
         int w, h = 0;
@@ -153,10 +178,10 @@ int tick(struct Platform *p, struct Graphics *g) {
         p->unmap_file(&crabby_mm);
 
         // UNIFORMS
-        brightnessOffset = addGPUGlobalUniform(g->context, basic_material_id, &brightness, sizeof(float));
-        timeOffset = addGPUGlobalUniform(g->context, basic_material_id, &timeVal, sizeof(float));
-        cameraOffset = addGPUGlobalUniform(g->context, basic_material_id, camera, sizeof(camera));
-        viewOffset = addGPUGlobalUniform(g->context, basic_material_id, view, sizeof(view));
+        brightnessOffset = addGPUGlobalUniform(g->context, main_pipeline, &brightness, sizeof(float));
+        timeOffset = addGPUGlobalUniform(g->context, main_pipeline, &timeVal, sizeof(float));
+        cameraOffset = addGPUGlobalUniform(g->context, main_pipeline, camera, sizeof(camera));
+        viewOffset = addGPUGlobalUniform(g->context, main_pipeline, view, sizeof(view));
     }
 
     // Update uniforms
@@ -171,13 +196,13 @@ int tick(struct Platform *p, struct Graphics *g) {
     //camera[7] = cameraLocation[1];
     float inv[16];
     inverseViewMatrix(camera, inv);
-    setGPUGlobalUniformValue(g->context, basic_material_id, timeOffset, &timeVal, sizeof(float));
-    setGPUGlobalUniformValue(g->context, basic_material_id, cameraOffset, &inv, sizeof(camera));
+    setGPUGlobalUniformValue(g->context, main_pipeline, timeOffset, &timeVal, sizeof(float));
+    setGPUGlobalUniformValue(g->context, main_pipeline, cameraOffset, &inv, sizeof(camera));
 
     // update the instances of the text
     setGPUInstanceBuffer(g->context, quad_mesh_id, &char_instances, screen_chars_index);
 
-    g->drawGPUFrame(g->context);
+    g->drawGPUFrame(g->context, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
 
     {
         screen_chars_index = 0;

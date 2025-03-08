@@ -242,24 +242,147 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 }
 #pragma endregion
 
-void set_fullscreen(HWND hwnd, int width, int height, int refreshRate) {
-    DEVMODE devMode = {0};
-    devMode.dmSize = sizeof(devMode);
-    devMode.dmPelsWidth = width;
-    devMode.dmPelsHeight = height;
-    devMode.dmBitsPerPel = 32;  // 32-bit color
-    devMode.dmDisplayFrequency = refreshRate;
-    devMode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY;
 
-    // Switch to fullscreen mode
-    if (ChangeDisplaySettingsEx(NULL, &devMode, NULL, CDS_FULLSCREEN, NULL) != DISP_CHANGE_SUCCESSFUL) {
-        MessageBox(hwnd, "Failed to switch to fullscreen!", "Error", MB_OK);
+#pragma region FULLSCREEN
+static int findClosestMode(DEVMODE *outMode)
+{
+    long long bestDist = 9223372036854775807;
+    int foundAny = 0;
+    int bestIndex = -1;
+
+    printf("=== Enumerating all resolutions to find closest to %dx%d ===\n", WINDOW_WIDTH, WINDOW_HEIGHT);
+
+    for (int i = 0; ; i++)
+    {
+        DEVMODE temp;
+        ZeroMemory(&temp, sizeof(temp));
+        temp.dmSize = sizeof(temp);
+
+        if (!EnumDisplaySettingsEx(NULL, i, &temp, 0)) {
+            // No more modes
+            break;
+        }
+
+        if (temp.dmPelsWidth >= WINDOW_WIDTH
+             && temp.dmPelsHeight >= WINDOW_HEIGHT
+             && temp.dmBitsPerPel == outMode->dmBitsPerPel
+             && temp.dmDisplayFrequency == outMode->dmDisplayFrequency) {
+            long long dx = (long long)temp.dmPelsWidth  - WINDOW_WIDTH;
+            long long dy = (long long)temp.dmPelsHeight - WINDOW_HEIGHT;
+            long long dist = dx * dx + dy * dy; // squared distance
+
+            // Log each candidate (optional)
+            // printf("Mode %d: %lux%lu @ %lu Hz => dist=%lld\n",
+            //        i, (unsigned long)temp.dmPelsWidth,
+            //        (unsigned long)temp.dmPelsHeight,
+            //        (unsigned long)temp.dmDisplayFrequency,
+            //        dist);
+
+            if (dist < bestDist) {
+                bestDist = dist;
+                *outMode = temp;
+                foundAny = 1;
+                bestIndex = i;
+            }
+        }
+    }
+
+    if (foundAny) {
+        printf("Found closest mode at index %d: %lux%lu @ %lu Hz\n",
+               bestIndex,
+               (unsigned long)outMode->dmPelsWidth,
+               (unsigned long)outMode->dmPelsHeight,
+               (unsigned long)outMode->dmDisplayFrequency);
+        return 1;
+    } else {
+        printf("No matching modes found at all!\n");
+        return 0;
+    }
+}
+void fullscreen_window(HWND hwnd)
+{
+    // 1) Save current mode (for fallback)
+    DEVMODE currentMode;
+    ZeroMemory(&currentMode, sizeof(currentMode));
+    currentMode.dmSize = sizeof(currentMode);
+
+    if (!EnumDisplaySettingsEx(NULL, ENUM_CURRENT_SETTINGS, &currentMode, 0)) {
+        MessageBoxA(hwnd, "Failed to get current display settings!", "Error", MB_OK);
         return;
     }
 
-    SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-    SetWindowPos(hwnd, HWND_TOP, 0, 0, width, height, SWP_FRAMECHANGED);
+    // Calculate aspect ratio as a float
+    float aspect = 0.0f;
+    if (currentMode.dmPelsHeight != 0) {
+        aspect = (float)currentMode.dmPelsWidth / (float)currentMode.dmPelsHeight;
+    }
+
+    printf("Current Display:\n");
+    printf("  Resolution: %dx%d\n", currentMode.dmPelsWidth, currentMode.dmPelsHeight);
+    printf("  Refresh Rate: %d Hz\n", currentMode.dmDisplayFrequency);
+    printf("  Aspect Ratio: %.3f (approx)\n", aspect);
+
+    // 2) Find the resolution mode we want and set viewport etc. to match it
+    DEVMODE chosenMode = {0};
+    if (!FORCE_RESOLUTION) chosenMode = currentMode;
+    else {
+        chosenMode.dmSize = sizeof(chosenMode);
+        chosenMode.dmBitsPerPel = currentMode.dmBitsPerPel;
+        chosenMode.dmDisplayFrequency = currentMode.dmDisplayFrequency;
+        chosenMode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY;
+        if (!findClosestMode(&chosenMode)) chosenMode = currentMode;
+    }
+    // calculate offsets and new window resolution
+    WINDOW_WIDTH  = chosenMode.dmPelsWidth;
+    WINDOW_HEIGHT = chosenMode.dmPelsHeight;
+
+    // Suppose we want to scale up 500x500 to fill as much vertical space as possible.
+    float scaleX = (float)WINDOW_WIDTH  / (float)VIEWPORT_WIDTH;  // e.g. 1920 / 500 = 3.84
+    float scaleY = (float)WINDOW_HEIGHT / (float)VIEWPORT_HEIGHT;  // e.g. 1080 / 500 = 2.16
+    float scale  = (scaleX < scaleY) ? scaleX : scaleY; // pick smaller => 2.16
+
+    // final scaled size
+    VIEWPORT_WIDTH = VIEWPORT_WIDTH * scale; // 500 * 2.16 = 1080
+    VIEWPORT_HEIGHT = VIEWPORT_HEIGHT * scale; // same => 1080
+    ASPECT_RATIO = (float) VIEWPORT_WIDTH / (float) VIEWPORT_HEIGHT;
+
+    // center it
+    OFFSET_X = (WINDOW_WIDTH  - VIEWPORT_WIDTH) * 0.5f;  // (1920 - 1080)/2 = 420
+    OFFSET_Y = (WINDOW_HEIGHT - VIEWPORT_HEIGHT) * 0.5f;  // (1080 - 1080)/2 = 0
+    printf("Drawing viewport at %dx%d resolution and offset %dx%d\n", VIEWPORT_WIDTH, VIEWPORT_HEIGHT, OFFSET_X, OFFSET_Y);
+
+    // 3) Attempt to switch to exclusive mode
+    LONG res = ChangeDisplaySettingsEx(NULL, &chosenMode, NULL, CDS_FULLSCREEN, NULL);
+    if (res != DISP_CHANGE_SUCCESSFUL) {
+        // If we can't switch, revert to current mode
+        printf("Failed to switch to requested display mode\n");
+        ChangeDisplaySettingsEx(NULL, &currentMode, NULL, CDS_FULLSCREEN, NULL);
+        return;
+    }
+
+    // 4) Make window borderless & resize to cover the entire screen
+    SetWindowLongA(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+    SetWindowPos(hwnd, HWND_TOP,
+                0, 0,
+                chosenMode.dmPelsWidth,
+                chosenMode.dmPelsHeight,
+                SWP_FRAMECHANGED);
+
+    // 5) Print aspect info (monitor/GPU might do black bars or stretch)
+    float chosenAspect = 0.0f;
+    if (chosenMode.dmPelsHeight != 0) {
+        chosenAspect = (float)chosenMode.dmPelsWidth / (float)chosenMode.dmPelsHeight;
+    }
+    float nativeAspect = 0.0f;
+    if (currentMode.dmPelsHeight != 0) {
+        nativeAspect = (float)currentMode.dmPelsWidth / (float)currentMode.dmPelsHeight;
+    }
+
+    printf("Switched to: %dx%d @ %d Hz\n", chosenMode.dmPelsWidth, chosenMode.dmPelsHeight, chosenMode.dmDisplayFrequency);
+    printf("Chosen aspect: %.2f, Native aspect: %.2f, Viewport aspect: %.2f\n", chosenAspect, nativeAspect, ASPECT_RATIO);
+    printf("If aspects differ, your monitor/GPU may letterbox or stretch.\n");
 }
+#pragma endregion
 
 struct debug_info {
     LARGE_INTEGER query_perf_result;
@@ -293,6 +416,9 @@ double current_time_ms() {
     return s * 1000.0;
 }
 void draw_debug_info() {
+    char resolution_string[256];
+    snprintf(resolution_string, sizeof(resolution_string), "Resolution: %dx%d (%0.1f)\n", VIEWPORT_WIDTH, VIEWPORT_HEIGHT, ASPECT_RATIO);
+    print_on_screen(resolution_string);
     // todo: way to not have any of the debug HUD and fps and timing code at all when not in debug mode
     // todo: create a function that we can use as oneliner measuring timing here
     // todo: -> game loop time -> cpu to gpu commands time -> gpu time -> total time (and see if those three add up to total or not)
@@ -358,26 +484,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     HWND hwnd = CreateWindowEx(
         0, wc.lpszClassName, "Generic Uniform & Texture Demo",
-        WS_POPUP | WS_VISIBLE,  // WS_POPUP makes it borderless
+        WS_VISIBLE | WS_POPUP,  // WS_POPUP makes it borderless
         CW_USEDEFAULT, CW_USEDEFAULT,
         WINDOW_WIDTH, WINDOW_HEIGHT, NULL, NULL, hInstance, NULL
     );
     assert(hwnd);
 
-    // *info* to be aware of DPI to avoid specified resolutions with lower granularity than actual screen resolution
-    HMODULE shcore = LoadLibrary("Shcore.dll"); // import explicitly because tcc doesn't know these headers
-    if (shcore) {
-        SetProcessDpiAwareness_t SetProcessDpiAwareness = 
-            (SetProcessDpiAwareness_t) GetProcAddress(shcore, "SetProcessDpiAwareness");
+    if (FULLSCREEN) {
+        // *info* set aware of DPI to force using actual screen resolution size
+        HMODULE shcore = LoadLibrary("Shcore.dll"); // import explicitly because tcc doesn't know these headers
+        if (shcore) {
+            SetProcessDpiAwareness_t SetProcessDpiAwareness = 
+                (SetProcessDpiAwareness_t) GetProcAddress(shcore, "SetProcessDpiAwareness");
 
-        if (SetProcessDpiAwareness) {
-            SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+            if (SetProcessDpiAwareness) {
+                SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+            }
+
+            FreeLibrary(shcore);
         }
-
-        FreeLibrary(shcore);
+        // *info* this sets the window to fullscreen, causing a flicker if the resolution of the game doesn't match the screen's
+        fullscreen_window(hwnd);
     }
-    // *info* this sets the window to exclusive fullscreen bypassing the window manager
-    // set_fullscreen(hwnd, WINDOW_WIDTH, WINDOW_HEIGHT, 60); // need to specify refresh rate of monitor (?)
     RECT screen;
     GetClientRect(GetDesktopWindow(), &screen);
     int x = (screen.right - WINDOW_WIDTH) / 2;
