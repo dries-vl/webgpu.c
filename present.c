@@ -216,7 +216,7 @@ int tick(struct Platform *p, struct Graphics *g) {
                 .instance = &pines[j],
                 .velocity = {0}
             };
-            memcpy(&pineo[j].collisionBox, &cubeCollisionBox, sizeof(struct Rigid_Body));
+            memcpy(&pineo[j].collisionBox, &pineCollisionBox, sizeof(struct Rigid_Body));
             pineo[j].collisionBox.position.x = pines[j].transform[12];
             pineo[j].collisionBox.position.z = pines[j].transform[14];
             addGameObject(&gameState, &pineo[j]);

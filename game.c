@@ -281,12 +281,9 @@ struct Rigid_Body cubeCollisionBox = {
     .normals = (struct Vector3[]) {
         {1.0f, 0.0f, 0.0f},
         {0.0f, 1.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f},
-        {-1.0f, 0.0f, 0.0f},
-        {0.0f, -1.0f, 0.0f},
-        {0.0f, 0.0f, -1.0f}
+        {0.0f, 0.0f, 1.0f}
     },
-    .normal_count = 6,
+    .normal_count = 3,
     .vertex_count = 8,
     .position = {0.0f, 0.0f, 0.0f},
     .radius = 3.0f
@@ -307,13 +304,10 @@ struct Rigid_Body pineCollisionBox = {
     .normals = (struct Vector3[]) {
         {1.0f, 0.0f, 0.0f},
         {0.0f, 1.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f},
-        {-1.0f, 0.0f, 0.0f},
-        {0.0f, -1.0f, 0.0f},
-        {0.0f, 0.0f, -1.0f}
+        {0.0f, 0.0f, 1.0f}
     },
-    .normal_count = 6,
-    .vertex_count = 32,
+    .normal_count = 3,
+    .vertex_count = 8,
     .position = {0.0f, 0.0f, 1000.0f},
     .radius = 3.0f // not used
 };
@@ -332,12 +326,9 @@ struct Rigid_Body cameraCollisionBox = {
     .normals = (struct Vector3[]) {
         {1.0f, 0.0f, 0.0f},
         {0.0f, 1.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f},
-        {-1.0f, 0.0f, 0.0f},
-        {0.0f, -1.0f, 0.0f},
-        {0.0f, 0.0f, -1.0f}
+        {0.0f, 0.0f, 1.0f}
     },
-    .normal_count = 6,
+    .normal_count = 3,
     .vertex_count = 8,
     .position = {0.0f, 0.0f, -300.0f},
     .radius = 3.0f
@@ -434,9 +425,10 @@ struct Vector3 detectCollision(struct Rigid_Body body1, struct Rigid_Body body2)
     collisionNormal.x *= separation;
     collisionNormal.y *= separation;
     collisionNormal.z *= separation;
-    collisionNormal.x = body1.position.x > collisionNormal.x ? -collisionNormal.x : collisionNormal.x;
-    collisionNormal.y = body1.position.y > collisionNormal.y ? -collisionNormal.y : collisionNormal.y;
-    collisionNormal.z = body1.position.z > collisionNormal.z ? -collisionNormal.z : collisionNormal.z;
+    collisionNormal.x = (body1.position.x - body2.position.x) > collisionNormal.x ? -collisionNormal.x : collisionNormal.x;
+    collisionNormal.y = (body1.position.y - body2.position.y) > collisionNormal.y ? -collisionNormal.y : collisionNormal.y;
+    collisionNormal.z = (body1.position.z - body2.position.z) > collisionNormal.z ? -collisionNormal.z : collisionNormal.z;
+    // printf("collision: %4.2f, %4.2f, %4.2f\n", collisionNormal.x, collisionNormal.y, collisionNormal.z);
     return collisionNormal;
 
 }; // SAT
