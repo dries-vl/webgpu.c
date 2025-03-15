@@ -163,7 +163,7 @@ static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice dev
         fprintf(stderr, "[webgpu.c] RequestDevice failed: %s\n", message);
 }
 // Code to force select dedicated gpu if possible
-/*WGPUAdapter selectDiscreteGPU(WGPUInstance instance) {
+WGPUAdapter selectDiscreteGPU(WGPUInstance instance) {
     // First call to get the number of available adapters.
     WGPUInstanceEnumerateAdapterOptions opts = {.backends = WGPUInstanceBackend_All};
     size_t adapterCount = wgpuInstanceEnumerateAdapters(instance, &opts, NULL);
@@ -208,7 +208,7 @@ static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice dev
 
     free(adapters);
     return selectedAdapter;
-}*/
+}
 void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     static WebGPUContext context = {0}; // initialize all fields to zero
 
@@ -243,8 +243,8 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     WGPURequestAdapterOptions adapter_opts = {0};
     adapter_opts.compatibleSurface = context.surface;
     adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance;
-    wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
-    // context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
+    //wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
+    context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
     assert(context.adapter);
     wgpuAdapterRequestDevice(context.adapter, NULL, handle_request_device, &context);
     assert(context.device);
@@ -527,20 +527,20 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     colorTarget.format = context->config.format;
     colorTarget.writeMask = WGPUColorWriteMask_All;
     // --- enable alpha blending --- // todo: maybe later if we want water (?)
-    // {
-    //     colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
-    //         .color = (WGPUBlendComponent){
-    //             .srcFactor = WGPUBlendFactor_SrcAlpha,
-    //             .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
-    //             .operation = WGPUBlendOperation_Add,
-    //         },
-    //         .alpha = (WGPUBlendComponent){
-    //             .srcFactor = WGPUBlendFactor_One,
-    //             .dstFactor = WGPUBlendFactor_Zero,
-    //             .operation = WGPUBlendOperation_Add,
-    //         }
-    //     }};
-    // }
+     {
+         colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
+             .color = (WGPUBlendComponent){
+                 .srcFactor = WGPUBlendFactor_SrcAlpha,
+                 .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha,
+                 .operation = WGPUBlendOperation_Add,
+             },
+             .alpha = (WGPUBlendComponent){
+                 .srcFactor = WGPUBlendFactor_One,
+                 .dstFactor = WGPUBlendFactor_Zero,
+                 .operation = WGPUBlendOperation_Add,
+             }
+         }};
+     }
     fragState.targets = &colorTarget;
     rpDesc.fragment = &fragState;
     

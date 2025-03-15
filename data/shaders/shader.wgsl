@@ -33,6 +33,7 @@ struct VertexInput {
     @location(8) i_pos_1: vec4<f32>,  // instance transform row 1
     @location(9) i_pos_2: vec4<f32>,  // instance transform row 2
     @location(10) i_pos_3: vec4<f32>, // instance transform row 3
+    @location(11) i_data: vec3<u32>,
     @location(15) i_atlas_uv: vec2<f32>,
 };
 
@@ -57,7 +58,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
             b_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
 
         output.pos = g_uniforms.projection * g_uniforms.view * i_transform * skin_matrix * vertex_position;
-        output.uv = input.i_atlas_uv + input.uv;
+        output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
     } else if (m_uniforms.shader == 0u) {
         // HUD SHADER
         // let i = vertex_index % 3u;
@@ -73,8 +74,10 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    // uv wrapping
+    let uv = input.uv;
     let tex_color = textureSample(tex_0, texture_sampler, input.uv);
     var color = tex_color.rgb;
     color += 0.5 * (1.0 - min(min(step(0.02, input.color.x), step(0.02, input.color.y)), step(0.02, input.color.z))); // barys
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(color, tex_color.a);
 }

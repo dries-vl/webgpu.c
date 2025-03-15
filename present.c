@@ -132,6 +132,10 @@ int tick(struct Platform *p, void *context) {
     static int ground_mesh_id;
     static int quad_mesh_id;
 
+    int pine_mesh_id[10];
+    int pine_texture_id[10];
+    struct GameObject pineo[10];
+
     static int cube_texture_id;
     static int quad_texture_id;
     static int ground_texture_id;
@@ -175,7 +179,8 @@ int tick(struct Platform *p, void *context) {
             0, 1, 0, 0,
             0, 0, 1, 0,
             0, 0, 0, 1
-        }
+        },
+        .data = {7, 0, 0},
     };
 
     if (!init_done) {
@@ -224,14 +229,17 @@ int tick(struct Platform *p, void *context) {
 
         // TEXTURE
         int w, h = 0;
+        struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
+        cube_texture_id = createGPUTexture(g->context, cube_mesh_id, china_texture_mm.data, w, h);
         struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
         cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
         quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
         p->unmap_file(&font_texture_mm);
+        p->unmap_file(&china_texture_mm);
 
-        struct MappedMemory crabby_mm = load_texture(p, "data/textures/bin/texture_2.bin", &w, &h);
-        ground_texture_id = createGPUTexture(context, ground_mesh_id, crabby_mm.data, w, h);
-        p->unmap_file(&crabby_mm);
+        struct MappedMemory ground_texture_mm = load_texture(p, "data/textures/bin/stone.bin", &w, &h);
+        ground_texture_id = createGPUTexture(context, ground_mesh_id, ground_texture_mm.data, w, h);
+        p->unmap_file(&ground_texture_mm);
 
         struct MappedMemory colormap_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
         colormap_texture_id = createGPUTexture(context, character_mesh_id, colormap_mm.data, w, h);
@@ -243,14 +251,50 @@ int tick(struct Platform *p, void *context) {
         timeOffset = addGPUGlobalUniform(context, main_pipeline, &timeVal, sizeof(float));
         viewOffset = addGPUGlobalUniform(context, main_pipeline, view, sizeof(view));
         projectionOffset = addGPUGlobalUniform(context, main_pipeline, projection, sizeof(projection));
+
+        // gamestate shit
+        initGamestate(&gameState);
+        struct GameObject cube = {
+            .collisionBox = cubeCollisionBox,
+            .instance = &cube,
+            .velocity = {0}
+        };
+        addGameObject(&gameState, &cube);
+        for (int j = 0; j < 10; j++) {
+            // instance data
+            memcpy(&pines[j], &pine, sizeof(struct Instance));
+            pines[j].transform[12] = 1000.0 * cos(j * 0.314 * 2);
+            pines[j].transform[14] = 1000.0 * sin(j * 0.314 * 2);
+            // mesh
+            struct MappedMemory pine_mm = load_mesh(p, "data/models/bin/pine.bin", &v, &vc, &i, &ic);
+            pine_mesh_id[j] = createGPUMesh(g->context, main_pipeline, v, vc, i, ic, &pines[j], 1);
+            p->unmap_file(&pine_mm);
+            // texture
+            struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
+            pine_texture_id[j] = createGPUTexture(g->context, pine_mesh_id[j], green_texture_mm.data, w, h);
+            addGPUMaterialUniform(g->context, pine_mesh_id[j], &base_shader_id, sizeof(base_shader_id));
+            p->unmap_file(&green_texture_mm);
+            pineo[j] = (struct GameObject){
+                .collisionBox = {0},
+                .instance = &pines[j],
+                .velocity = {0}
+            };
+            memcpy(&pineo[j].collisionBox, &pineCollisionBox, sizeof(struct Rigid_Body));
+            pineo[j].collisionBox.position.x = pines[j].transform[12];
+            pineo[j].collisionBox.position.z = pines[j].transform[14];
+            addGameObject(&gameState, &pineo[j]);
+        }
     }
 
     // Update uniforms
     timeVal += 0.016f; // pretend 16ms per frame
-    //yaw(0.001f * ms_last_frame, view);
-    cameraMovement(view, movementSpeed, ms_last_frame);
-    float cameraLocation[3] = {view[12], view[13], view[14]};
-    applyGravity(&cameraSpeed, cameraLocation, ms_last_frame);
+    //yaw(0.001f * ms_last_frame, camera);
+    playerMovement(movementSpeed, ms_last_frame, &gameState.player);
+    float playerLocation[3] = {gameState.player.instance->transform[3], gameState.player.instance->transform[7], gameState.player.instance->transform[11]};
+    applyGravity(&gameState.player.velocity, playerLocation, ms_last_frame);
+    camera[3] = gameState.player.instance->transform[3];
+    camera[7] = gameState.player.instance->transform[7];
+    camera[11] = gameState.player.instance->transform[11];
     //collisionDetectionCamera(cubeCollisionBox);
     // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
     //printf("Collision detected: %4.2f\n", separation.x);

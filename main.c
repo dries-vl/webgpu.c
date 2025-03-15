@@ -191,7 +191,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                         buttonState.right = 1;
                     }
                     if (virtualKey == ' ' || virtualKey == VK_SPACE) {
-                        cameraSpeed.y = 0.01f;
+                        gameState.player.velocity.y = 0.01f;
                     }
                 }
                 else if (!isPressed) {
