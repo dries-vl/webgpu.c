@@ -7,6 +7,7 @@
 #define FORCE_RESOLUTION 0
 #define FULLSCREEN 1
 #define WINDOWED 1
+int SHOW_CURSOR = 0;
 int WINDOW_WIDTH = 1280; // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
 int WINDOW_HEIGHT = 720; // todo: make this global variable that can be modified
 int VIEWPORT_WIDTH = 1280;
@@ -109,8 +110,6 @@ int tick(struct Platform *p, void *context) {
 
     // todo: lighting
     // todo: cubemap sky
-    // todo: character mesh
-    // todo: animate the character mesh (skeleton?)
     // todo: use precompiled shader for faster loading
     
     static int main_pipeline;
@@ -264,7 +263,7 @@ int tick(struct Platform *p, void *context) {
             pine_mesh_id[j] = createGPUMesh(context, main_pipeline, v, vc, i, ic, &pines[j], 1);
             p->unmap_file(&pine_mm);
             // texture
-            struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
+            struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap_2.bin", &w, &h);
             pine_texture_id[j] = createGPUTexture(context, pine_mesh_id[j], green_texture_mm.data, w, h);
             addGPUMaterialUniform(context, pine_mesh_id[j], &base_shader_id, sizeof(base_shader_id));
             p->unmap_file(&green_texture_mm);

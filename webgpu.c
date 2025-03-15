@@ -413,8 +413,8 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     WGPUSurfaceCapabilities caps = {0};
     wgpuSurfaceGetCapabilities(context.surface, context.adapter, &caps);
-    WGPUTextureFormat chosenFormat = WGPUTextureFormat_RGBA8Unorm;
-    // *it used to be Rgba8UnormSrgb, which was slightly slower somehow*
+    WGPUTextureFormat chosenFormat = WGPUTextureFormat_RGBA8UnormSrgb;
+    // *Rgba8UnormSrgb seems slightly slower than Rgba8Unorm for some reason*
     // if (caps.formatCount > 0) { // selects Rgba8UnormSrgb it seems
     //     chosenFormat = caps.formats[0];
     // }
@@ -986,7 +986,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
     if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success) return 0.0f;
     WGPUTextureViewDescriptor d = {
-        .format = WGPUTextureFormat_RGBA8Unorm,
+        .format = WGPUTextureFormat_RGBA8UnormSrgb,
         .dimension = WGPUTextureViewDimension_2D,
         .baseMipLevel = 0,
         .mipLevelCount = 1,

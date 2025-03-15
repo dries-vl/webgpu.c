@@ -175,7 +175,6 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                     return 0;
                 }
 
-                // Print active keys; side up forward yaw pitch roll
                 if (isPressed) {
                     char msg[32];
                     if (virtualKey == 'Z' || virtualKey == VK_UP) {
@@ -192,6 +191,9 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                     }
                     if (virtualKey == ' ' || virtualKey == VK_SPACE) {
                         gameState.player.velocity.y = 0.01f;
+                    }
+                    if (virtualKey == VK_TAB) {
+                        ShowCursor(SHOW_CURSOR ^= 1);
                     }
                 }
                 else if (!isPressed) {
@@ -211,24 +213,28 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
             }
             else if (raw->header.dwType == RIM_TYPEMOUSE)
             {
-                // Process mouse input
-                LONG dx = raw->data.mouse.lLastX;
-                LONG dy = raw->data.mouse.lLastY;
-                USHORT buttonFlags = raw->data.mouse.usButtonFlags;
-                // Handle mouse movement and button clicks
-                absolute_yaw(dx * 0.002f, view);
-                absolute_pitch(dy * 0.002f, view);
+                if (!SHOW_CURSOR) {
+                    // Process mouse input
+                    LONG dx = raw->data.mouse.lLastX;
+                    LONG dy = raw->data.mouse.lLastY;
+                    USHORT buttonFlags = raw->data.mouse.usButtonFlags;
+                    // Handle mouse movement and button clicks
+                    absolute_yaw(dx * 0.002f, view);
+                    absolute_pitch(dy * 0.002f, view);
+                }
             }
             free(lpb); // Free allocated memory
             break;
         }
         case WM_MOUSEMOVE: {
-            // Reset cursor to center every frame
-            RECT rect;
-            GetClientRect(hWnd, &rect);
-            POINT center = { (rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2 };
-            ClientToScreen(hWnd, &center);
-            SetCursorPos(center.x, center.y);
+            if (!SHOW_CURSOR) {
+                // Reset cursor to center every frame
+                RECT rect;
+                GetClientRect(hWnd, &rect);
+                POINT center = { (rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2 };
+                ClientToScreen(hWnd, &center);
+                SetCursorPos(center.x, center.y);
+            }
             break;
         }
         case WM_CLOSE:

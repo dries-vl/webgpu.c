@@ -324,14 +324,14 @@ struct Rigid_Body pineCollisionBox = {
 
 struct Rigid_Body cameraCollisionBox = {
     .vertices = (struct Vector3[]) {
-        {1.0f, 1.0f, 1.0f},
-        {1.0f, 1.0f, -1.0f},
-        {1.0f, -2.0f, 1.0f},
-        {1.0f, -2.0f, -1.0f},
-        {-1.0f, 1.0f, 1.0f},
-        {-1.0f, 1.0f, -1.0f},
-        {-1.0f, -2.0f, 1.0f},
-        {-1.0f, -2.0f, -1.0f}
+        {0.5f, 0.5f, 0.5f},
+        {0.5f, 0.5f, -0.5f},
+        {0.5f, -1.0f, 0.5f},
+        {0.5f, -1.0f, -0.5f},
+        {-0.5f, 0.5f, 0.5f},
+        {-0.5f, 0.5f, -0.5f},
+        {-0.5f, -1.0f, 0.5f},
+        {-0.5f, -1.0f, -0.5f}
     },
     .normals = (struct Vector3[]) {
         {1.0f, 0.0f, 0.0f},
