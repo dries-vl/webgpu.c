@@ -2,7 +2,6 @@
 #include <math.h>
 #endif
 #include "game_data.h"
-#include "game_data.c" // todo: inline this here and remove file
 
 /* GAME STRUCTS */
 struct Vector3 {
@@ -77,7 +76,7 @@ float view[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 15.0f, 0.0f, 1.0f
+        0.0f, 0.0f, 0.0f, 1.0f
 };
 float cameraRotation[2] = {0.0f, 0.0f}; // yaw, pitch
 struct ButtonState buttonState = {0, 0, 0, 0};
@@ -296,21 +295,21 @@ struct Rigid_Body cubeCollisionBox = {
     },
     .normal_count = 3,
     .vertex_count = 8,
-    .position = {0.0f, 0.0f, 0.0f},
+    .position = {0.0f, 0.0f, 2.0f},
     .radius = 3.0f
 };
 
 // add pine collision box
 struct Rigid_Body pineCollisionBox = {
     .vertices = (struct Vector3[]) {
-        {100.0f, 850.0f, 100.0f},
-        {100.0f, 850.0f, -100.0f},
-        {100.0f, 0.0f, 100.0f},
-        {100.0f, 0.0f, -100.0f},
-        {-100.0f, 850.0f, 100.0f},
-        {-100.0f, 850.0f, -100.0f},
-        {-100.0f, 0.0f, 100.0f},
-        {-100.0f, 0.0f, -100.0f}
+        {1.0f, 8.5f, 1.0f},
+        {1.0f, 8.5f, -1.0f},
+        {1.0f, 0.0f, 1.0f},
+        {1.0f, 0.0f, -1.0f},
+        {-1.0f, 8.5f, 1.0f},
+        {-1.0f, 8.5f, -1.0f},
+        {-1.0f, 0.0f, 1.0f},
+        {-1.0f, 0.0f, -1.0f}
     },
     .normals = (struct Vector3[]) {
         {1.0f, 0.0f, 0.0f},
@@ -470,28 +469,12 @@ void collisionDetectionCamera(struct Rigid_Body cubeCollisionBox) { // nu enkel 
 void collision(struct GameObject *mover, struct GameObject *stator) {
     struct Vector3 separation = detectCollision(mover->collisionBox, stator->collisionBox);
     if (separation.x != 0.0f || separation.y != 0.0f || separation.z != 0.0f) { // if collision
-        mover->instance->transform[3] += separation.x; // undo movement
-        mover->instance->transform[7] += separation.y;
-        mover->instance->transform[11] += separation.z;
-        mover->collisionBox.position.x = mover->instance->transform[3];
-        mover->collisionBox.position.y = mover->instance->transform[7];
-        mover->collisionBox.position.z = mover->instance->transform[11];
-        //float proj = dot(normalise(separation), (struct Vector3){cameraSpeed.x, cameraSpeed.y, cameraSpeed.z});
-        mover->velocity.x = 0; // proj * normalise(separation).x;
-        mover->velocity.y = 0; // proj * normalise(separation).y;
-        mover->velocity.z = 0; // proj * normalise(separation).z;
-    }
-}
-
-void collision(struct GameObject *mover, struct GameObject *stator) {
-    struct Vector3 separation = detectCollision(mover->collisionBox, stator->collisionBox);
-    if (separation.x != 0.0f || separation.y != 0.0f || separation.z != 0.0f) { // if collision
-        mover->instance->transform[3] += separation.x; // undo movement
-        mover->instance->transform[7] += separation.y;
-        mover->instance->transform[11] += separation.z;
-        mover->collisionBox.position.x = mover->instance->transform[3];
-        mover->collisionBox.position.y = mover->instance->transform[7];
-        mover->collisionBox.position.z = mover->instance->transform[11];
+        mover->instance->transform[12] += separation.x; // undo movement
+        mover->instance->transform[13] += separation.y;
+        mover->instance->transform[14] += separation.z;
+        mover->collisionBox.position.x = mover->instance->transform[12];
+        mover->collisionBox.position.y = mover->instance->transform[13];
+        mover->collisionBox.position.z = mover->instance->transform[14];
         //float proj = dot(normalise(separation), (struct Vector3){cameraSpeed.x, cameraSpeed.y, cameraSpeed.z});
         mover->velocity.x = 0; // proj * normalise(separation).x;
         mover->velocity.y = 0; // proj * normalise(separation).y;
@@ -503,11 +486,11 @@ void cameraMovement(float *view, float speed, float ms) {
     cameraSpeed.x = speed * (buttonState.right - buttonState.left);
     cameraSpeed.z = speed * (buttonState.forward - buttonState.backward);
     
-    float yawRot[16] = {
+    float yawRot[9] = {
         cos(cameraRotation[0]), 0.0f, -sin(cameraRotation[0]),
-        0.0f,                1.0f,  0.0f,
-        sin(cameraRotation[0]), 0.0f, cos(cameraRotation[0])
-    };
+        0.0f,                   1.0f,  0.0f,
+        sin(cameraRotation[0]), 0.0f,  cos(cameraRotation[0])
+    };    
     float xSpeed = cameraSpeed.x * ms;
     float ySpeed = cameraSpeed.y * ms;
     float zSpeed = cameraSpeed.z * ms;
@@ -535,18 +518,18 @@ void cameraMovement(float *view, float speed, float ms) {
 
 void playerMovement(float speed, float ms, struct GameObject *player) {
     player->velocity.x = speed * (buttonState.right - buttonState.left);
-    player->velocity.z = speed * -(buttonState.forward - buttonState.backward);
+    player->velocity.z = speed * (buttonState.forward - buttonState.backward);
     
-    float yawRot[16] = {
-        cos(cameraRotation[0]), 0.0f, sin(cameraRotation[0]),
-        0.0f,       1.0f, 0.0f,
-       -sin(cameraRotation[0]), 0.0f, cos(cameraRotation[0])
-    };
+    float yawRot[9] = {
+        cos(cameraRotation[0]), 0.0f, -sin(cameraRotation[0]),
+        0.0f,                   1.0f,  0.0f,
+        sin(cameraRotation[0]), 0.0f,  cos(cameraRotation[0])
+    };    
     float xSpeed = player->velocity.x * ms;
     float ySpeed = player->velocity.y * ms;
     float zSpeed = player->velocity.z * ms;
     float transSpeed[3] = {xSpeed, ySpeed, zSpeed};
-    multiply(yawRot, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
+    mat4_multiply(yawRot, 3, 3, transSpeed, 1, transSpeed); // in world coords
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
     move(movit, player->instance->transform);
     player->collisionBox.position.x = player->instance->transform[12];
@@ -607,7 +590,7 @@ unsigned int fnv1a(const char *s) {
 void initGamestate(struct GameState *gameState) {
     // player/camera
     gameState->player.collisionBox = cameraCollisionBox;
-    memcpy(gameState->player.instance->transform, camera, sizeof(camera));
+    memcpy(gameState->player.instance->transform, view, sizeof(view));
     gameState->player.velocity = cameraSpeed;
     // objects
     //gameState->objects[0].collisionBox = cubeCollisionBox;

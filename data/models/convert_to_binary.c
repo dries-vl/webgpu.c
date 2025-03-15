@@ -9,21 +9,24 @@
 
 // The new target vertex struct. 48 bytes total.
 typedef struct {
-    unsigned int data[4];      // 16 bytes u32 // *info* raw data
-    float position[3];         // 12 bytes f32
-    unsigned char normal[4];   // 4 bytes n8
-    unsigned char tangent[4];  // 4 bytes n8
-    unsigned short uv[2];      // 4 bytes n16
+    unsigned int data[4];          // 16 bytes u32 // *info* raw data
+    float position[3];             // 12 bytes f32
+    unsigned char normal[4];       // 4 bytes n8
+    unsigned char tangent[4];      // 4 bytes n8
+    unsigned short uv[2];          // 4 bytes n16
     unsigned char bone_weights[4]; // 4 bytes n8
     unsigned char bone_indices[4]; // 4 bytes u8 // *info* max 256 bones
 } Vertex;
 
-// The header that will be stored at the beginning of the binary.
+// New MeshHeader definition.
 typedef struct {
     uint32_t vertexCount;
     uint32_t indexCount;
+    uint32_t boneCount;
+    uint32_t frameCount;
     uint32_t vertexArrayOffset;
     uint32_t indexArrayOffset;
+    uint32_t boneFramesArrayOffset;
 } MeshHeader;
 
 // Helper vector types for storing OBJ data.
@@ -207,9 +210,10 @@ void process_obj_file(const char *filepath) {
             }
             
             // For faces with more than 3 vertices, use fan triangulation:
-            // Triangle vertices: index 0, i, i+1 for i=1..(n-2)
+            // To change from the current clockwise (CW) to counter-clockwise (CCW) winding order,
+            // we output triangles with vertices: index 0, i+1, i.
             for (int i = 1; i < tokenCount - 1; i++) {
-                int idx[3] = {0, i, i+1};
+                int idx[3] = { 0, i+1, i };
                 for (int j = 0; j < 3; j++) {
                     int k = idx[j];
                     Vertex vert;
@@ -253,7 +257,7 @@ void process_obj_file(const char *filepath) {
                         // Optionally flip v if needed:
                         // v = 1.0f - v;
                         vert.uv[0] = (unsigned short)(u * 65535.0f);
-			vert.uv[1] = (unsigned short)(v * 65535.0f);
+                        vert.uv[1] = (unsigned short)(v * 65535.0f);
                     } else {
                         vert.uv[0] = vert.uv[1] = 0;
                     }
@@ -305,12 +309,15 @@ void process_obj_file(const char *filepath) {
     for (size_t i = 0; i < vertices.count; i++)
         indices[i] = (uint32_t)i;
     
-    // Prepare the header.
+    // Prepare the header using the new MeshHeader structure.
     MeshHeader header;
     header.vertexCount = (uint32_t)vertices.count;
     header.indexCount  = (uint32_t)vertices.count; // each vertex is an index
+    header.boneCount   = 0;  // OBJ files do not include bone data.
+    header.frameCount  = 0;  // OBJ files do not include animation frames.
     header.vertexArrayOffset = sizeof(MeshHeader);
-    header.indexArrayOffset  = sizeof(MeshHeader) + vertices.count * sizeof(Vertex);
+    header.indexArrayOffset  = header.vertexArrayOffset + vertices.count * sizeof(Vertex);
+    header.boneFramesArrayOffset = header.indexArrayOffset + vertices.count * sizeof(uint32_t);
     
     // Write the binary file: first the header, then the vertices, then the indices.
     FILE *out = fopen(outputPath, "wb");

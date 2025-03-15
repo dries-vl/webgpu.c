@@ -32,8 +32,11 @@ struct Platform {
 typedef struct {
     unsigned int vertexCount;
     unsigned int indexCount;
+    unsigned int boneCount;
+    unsigned int frameCount;
     unsigned int vertexArrayOffset;
     unsigned int indexArrayOffset;
+    unsigned int boneFramesArrayOffset;
 } MeshHeader;
 struct MappedMemory load_mesh(struct Platform *p, const char *filename, void** v, int *vc, void** i, int *ic) {
     struct MappedMemory mm = p->map_file(filename);
@@ -47,16 +50,7 @@ struct MappedMemory load_mesh(struct Platform *p, const char *filename, void** v
     
     return mm;
 }
-typedef struct {
-    unsigned int vertexCount;
-    unsigned int indexCount;
-    unsigned int boneCount;
-    unsigned int frameCount;
-    unsigned int vertexArrayOffset;
-    unsigned int indexArrayOffset;
-    unsigned int boneFramesArrayOffset;
-} AnimatedMeshHeader;
-struct MappedMemory load_gltf_mesh(struct Platform *p, const char *filename,
+struct MappedMemory load_animated_mesh(struct Platform *p, const char *filename,
                                    void** vertices, int *vertexCount,
                                    void** indices, int *indexCount,
                                    void** boneFrames, int *boneCount,
@@ -69,7 +63,7 @@ struct MappedMemory load_gltf_mesh(struct Platform *p, const char *filename,
     }
     
     // The file begins with an AnimatedMeshHeader.
-    AnimatedMeshHeader *header = (AnimatedMeshHeader*) mm.data;
+    MeshHeader *header = (MeshHeader*) mm.data;
     
     // Set the vertex pointer and count.
     *vertexCount = header->vertexCount;
@@ -175,10 +169,10 @@ int tick(struct Platform *p, void *context) {
     };
     static struct Instance cube = {
         .transform = {
-            -1, 0, 0, 0,
+            1, 0, 0, 0,
             0, 1, 0, 0,
             0, 0, 1, 0,
-            0, 0, 0, 1
+            0, 0, 2, 1
         },
         .data = {7, 0, 0},
     };
@@ -194,7 +188,7 @@ int tick(struct Platform *p, void *context) {
         void *bf; int bc, fc;
         // 813 vertices, 2127 indices
         // 2127 vertices, 2127 indices
-        struct MappedMemory character_mm = load_gltf_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
+        struct MappedMemory character_mm = load_animated_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
         printf("frame count: %d, bone count: %d\n", fc, bc);
         character_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &character, 1);
         addGPUMaterialUniform(context, character_mesh_id, &base_shader_id, sizeof(base_shader_id));
@@ -204,7 +198,7 @@ int tick(struct Platform *p, void *context) {
         // p->unmap_file(&character_mm);
         
         void *bf1; int bc1, fc1;
-        struct MappedMemory char2_mm = load_gltf_mesh(p, "data/models/blender/bin/charA2.bin", &v, &vc, &i, &ic, &bf1, &bc1, &fc1);
+        struct MappedMemory char2_mm = load_animated_mesh(p, "data/models/blender/bin/charA2.bin", &v, &vc, &i, &ic, &bf1, &bc1, &fc1);
         printf("frame count: %d, bone count: %d\n", fc1, bc1);
         char2_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &character2, 1);
         addGPUMaterialUniform(context, char2_mesh_id, &base_shader_id, sizeof(base_shader_id));
@@ -214,7 +208,7 @@ int tick(struct Platform *p, void *context) {
         // p->unmap_file(&char2_mm);
         
 
-        struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
+        struct MappedMemory cube_mm = load_mesh(p, "data/models/blender/bin/cube.bin", &v, &vc, &i, &ic);
         cube_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &cube, 1);
         addGPUMaterialUniform(context, cube_mesh_id, &base_shader_id, sizeof(base_shader_id));
         p->unmap_file(&cube_mm);
@@ -230,7 +224,7 @@ int tick(struct Platform *p, void *context) {
         // TEXTURE
         int w, h = 0;
         struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
-        cube_texture_id = createGPUTexture(g->context, cube_mesh_id, china_texture_mm.data, w, h);
+        cube_texture_id = createGPUTexture(context, cube_mesh_id, china_texture_mm.data, w, h);
         struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
         cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
         quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
@@ -263,16 +257,16 @@ int tick(struct Platform *p, void *context) {
         for (int j = 0; j < 10; j++) {
             // instance data
             memcpy(&pines[j], &pine, sizeof(struct Instance));
-            pines[j].transform[12] = 1000.0 * cos(j * 0.314 * 2);
-            pines[j].transform[14] = 1000.0 * sin(j * 0.314 * 2);
+            pines[j].transform[12] = 10.0 * cos(j * 0.314 * 2);
+            pines[j].transform[14] = 10.0 * sin(j * 0.314 * 2);
             // mesh
             struct MappedMemory pine_mm = load_mesh(p, "data/models/bin/pine.bin", &v, &vc, &i, &ic);
-            pine_mesh_id[j] = createGPUMesh(g->context, main_pipeline, v, vc, i, ic, &pines[j], 1);
+            pine_mesh_id[j] = createGPUMesh(context, main_pipeline, v, vc, i, ic, &pines[j], 1);
             p->unmap_file(&pine_mm);
             // texture
             struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
-            pine_texture_id[j] = createGPUTexture(g->context, pine_mesh_id[j], green_texture_mm.data, w, h);
-            addGPUMaterialUniform(g->context, pine_mesh_id[j], &base_shader_id, sizeof(base_shader_id));
+            pine_texture_id[j] = createGPUTexture(context, pine_mesh_id[j], green_texture_mm.data, w, h);
+            addGPUMaterialUniform(context, pine_mesh_id[j], &base_shader_id, sizeof(base_shader_id));
             p->unmap_file(&green_texture_mm);
             pineo[j] = (struct GameObject){
                 .collisionBox = {0},
@@ -290,11 +284,11 @@ int tick(struct Platform *p, void *context) {
     timeVal += 0.016f; // pretend 16ms per frame
     //yaw(0.001f * ms_last_frame, camera);
     playerMovement(movementSpeed, ms_last_frame, &gameState.player);
-    float playerLocation[3] = {gameState.player.instance->transform[3], gameState.player.instance->transform[7], gameState.player.instance->transform[11]};
+    float playerLocation[3] = {gameState.player.instance->transform[12], gameState.player.instance->transform[13], gameState.player.instance->transform[14]};
     applyGravity(&gameState.player.velocity, playerLocation, ms_last_frame);
-    camera[3] = gameState.player.instance->transform[3];
-    camera[7] = gameState.player.instance->transform[7];
-    camera[11] = gameState.player.instance->transform[11];
+    view[12] = gameState.player.instance->transform[12];
+    view[13] = gameState.player.instance->transform[13];
+    view[14] = gameState.player.instance->transform[14];
     //collisionDetectionCamera(cubeCollisionBox);
     // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
     //printf("Collision detected: %4.2f\n", separation.x);

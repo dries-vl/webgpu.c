@@ -245,12 +245,11 @@ static void slerp(const float q0[4], const float q1[4], float t, float out[4]) {
 static void compute_node_local_transform(cgltf_node *node, cgltf_animation *anim, float t, float out[16]) {
     // If the node defines a full matrix, use it directly.
     if (node->has_matrix) {
-        // Assuming node->matrix is already in column-major order.
         memcpy(out, node->matrix, 16 * sizeof(float));
         return;
     }
 
-    // Otherwise, build TRS from the node’s data.
+    // Build TRS from the node’s data.
     float translation[3] = {
         node->has_translation ? node->translation[0] : 0.0f,
         node->has_translation ? node->translation[1] : 0.0f,
@@ -310,8 +309,6 @@ static void compute_node_local_transform(cgltf_node *node, cgltf_animation *anim
     }
 
     // Build TRS matrices in column-major order.
-
-    // Translation matrix T: translation is in the last column.
     float T[16] = {
         1, 0, 0, 0,
         0, 1, 0, 0,
@@ -319,7 +316,6 @@ static void compute_node_local_transform(cgltf_node *node, cgltf_animation *anim
         translation[0], translation[1], translation[2], 1
     };
 
-    // Scale matrix S.
     float S[16] = {
         scale[0], 0,        0,       0,
         0,        scale[1], 0,       0,
@@ -327,7 +323,6 @@ static void compute_node_local_transform(cgltf_node *node, cgltf_animation *anim
         0,        0,        0,       1
     };
 
-    // Rotation matrix R from quaternion, built for column-major order.
     float x = rotation[0], y = rotation[1], z = rotation[2], w = rotation[3];
     float R[16] = {
          1 - 2*y*y - 2*z*z,    2*x*y + 2*z*w,       2*x*z - 2*y*w,       0,
@@ -336,7 +331,6 @@ static void compute_node_local_transform(cgltf_node *node, cgltf_animation *anim
          0,                    0,                   0,                   1
     };
 
-    // Combine the matrices: first multiply R and S, then apply T.
     float RS[16];
     multiply_matrix4x4(R, S, RS);
     float TR[16];
@@ -391,7 +385,7 @@ static void process_file(const char* filename) {
     }
     cgltf_primitive* prim = &mesh->primitives[0];
 
-    // Find needed accessors
+    // Find needed accessors.
     const cgltf_accessor* pos_accessor    = cgltf_find_accessor(prim, cgltf_attribute_type_position, 0);
     const cgltf_accessor* norm_accessor   = cgltf_find_accessor(prim, cgltf_attribute_type_normal, 0);
     const cgltf_accessor* tang_accessor   = cgltf_find_accessor(prim, cgltf_attribute_type_tangent, 0);
@@ -399,16 +393,22 @@ static void process_file(const char* filename) {
     const cgltf_accessor* joints_accessor = cgltf_find_accessor(prim, cgltf_attribute_type_joints, 0);
     const cgltf_accessor* weights_accessor= cgltf_find_accessor(prim, cgltf_attribute_type_weights, 0);
 
-    if (!pos_accessor || !norm_accessor || !tex_accessor || !joints_accessor || !weights_accessor) {
-        printf("  [Error] Missing required attributes in %s\n", filename);
+    // Position is required.
+    if (!pos_accessor) {
+        printf("  [Error] Missing required POSITION attribute in %s\n", filename);
         cgltf_free(data);
         return;
     }
-    if (!tang_accessor) {
-        printf("  [Info] No TANGENT attribute found in %s; using default tangents.\n", filename);
-    }
+    if (!norm_accessor)
+        printf("  [Warning] No NORMAL attribute found in %s; using default normals.\n", filename);
+    if (!tex_accessor)
+        printf("  [Warning] No TEXCOORD attribute found in %s; using default texcoords.\n", filename);
+    if (!joints_accessor)
+        printf("  [Warning] No JOINTS attribute found in %s; using default bone indices.\n", filename);
+    if (!weights_accessor)
+        printf("  [Warning] No WEIGHTS attribute found in %s; using default bone weights.\n", filename);
 
-    // Load vertices
+    // Load vertices.
     unsigned int vertexCount = (unsigned int) pos_accessor->count;
     Vertex* vertices = (Vertex*) calloc(vertexCount, sizeof(Vertex));
     if (!vertices) {
@@ -418,65 +418,82 @@ static void process_file(const char* filename) {
     }
 
     for (unsigned int i = 0; i < vertexCount; i++) {
-        // Position
+        // Position (required).
         float pos[3] = {0};
         cgltf_accessor_read_float(pos_accessor, i, pos, 3);
         memcpy(vertices[i].position, pos, sizeof(pos));
 
-        // Normal
-        float norm[3] = {0};
-        cgltf_accessor_read_float(norm_accessor, i, norm, 3);
-        for (int j = 0; j < 3; j++)
-            vertices[i].normal[j] = float_to_unorm8(norm[j]);
+        // Normal.
+        if (norm_accessor) {
+            float norm[3] = {0};
+            cgltf_accessor_read_float(norm_accessor, i, norm, 3);
+            for (int j = 0; j < 3; j++)
+                vertices[i].normal[j] = float_to_unorm8(norm[j]);
+        } else {
+            float default_norm[3] = {0.0f, 0.0f, 1.0f};
+            for (int j = 0; j < 3; j++)
+                vertices[i].normal[j] = float_to_unorm8(default_norm[j]);
+        }
         vertices[i].normal[3] = 255;
 
-        // Tangent
+        // Tangent.
         if (tang_accessor) {
             float tang[4];
             cgltf_accessor_read_float(tang_accessor, i, tang, 4);
             for (int j = 0; j < 4; j++)
                 vertices[i].tangent[j] = float_to_unorm8(tang[j]);
         } else {
-            // Default tangent
             vertices[i].tangent[0] = float_to_unorm8(1.0f);
             vertices[i].tangent[1] = float_to_unorm8(0.0f);
             vertices[i].tangent[2] = float_to_unorm8(0.0f);
             vertices[i].tangent[3] = float_to_unorm8(1.0f);
         }
 
-        // Texcoord
-        float uv[2] = {0};
-        cgltf_accessor_read_float(tex_accessor, i, uv, 2);
-        unsigned int uu = (unsigned int)(uv[0] * 65535.0f + 0.5f);
-        unsigned int vv = (unsigned int)(uv[1] * 65535.0f + 0.5f);
-        if (uu > 65535) uu = 65535;
-        if (vv > 65535) vv = 65535;
-        vertices[i].uv[0] = (unsigned short)uu;
-        vertices[i].uv[1] = (unsigned short)vv;
-
-        // Joints
-        unsigned short joints[4] = {0};
-        cgltf_accessor_read_uint(joints_accessor, i, (unsigned int*)joints, 4);
-        for (int j = 0; j < 4; j++) {
-            vertices[i].bone_indices[j] = (unsigned char)(joints[j]);
+        // Texcoord.
+        if (tex_accessor) {
+            float uv[2] = {0};
+            cgltf_accessor_read_float(tex_accessor, i, uv, 2);
+            unsigned int uu = (unsigned int)(uv[0] * 65535.0f + 0.5f);
+            unsigned int vv = (unsigned int)(uv[1] * 65535.0f + 0.5f);
+            if (uu > 65535) uu = 65535;
+            if (vv > 65535) vv = 65535;
+            vertices[i].uv[0] = (unsigned short)uu;
+            vertices[i].uv[1] = (unsigned short)vv;
+        } else {
+            vertices[i].uv[0] = 0;
+            vertices[i].uv[1] = 0;
         }
 
-        // Weights
-        float w4[4] = {0};
-        cgltf_accessor_read_float(weights_accessor, i, w4, 4);
+        // Joints.
+        if (joints_accessor) {
+            unsigned short joints[4] = {0};
+            cgltf_accessor_read_uint(joints_accessor, i, (unsigned int*)joints, 4);
+            for (int j = 0; j < 4; j++) {
+                vertices[i].bone_indices[j] = (unsigned char)(joints[j]);
+            }
+        } else {
+            for (int j = 0; j < 4; j++)
+                vertices[i].bone_indices[j] = 0;
+        }
+
+        // Weights.
+        float w4[4] = {0, 0, 0, 0};
+        if (weights_accessor) {
+            cgltf_accessor_read_float(weights_accessor, i, w4, 4);
+        } else {
+            w4[0] = 1.0f; w4[1] = w4[2] = w4[3] = 0.0f;
+        }
         float sum = w4[0] + w4[1] + w4[2] + w4[3];
         if (sum < 1e-12f) {
             w4[0] = 1.0f; w4[1] = w4[2] = w4[3] = 0.0f;
             sum = 1.0f;
         }
-        // Normalize
         float invSum = 1.0f / sum;
         w4[0] *= invSum;
         w4[1] *= invSum;
         w4[2] *= invSum;
         w4[3] *= invSum;
 
-        // Convert to [0..255] with rounding, then ensure sum=255
         int iw[4];
         int total = 0;
         for (int j = 0; j < 4; j++) {
@@ -485,7 +502,6 @@ static void process_file(const char* filename) {
         }
         int diff = 255 - total;
         if (diff != 0) {
-            // Adjust the largest weight
             int maxidx = 0;
             float maxval = w4[0];
             for (int j = 1; j < 4; j++) {
@@ -500,7 +516,7 @@ static void process_file(const char* filename) {
         }
     }
 
-    // Indices
+    // Indices.
     unsigned int indexCount = 0;
     unsigned int* indices = NULL;
     if (prim->indices) {
@@ -515,9 +531,17 @@ static void process_file(const char* filename) {
         for (unsigned int i = 0; i < indexCount; i++) {
             indices[i] = (unsigned int)cgltf_accessor_read_index(prim->indices, i);
         }
+        // Reverse triangle winding order from CW to CCW by swapping the second and third index in each triangle.
+        if (indexCount % 3 == 0) {
+            for (unsigned int i = 0; i < indexCount; i += 3) {
+                unsigned int temp = indices[i+1];
+                indices[i+1] = indices[i+2];
+                indices[i+2] = temp;
+            }
+        }
     }
 
-    // Skins / Bones
+    // Skins / Bones.
     cgltf_skin* skin = NULL;
     unsigned int usedBoneCount = 0;
     if (data->skins_count > 0) {
@@ -525,7 +549,7 @@ static void process_file(const char* filename) {
         usedBoneCount = (unsigned int)skin->joints_count;
     }
 
-    // Prepare inverse bind arrays
+    // Prepare inverse bind arrays.
     float* corrected_invBind = NULL;
     if (skin && usedBoneCount > 0) {
         corrected_invBind = (float*)malloc(usedBoneCount * 16 * sizeof(float));
@@ -536,22 +560,16 @@ static void process_file(const char* filename) {
             cgltf_free(data);
             return;
         }
-        // For each bone, find the global bind transform and invert it
         for (unsigned int b = 0; b < usedBoneCount; b++) {
             cgltf_node* bone_node = skin->joints[b];
-
-            // G_bind: bone's global bind transform (no animation)
             float G_bind[16];
             compute_global_transform(bone_node, NULL, 0.0f, G_bind);
-
             float invG[16];
             if (!invert_matrix4x4(G_bind, invG)) {
-                // fallback to identity
                 for (int i = 0; i < 16; i++)
                     invG[i] = (i % 5 == 0) ? 1.0f : 0.0f;
             }
             memcpy(&corrected_invBind[b * 16], invG, 16 * sizeof(float));
-
 #ifdef DEBUG_BONES
             printf("Bone %u inverseBind:\n", b);
             for (int i = 0; i < 4; i++) {
@@ -563,7 +581,7 @@ static void process_file(const char* filename) {
         }
     }
 
-    // Animations
+    // Animations.
     cgltf_animation* anim = NULL;
     unsigned int frameCount = 1;
     float anim_start = 0.f, anim_end = 0.f;
@@ -585,7 +603,7 @@ static void process_file(const char* filename) {
         if (frameCount < 1) frameCount = 1;
     }
 
-    // For each frame, compute final bone transforms
+    // For each frame, compute final bone transforms.
     float* boneFrames = NULL;
     if (skin && usedBoneCount > 0) {
         boneFrames = (float*)calloc(frameCount * MAX_BONES * 16, sizeof(float));
@@ -597,8 +615,6 @@ static void process_file(const char* filename) {
             cgltf_free(data);
             return;
         }
-        // We might need to flip on X to fix left-handed vs right-handed
-        // If you do NOT need that, remove flipX entirely
         float flipX[16] = {
             -1, 0,  0, 0,
              0, 1,  0, 0,
@@ -606,24 +622,17 @@ static void process_file(const char* filename) {
              0, 0,  0, 1
         };
 
-        // Bake each frame
         for (unsigned int f = 0; f < frameCount; f++) {
             float t = anim ? (anim_start + (float)f / (float)fps) : 0.0f;
             for (unsigned int b = 0; b < MAX_BONES; b++) {
                 float finalBone[16];
                 if (b < usedBoneCount) {
                     cgltf_node* bone_node = skin->joints[b];
-
-                    // G_current: bone's global transform at time t
                     float G_current[16];
                     compute_global_transform(bone_node, anim, t, G_current);
-
-                    // Multiply => finalBone = G_current * inverseBind
-                    float combined[16];
-                    multiply_matrix4x4(G_current, &corrected_invBind[b * 16], combined);
-
-                    // Then apply optional coordinate flip (left->right)
-                    multiply_matrix4x4(flipX, combined, finalBone);
+float combined[16];
+multiply_matrix4x4(G_current, &corrected_invBind[b * 16], combined);
+memcpy(finalBone, combined, 16 * sizeof(float));
 #ifdef DEBUG_BONES
                     if (f==0) {
                         printf("Bone %u final transform (frame=0):\n", b);
@@ -635,17 +644,15 @@ static void process_file(const char* filename) {
                     }
 #endif
                 } else {
-                    // Bones beyond usedBoneCount => identity
                     for (int i = 0; i < 16; i++)
                         finalBone[i] = (i%5==0) ? 1.0f : 0.0f;
                 }
-                // Convert to column-major so GPU sees the matrix as expected
                 memcpy(&boneFrames[(f * MAX_BONES + b) * 16], finalBone, 16*sizeof(float));
             }
         }
     }
 
-    // Build output filename
+    // Build output filename.
     char out_filename[256];
     const char* dot = strrchr(filename, '.');
     if (dot) {
@@ -673,7 +680,7 @@ static void process_file(const char* filename) {
         return;
     }
 
-    // Write header
+    // Write header.
     AnimatedMeshHeader header;
     memset(&header, 0, sizeof(header));
     header.vertexCount            = vertexCount;
@@ -691,22 +698,17 @@ static void process_file(const char* filename) {
     header.boneFramesArrayOffset  = header.indexArrayOffset   + indexArraySize;
 
     fwrite(&header, sizeof(header), 1, out);
-    // Write vertices
     fwrite(vertices, sizeof(Vertex), vertexCount, out);
-    // Write indices
     if (indices && indexCount > 0) {
         fwrite(indices, sizeof(unsigned int), indexCount, out);
     }
-    // Write bone frames
     if (boneFrames && boneFramesSize > 0) {
         fwrite(boneFrames, 1, boneFramesSize, out);
     }
 
     fclose(out);
-
     printf("  Wrote output file: %s\n", bin_path);
 
-    // Cleanup
     free(corrected_invBind);
     free(boneFrames);
     free(indices);

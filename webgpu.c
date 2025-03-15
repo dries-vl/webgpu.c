@@ -425,7 +425,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         .width = width,
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
-        .alphaMode = WGPUCompositeAlphaMode_Opaque,
+        .alphaMode = WGPUCompositeAlphaMode_Auto,
         .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(context.surface, &context.config);

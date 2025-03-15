@@ -13,9 +13,9 @@
 // Here we use an identity transform (no translation, rotation or scale change)
 static struct Instance ground_instance = {
     .transform = {
-         10000, 0, 0, 0,
-         0, 0, 10000, 0,
-         0, 10000, 0, 0,
+         100, 0, 0, 0,
+         0, 0, 100, 0,
+         0, 100, 0, 0,
          0, 0, 0, 1
     },
     .data = {20, 0, 0},
@@ -27,10 +27,10 @@ static struct Instance ground_instance = {
 
 struct Instance pine = {
     .transform = {
-        500.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 500.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 500.0f, 0.0f,
-        0.0f, 0.0f, 1000.0f, 1.0f
+        5.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 5.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 5.0f, 0.0f,
+        0.0f, 0.0f, 10.0f, 1.0f
     },
     .data = {0},
     .norms = {0},
