@@ -6,6 +6,7 @@
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
 #define FORCE_RESOLUTION 0
 #define FULLSCREEN 1
+#define WINDOWED 1
 int WINDOW_WIDTH = 1280; // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
 int WINDOW_HEIGHT = 720; // todo: make this global variable that can be modified
 int VIEWPORT_WIDTH = 1280;
@@ -154,7 +155,7 @@ int tick(struct Platform *p, void *context) {
             1., 0, 0, 0,
             0, 1., 0, 0,
             0, 0, 1., 0,
-            0, 0, 2, 1
+            0, 0, -2, 1
         },
         .atlas_uv = {0, 0}
     };
@@ -193,7 +194,7 @@ int tick(struct Platform *p, void *context) {
         character_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &character, 1);
         addGPUMaterialUniform(context, character_mesh_id, &base_shader_id, sizeof(base_shader_id));
         setGPUMeshBoneData(context, character_mesh_id, bf, bc, fc);
-        // todo: we cannot unmap the bones data, let's memcpy it here to make it persist
+        // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
         // todo: fix script for correct UVs etc.
         // p->unmap_file(&character_mm);
         
@@ -203,11 +204,10 @@ int tick(struct Platform *p, void *context) {
         char2_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &character2, 1);
         addGPUMaterialUniform(context, char2_mesh_id, &base_shader_id, sizeof(base_shader_id));
         setGPUMeshBoneData(context, char2_mesh_id, bf1, bc1, fc1);
-        // todo: we cannot unmap the bones data, let's memcpy it here to make it persist
+        // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
         // todo: fix script for correct UVs etc.
         // p->unmap_file(&char2_mm);
         
-
         struct MappedMemory cube_mm = load_mesh(p, "data/models/blender/bin/cube.bin", &v, &vc, &i, &ic);
         cube_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &cube, 1);
         addGPUMaterialUniform(context, cube_mesh_id, &base_shader_id, sizeof(base_shader_id));

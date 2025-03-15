@@ -361,12 +361,12 @@ void fullscreen_window(HWND hwnd)
     }
 
     // 4) Make window borderless & resize to cover the entire screen
-    SetWindowLongA(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+    SetWindowLongA(hwnd, GWL_STYLE, (WINDOWED ? WS_CAPTION | WS_SYSMENU : WS_POPUP) | WS_VISIBLE);
     SetWindowPos(hwnd, HWND_TOP,
                 0, 0,
                 chosenMode.dmPelsWidth,
                 chosenMode.dmPelsHeight,
-                SWP_FRAMECHANGED);
+                SWP_SHOWWINDOW );
 
     // 5) Print aspect info (monitor/GPU might do black bars or stretch)
     float chosenAspect = 0.0f;
