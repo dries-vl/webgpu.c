@@ -47,6 +47,45 @@ struct MappedMemory load_mesh(struct Platform *p, const char *filename, void** v
     
     return mm;
 }
+typedef struct {
+    unsigned int vertexCount;
+    unsigned int indexCount;
+    unsigned int boneCount;
+    unsigned int frameCount;
+    unsigned int vertexArrayOffset;
+    unsigned int indexArrayOffset;
+    unsigned int boneFramesArrayOffset;
+} AnimatedMeshHeader;
+struct MappedMemory load_gltf_mesh(struct Platform *p, const char *filename,
+                                   void** vertices, int *vertexCount,
+                                   void** indices, int *indexCount,
+                                   void** boneFrames, int *boneCount,
+                                   int *frameCount) {
+    // Map the file into memory.
+    struct MappedMemory mm = p->map_file(filename);
+    if (!mm.data) {
+        printf("Error: could not map file %s\n", filename);
+        return mm;
+    }
+    
+    // The file begins with an AnimatedMeshHeader.
+    AnimatedMeshHeader *header = (AnimatedMeshHeader*) mm.data;
+    
+    // Set the vertex pointer and count.
+    *vertexCount = header->vertexCount;
+    *vertices = (unsigned char*) mm.data + header->vertexArrayOffset;
+    
+    // Set the index pointer and count.
+    *indexCount = header->indexCount;
+    *indices = (unsigned int*)((unsigned char*) mm.data + header->indexArrayOffset);
+    
+    // Set the bone frames pointer, bone count, and frame count.
+    *boneCount = header->boneCount;
+    *frameCount = header->frameCount;
+    *boneFrames = (unsigned char*) mm.data + header->boneFramesArrayOffset;
+    
+    return mm;
+}
 /* MEMORY MAPPING TEXTURE */
 typedef struct {
     int width;
@@ -82,6 +121,7 @@ int tick(struct Platform *p, void *context) {
     static int main_pipeline;
     
     static int character_mesh_id;
+    static int char2_mesh_id;
     static int cube_mesh_id;
 
     // todo: separate material from mesh -> set material when creating mesh, and set shader once in material
@@ -97,32 +137,43 @@ int tick(struct Platform *p, void *context) {
     static int ground_texture_id;
     static int colormap_texture_id;
 
-    float view[16] = {
-        1.0 / (tan(fov / 2.0) * ASPECT_RATIO), 0.0f,  0.0f,                               0.0f,
-        0.0f,  1.0 / tan(fov / 2.0),          0.0f,                               0.0f,
-        0.0f,  0.0f, -(farClip + nearClip) / (farClip - nearClip), -(2 * farClip * nearClip) / (farClip - nearClip),
-        0.0f,  0.0f, -1.0f,                               0.0f
+    float f = 1.0f / tan(fov / 2.0f);
+    float projection[16] = {
+        f / ASPECT_RATIO, 0.0f,                          0.0f, 0.0f,
+        0.0f,             f,                             0.0f, 0.0f,
+        0.0f,             0.0f,      farClip / (farClip - nearClip), 1.0f,
+        0.0f,             0.0f, (-nearClip * farClip) / (farClip - nearClip), 0.0f
     };
+    
     static int brightnessOffset;
     static int timeOffset;
-    static int cameraOffset; 
-    static int viewOffset;
+    static int viewOffset; 
+    static int projectionOffset;
 
     // instance data cannot go out of scope!
     static struct Instance character = {
         .transform = {
-            200., 0, 0, 0,
-            0, 200., 0, 0,
-            0, 0, 200., 0,
-            0, 0, -200, 1
+            1., 0, 0, 0,
+            0, 1., 0, 0,
+            0, 0, 1., 0,
+            0, 0, 2, 1
+        },
+        .atlas_uv = {0, 0}
+    };
+    static struct Instance character2 = {
+        .transform = {
+            1., 0, 0, 0,
+            0, 1., 0, 0,
+            0, 0, 1., 0,
+            0, 0, 4, 1
         },
         .atlas_uv = {0, 0}
     };
     static struct Instance cube = {
         .transform = {
-            100, 0, 0, 0,
-            0, 100, 0, 0,
-            0, 0, 100, 0,
+            -1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
             0, 0, 0, 1
         }
     };
@@ -135,23 +186,41 @@ int tick(struct Platform *p, void *context) {
 
         // LOAD MESHES FROM DISK
         int vc, ic; void *v, *i;
-        struct MappedMemory character_mm = load_mesh(p, "data/models/bin/character-male-a.bin", &v, &vc, &i, &ic);
+        void *bf; int bc, fc;
+        // 813 vertices, 2127 indices
+        // 2127 vertices, 2127 indices
+        struct MappedMemory character_mm = load_gltf_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
+        printf("frame count: %d, bone count: %d\n", fc, bc);
         character_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &character, 1);
-        p->unmap_file(&character_mm);
+        addGPUMaterialUniform(context, character_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        setGPUMeshBoneData(context, character_mesh_id, bf, bc, fc);
+        // todo: we cannot unmap the bones data, let's memcpy it here to make it persist
+        // todo: fix script for correct UVs etc.
+        // p->unmap_file(&character_mm);
+        
+        void *bf1; int bc1, fc1;
+        struct MappedMemory char2_mm = load_gltf_mesh(p, "data/models/blender/bin/charA2.bin", &v, &vc, &i, &ic, &bf1, &bc1, &fc1);
+        printf("frame count: %d, bone count: %d\n", fc1, bc1);
+        char2_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &character2, 1);
+        addGPUMaterialUniform(context, char2_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        setGPUMeshBoneData(context, char2_mesh_id, bf1, bc1, fc1);
+        // todo: we cannot unmap the bones data, let's memcpy it here to make it persist
+        // todo: fix script for correct UVs etc.
+        // p->unmap_file(&char2_mm);
+        
 
         struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
         cube_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &cube, 1);
+        addGPUMaterialUniform(context, cube_mesh_id, &base_shader_id, sizeof(base_shader_id));
         p->unmap_file(&cube_mm);
 
         // PREDEFINED MESHES
         ground_mesh_id = createGPUMesh(context, main_pipeline, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
+        addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
         quad_mesh_id = createGPUMesh(context, main_pipeline, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
         addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
         // todo: one shared material
         // todo: why are functions directly available here (should use struct?) ~Instance struct should be known, functions not somehow
-        addGPUMaterialUniform(context, character_mesh_id, &base_shader_id, sizeof(base_shader_id));
-        addGPUMaterialUniform(context, cube_mesh_id, &base_shader_id, sizeof(base_shader_id));
-        addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
 
         // TEXTURE
         int w, h = 0;
@@ -166,29 +235,30 @@ int tick(struct Platform *p, void *context) {
 
         struct MappedMemory colormap_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
         colormap_texture_id = createGPUTexture(context, character_mesh_id, colormap_mm.data, w, h);
+        colormap_texture_id = createGPUTexture(context, char2_mesh_id, colormap_mm.data, w, h);
         p->unmap_file(&colormap_mm);
 
         // UNIFORMS
         brightnessOffset = addGPUGlobalUniform(context, main_pipeline, &brightness, sizeof(float));
         timeOffset = addGPUGlobalUniform(context, main_pipeline, &timeVal, sizeof(float));
-        cameraOffset = addGPUGlobalUniform(context, main_pipeline, camera, sizeof(camera));
         viewOffset = addGPUGlobalUniform(context, main_pipeline, view, sizeof(view));
+        projectionOffset = addGPUGlobalUniform(context, main_pipeline, projection, sizeof(projection));
     }
 
     // Update uniforms
     timeVal += 0.016f; // pretend 16ms per frame
-    //yaw(0.001f * ms_last_frame, camera);
-    cameraMovement(camera, movementSpeed, ms_last_frame);
-    float cameraLocation[3] = {camera[3], camera[7], camera[11]};
+    //yaw(0.001f * ms_last_frame, view);
+    cameraMovement(view, movementSpeed, ms_last_frame);
+    float cameraLocation[3] = {view[12], view[13], view[14]};
     applyGravity(&cameraSpeed, cameraLocation, ms_last_frame);
     //collisionDetectionCamera(cubeCollisionBox);
     // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
     //printf("Collision detected: %4.2f\n", separation.x);
-    //camera[7] = cameraLocation[1];
+    //view[13] = cameraLocation[1];
     float inv[16];
-    inverseViewMatrix(camera, inv);
+    inverseViewMatrix(view, inv); // todo: why do we need the inverse here?
     setGPUGlobalUniformValue(context, main_pipeline, timeOffset, &timeVal, sizeof(float));
-    setGPUGlobalUniformValue(context, main_pipeline, cameraOffset, &inv, sizeof(camera));
+    setGPUGlobalUniformValue(context, main_pipeline, viewOffset, &inv, sizeof(view));
 
     // update the instances of the text
     setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);

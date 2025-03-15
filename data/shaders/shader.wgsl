@@ -1,14 +1,14 @@
 struct GlobalUniforms {
     brightness: f32,
     time: f32,
-    camera: mat4x4<f32>,  // Projection matrix (IS matrix for projection)
-    view: mat4x4<f32>,    // View matrix
+    view: mat4x4<f32>,  // View matrix
+    projection: mat4x4<f32>,    // Projection matrix
 };
 struct MaterialUniforms {
     shader: u32,
 };
 struct BoneUniforms {
-    bones: array<mat4x4<f32>, 256>, // 256 bones
+    bones: array<mat4x4<f32>, 255>, // 255 bones
 };
 
 @group(0) @binding(0)
@@ -50,15 +50,13 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     if (m_uniforms.shader == 1u) {
         // BASE SHADER
         // Skin the vertex by blending bone transforms
-        var skinned_pos: vec4<f32> = vec4<f32>(0.0);
-        for (var i: u32 = 0u; i < 4u; i = i + 1u) {
-            let bone_idx = input.bone_indices[i];
-            let weight = input.bone_weights[i];
-            skinned_pos += weight * (b_uniforms.bones[bone_idx] * vertex_position);
-        }
-        let i = vertex_index % 3u;
-        output.color = vec3<f32>(select(0.0, 1.0, i == 0u), select(0.0, 1.0, i == 1u), select(0.0, 1.0, i == 2u)); // barycentric coords
-        output.pos = i_transform * skinned_pos * g_uniforms.camera * g_uniforms.view; // *important* order of multiplication matters here (!)
+        let skin_matrix = 
+            b_uniforms.bones[input.bone_indices[0]] * input.bone_weights[0] +
+            b_uniforms.bones[input.bone_indices[1]] * input.bone_weights[1] +
+            b_uniforms.bones[input.bone_indices[2]] * input.bone_weights[2] +
+            b_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
+
+        output.pos = g_uniforms.projection * g_uniforms.view * i_transform * skin_matrix * vertex_position;
         output.uv = input.i_atlas_uv + input.uv;
     } else if (m_uniforms.shader == 0u) {
         // HUD SHADER

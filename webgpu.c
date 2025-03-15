@@ -94,6 +94,7 @@ typedef struct {
 
 typedef struct {
     bool       used;
+    bool       animated;
     int        material_id;
     // buffers
     WGPUBuffer vertexBuffer;
@@ -106,7 +107,10 @@ typedef struct {
     // animation
     WGPUBindGroup bones_bindgroup;
     WGPUBuffer bone_buffer;
-    void      *bones;
+    float      *bones;
+    int frame_count;
+    float current_bones[UCHAR_MAX * 16];
+    float current_frame;
 } Mesh;
 
 typedef struct {
@@ -282,17 +286,12 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     // Create animation buffer bindgroup
     {
-        WGPUBufferDescriptor boneBufferDesc = {0};
-        boneBufferDesc.size = sizeof(float) * 16 * UCHAR_MAX; // 16 floats per 4x4 matrix
-        boneBufferDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-        WGPUBuffer boneUniformBuffer = wgpuDeviceCreateBuffer(context.device, &boneBufferDesc);
-
         // Define a bind group layout for bones (similar to your global uniform layout)
         WGPUBindGroupLayoutEntry boneEntry = {0};
         boneEntry.binding = 0;
         boneEntry.visibility = WGPUShaderStage_Vertex;
         boneEntry.buffer.type = WGPUBufferBindingType_Uniform;
-        boneEntry.buffer.minBindingSize = sizeof(float) * 16 * UCHAR_MAX;
+        boneEntry.buffer.minBindingSize = sizeof(context.default_bones);
         WGPUBindGroupLayoutDescriptor boneBGLDesc = {0};
         boneBGLDesc.entryCount = 1;
         boneBGLDesc.entries = &boneEntry;
@@ -747,7 +746,10 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
     {
         mesh->bones_bindgroup = context->defaultBoneBindGroup;
         mesh->bone_buffer = context->defaultBoneBuffer;
-        mesh->bones = context->default_bones;
+        mesh->bones = (float *)context->default_bones;
+        mesh->frame_count = 1;
+        memcpy(mesh->current_bones, context->default_bones, sizeof(mesh->current_bones));
+        mesh->current_frame = 0.;
     }
     
     mesh->material_id = mesh_id;
@@ -755,6 +757,41 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
     printf("[webgpu.c] Created instanced mesh %d with %d vertices, %d indices, and %d instances for pipeline %d\n",
            mesh_id, vc, ic, iic, pipeline_id);
     return mesh_id;
+}
+
+void setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[CHAR_MAX][16], int bc, int fc) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
+    Mesh* mesh = &context->meshes[mesh_id];
+    // Set bone uniform bindgroup & buffer
+    {
+        {
+            WGPUBufferDescriptor bufDesc = {0};
+            bufDesc.size = sizeof(context->default_bones);
+            bufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+            mesh->bone_buffer = wgpuDeviceCreateBuffer(context->device, &bufDesc);
+        }
+
+        // Create the default bind group with our minimal bone buffer.
+        WGPUBindGroupEntry bgEntry = {0};
+        bgEntry.binding = 0;
+        bgEntry.buffer = mesh->bone_buffer;
+        bgEntry.offset = 0;
+        bgEntry.size = sizeof(context->default_bones);
+
+        WGPUBindGroupDescriptor bgDesc = {0};
+        bgDesc.layout = context->bone_uniform_layout;
+        bgDesc.entryCount = 1;
+        bgDesc.entries = &bgEntry;
+        mesh->bones_bindgroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
+    }
+
+    mesh->bones = (float *)bf;
+    mesh->frame_count = fc;
+    memcpy(mesh->current_bones, bf, sizeof(mesh->current_bones));
+    mesh->current_frame = 0.;
+    mesh->animated = 1;
+    // Upload the identity matrix to the buffer.
+    wgpuQueueWriteBuffer(context->queue, mesh->bone_buffer, 0, bf, sizeof(context->default_bones));
 }
 
 int createGPUTexture(void *context_ptr, int mesh_id, void *data, int w, int h) {
@@ -845,7 +882,6 @@ int addGPUGlobalUniform(void *context_ptr, int pipeline_id, const void* data, in
     // todo: print on screen that uniform changed
     return aligned_offset;
 }
-
 void setGPUGlobalUniformValue(void *context_ptr, int pipeline_id, int offset, const void* data, int dataSize) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     Pipeline *pipeline = &context->pipelines[pipeline_id];
@@ -875,7 +911,6 @@ int addGPUMaterialUniform(void *context_ptr, int material_id, const void* data, 
     material->uniform_offset = aligned_offset + data_size;
     return aligned_offset;
 }
-
 void setGPUMaterialUniformValue(void *context_ptr, int material_id, int offset, const void* data, int dataSize) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     Material *material = &context->materials[material_id];
@@ -893,6 +928,37 @@ void setGPUInstanceBuffer(void *context_ptr, int mesh_id, void* ii, int iic) {
     Mesh *mesh = &context->meshes[mesh_id];
     mesh->instances = ii;
     mesh->instance_count = iic;
+}
+
+static void updateMeshAnimationFrame(WebGPUContext *context, int mesh_id) {
+    Mesh *mesh = &context->meshes[mesh_id];
+
+    // Advance the current frame (using your time step, here 0.1f)
+    mesh->current_frame += 0.2f;
+    if (mesh->current_frame >= (float)mesh->frame_count)
+        mesh->current_frame -= (float)mesh->frame_count;
+
+    // Determine the current frame and the next frame indices
+    int frame = (int)floor(mesh->current_frame);
+    float alpha = mesh->current_frame - frame;
+    int nextFrame = frame + 1;
+    if (nextFrame >= mesh->frame_count)
+        nextFrame = 0;
+
+    int numBones = 255;  // Adjust this to your actual number of bones
+
+    // For each bone, interpolate between the current and next frame
+    for (int b = 0; b < numBones; b++)
+    {
+        int baseCurrent = (frame * numBones + b) * 16;
+        int baseNext    = (nextFrame * numBones + b) * 16;
+        for (int i = 0; i < 16; i++)
+        {
+            float currentVal = mesh->bones[baseCurrent + i];
+            float nextVal    = mesh->bones[baseNext + i];
+            mesh->current_bones[b * 16 + i] = currentVal * (1.0f - alpha) + nextVal * alpha;
+        }
+    }
 }
 
 static void fenceCallback(WGPUQueueWorkDoneStatus status, WGPU_NULLABLE void * userdata) {
@@ -966,7 +1032,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     context->default_bones[0][2] = sinA;
     context->default_bones[0][8] = -sinA;
     context->default_bones[0][10] = cosA;
-
+    
     // Loop through all pipelines and draw each one
     for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
         if (context->pipelines[pipeline_id].used) {
@@ -1009,8 +1075,9 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                     Mesh *mesh = &context->meshes[mesh_id];
                     
                     // todo: based on mesh setting UPDATE_MESH_BONES
-                    if (1) {
-                        wgpuQueueWriteBuffer(context->queue,mesh->bone_buffer,0,mesh->bones, sizeof(context->default_bones));
+                    if (mesh->animated) {
+                        updateMeshAnimationFrame(context, mesh_id);
+                        wgpuQueueWriteBuffer(context->queue,mesh->bone_buffer,0,mesh->current_bones, sizeof(context->default_bones));
                     }
                     // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
                     if (1) {

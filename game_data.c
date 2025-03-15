@@ -14,7 +14,7 @@
 static struct Instance ground_instance = {
     .transform = {
          10000, 0, 0, 0,
-         0, 0, -10000, 0,
+         0, 0, 10000, 0,
          0, 10000, 0, 0,
          0, 0, 0, 1
     },

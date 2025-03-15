@@ -24,11 +24,11 @@ struct Rigid_Body {
 /* GAME STRUCTS */
 
 /* GLOBAL STATE OF THE GAME */
-float camera[16] = {
+float view[16] = {
         1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 1500.0f, // todo: ROW vs COLUMN major ordering
+        0.0f, 1.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1
+        0.0f, 15.0f, 0.0f, 1.0f
 };
 float cameraRotation[2] = {0.0f, 0.0f}; // yaw, pitch
 struct ButtonState buttonState = {0, 0, 0, 0};
@@ -36,82 +36,93 @@ struct ButtonState buttonState = {0, 0, 0, 0};
 
 /* CONSTS */
 float fov = 3.14f / 4.0f; // 45 degrees
-float farClip = 20000000.0f;
-float nearClip = 1.0f;
+float farClip = 2000.0f;
+float nearClip = 0.01f;
 static float brightness = 1.0f;
 static float timeVal = 0.0f;
 /* CONSTS */
 
-void multiply(const float *a, int row1, int col1,
-              const float *b, int row2, int col2, float *d) {
-    // Use a variable-length array allocated on the stack
-    float temp[row1 * col2];
+static inline void mat4_multiply(const float *a, int row1, int col1,
+                                 const float *b, int col2, float *d) {
+    // a is m x n, b is n x p, result d is m x p, all in column-major order.
+    float temp[row1 * col2]; // temporary storage for the result
 
-    for (int i = 0; i < row1; i++) {
-        for (int j = 0; j < col2; j++) {
+    // Iterate over each column (j) of the result matrix
+    for (int j = 0; j < col2; j++) {
+        // Iterate over each row (i) of the result matrix
+        for (int i = 0; i < row1; i++) {
             float sum = 0.0f;
+            // Accumulate the dot product for element (i, j)
             for (int k = 0; k < col1; k++) {
-                sum += a[i * col1 + k] * b[k * col2 + j];
+                // a[i + k*m] is element (i,k) of A (column-major)
+                // b[k + j*n] is element (k,j) of B (column-major)
+                sum += a[i + k * row1] * b[k + j * col1];
             }
-            temp[i * col2 + j] = sum;
+            // Store the computed value in the temporary result
+            temp[i + j * row1] = sum;
         }
     }
-
-    // Copy the results from temp to d
-    for (int i = 0; i < row1 * col2; i++) {
-        d[i] = temp[i];
-    }
+    // Copy the temporary result into the output array d
+    memcpy(d, temp, sizeof(float) * row1 * col2);
+}
+static inline void mat4_identity(float m[16]) {
+    for (int i = 0; i < 16; i++) m[i] = 0.0f;
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
 }
 
 void inverseViewMatrix(const float m[16], float inv[16]) {
-    // Extract the 3x3 rotation matrix
+    // Extract the 3x3 rotation matrix (stored in columns 0, 1, and 2)
     float rot[9] = {
         m[0], m[1], m[2],
         m[4], m[5], m[6],
         m[8], m[9], m[10]
     };
 
-    // Transpose the rotation matrix (which is its inverse if it's orthonormal)
+    // Transpose the rotation matrix (its inverse if orthonormal)
     float rotT[9] = {
         rot[0], rot[3], rot[6],
         rot[1], rot[4], rot[7],
         rot[2], rot[5], rot[8]
     };
 
-    // Extract and transform the translation vector
-    float translation[3] = {-m[3], -m[7], -m[11]};
+    // Extract translation (stored in indices 12,13,14)
+    float translation[3] = {-m[12], -m[13], -m[14]};
     float newTranslation[3];
-    multiply(rotT, 3, 3, translation, 3, 1, newTranslation);
+    // Multiply the transposed rotation (3x3) by the translation (3x1)
+    mat4_multiply(rotT, 3, 3, translation, 1, newTranslation);
 
-    // Construct the inverse matrix
-    inv[0] = rotT[0]; inv[1] = rotT[1]; inv[2] = rotT[2]; inv[3] = newTranslation[0];
-    inv[4] = rotT[3]; inv[5] = rotT[4]; inv[6] = rotT[5]; inv[7] = newTranslation[1];
-    inv[8] = rotT[6]; inv[9] = rotT[7]; inv[10] = rotT[8]; inv[11] = newTranslation[2];
-    inv[12] = 0.0f; inv[13] = 0.0f; inv[14] = 0.0f; inv[15] = 1.0f;
+    // Build the inverse view matrix in column-major order:
+    inv[0]  = rotT[0]; inv[1]  = rotT[1]; inv[2]  = rotT[2];  inv[3]  = 0.0f;
+    inv[4]  = rotT[3]; inv[5]  = rotT[4]; inv[6]  = rotT[5];  inv[7]  = 0.0f;
+    inv[8]  = rotT[6]; inv[9]  = rotT[7]; inv[10] = rotT[8];  inv[11] = 0.0f;
+    inv[12] = newTranslation[0];
+    inv[13] = newTranslation[1];
+    inv[14] = newTranslation[2];
+    inv[15] = 1.0f;
 }
 
 void move(struct Vector3 move, float *matrix) {
-    matrix[3] += move.x;
-    matrix[7] += move.y;
-    matrix[11] += move.z;
+    matrix[12] += move.x;
+    matrix[13] += move.y;
+    matrix[14] += move.z;
 }
 
 void yaw(float angle, float *matrix) {
     // Create the yaw rotation matrix.
     float yawRot[16] = {
-         cos(angle), 0.0f, sin(angle), 0.0f,
-         0.0f,       1.0f, 0.0f,       0.0f,
-        -sin(angle), 0.0f, cos(angle), 0.0f,
-         0.0f,       0.0f, 0.0f,       1.0f
+         cos(angle), 0.0f, -sin(angle), 0.0f,
+         0.0f,       1.0f,  0.0f,       0.0f,
+         sin(angle), 0.0f,  cos(angle), 0.0f,
+         0.0f,       0.0f,  0.0f,       1.0f
     };
 
     // Create a temporary matrix to hold the new rotation.
     float newRot[16] = {0};
 
-    // Multiply the yaw rotation by the current rotation part.
-    // Since the rotation is stored in the upper 3x3 block, we multiply the full matrices
+    // mat4_multiply the yaw rotation by the current rotation part.
+    // Since the rotation is stored in the upper 3x3 block, we mat4_multiply the full matrices
     // but only update the corresponding 3x3 part.
-    multiply(yawRot, 4, 4, matrix, 4, 4, newRot);
+    mat4_multiply(yawRot, 4, 4, matrix, 4, newRot);
 
     // Update only the rotation portion (indices 0,1,2; 4,5,6; 8,9,10) of the original matrix.
     matrix[0] = newRot[0];
@@ -130,19 +141,19 @@ void yaw(float angle, float *matrix) {
 }
 void pitch(float angle, float *matrix) { // for rotating around itself
     float rotMatrix[16] = {
-         1.0f, 0.0f, 0.0f, 0.0f,
-         0.0f, cos(angle), -sin(angle), 0.0f,
-         0.0f, sin(angle), cos(angle), 0.0f,
-         0.0f, 0.0f, 0.0f, 1
+         1.0f, 0.0f,       0.0f,      0.0f,
+         0.0f, cos(angle),  sin(angle), 0.0f,
+         0.0f, -sin(angle), cos(angle), 0.0f,
+         0.0f, 0.0f,       0.0f,      1.0f
     };
 
     // Create a temporary matrix to hold the new rotation.
     float newRot[16] = {0};
 
-    // Multiply the yaw rotation by the current rotation part.
-    // Since the rotation is stored in the upper 3x3 block, we multiply the full matrices
+    // mat4_multiply the pitch rotation by the current rotation part.
+    // Since the rotation is stored in the upper 3x3 block, we mat4_multiply the full matrices
     // but only update the corresponding 3x3 part.
-    multiply(rotMatrix, 4, 4, matrix, 4, 4, newRot);
+    mat4_multiply(rotMatrix, 4, 4, matrix, 4, newRot);
 
     // Update only the rotation portion (indices 0,1,2; 4,5,6; 8,9,10) of the original matrix.
     matrix[0] = newRot[0];
@@ -162,19 +173,19 @@ void pitch(float angle, float *matrix) { // for rotating around itself
 
 void absolute_yaw(float angle, float *matrix){
     float yawRot[16] = {
-        cos(angle + cameraRotation[0]), 0.0f, sin(angle + cameraRotation[0]), 0.0f,
-        0.0f,       1.0f, 0.0f,       0.0f,
-       -sin(angle + cameraRotation[0]), 0.0f, cos(angle + cameraRotation[0]), 0.0f,
-        0.0f,       0.0f, 0.0f,       1.0f
+        cos(angle + cameraRotation[0]), 0.0f, -sin(angle + cameraRotation[0]), 0.0f,
+        0.0f,                         1.0f,  0.0f,                         0.0f,
+        sin(angle + cameraRotation[0]), 0.0f,  cos(angle + cameraRotation[0]), 0.0f,
+        0.0f,                         0.0f,  0.0f,                         1.0f
     };
     float pitchRot[16] = {
-         1.0f, 0.0f, 0.0f, 0.0f,
-         0.0f, cos(cameraRotation[1]), -sin(cameraRotation[1]), 0.0f,
-         0.0f, sin(cameraRotation[1]), cos(cameraRotation[1]), 0.0f,
-         0.0f, 0.0f, 0.0f, 1
+         1.0f, 0.0f,                          0.0f, 0.0f,
+         0.0f, cos(cameraRotation[1]),         sin(cameraRotation[1]), 0.0f,
+         0.0f, -sin(cameraRotation[1]),        cos(cameraRotation[1]), 0.0f,
+         0.0f, 0.0f,                          0.0f, 1.0f
     };
     float rotMatrix[16] = {0};
-    multiply(yawRot, 4, 4, pitchRot, 4, 4, rotMatrix);
+    mat4_multiply(yawRot, 4, 4, pitchRot, 4, rotMatrix);
     matrix[0] = rotMatrix[0];
     matrix[1] = rotMatrix[1];
     matrix[2] = rotMatrix[2];
@@ -188,19 +199,19 @@ void absolute_yaw(float angle, float *matrix){
 }
 void absolute_pitch(float angle, float *matrix){
     float pitchRot[16] = {
-         1.0f, 0.0f, 0.0f, 0.0f,
-         0.0f, cos(angle + cameraRotation[1]), -sin(angle + cameraRotation[1]), 0.0f,
-         0.0f, sin(angle + cameraRotation[1]), cos(angle + cameraRotation[1]), 0.0f,
-         0.0f, 0.0f, 0.0f, 1
+         1.0f, 0.0f,                           0.0f, 0.0f,
+         0.0f, cos(angle + cameraRotation[1]),   sin(angle + cameraRotation[1]), 0.0f,
+         0.0f, -sin(angle + cameraRotation[1]),  cos(angle + cameraRotation[1]), 0.0f,
+         0.0f, 0.0f,                           0.0f, 1.0f
     };
     float yawRot[16] = {
-        cos(cameraRotation[0]), 0.0f, sin(cameraRotation[0]), 0.0f,
-        0.0f,       1.0f, 0.0f,       0.0f,
-       -sin(cameraRotation[0]), 0.0f, cos(cameraRotation[0]), 0.0f,
-        0.0f,       0.0f, 0.0f,       1.0f
+        cos(cameraRotation[0]), 0.0f, -sin(cameraRotation[0]), 0.0f,
+        0.0f,                   1.0f,  0.0f,                   0.0f,
+        sin(cameraRotation[0]), 0.0f,  cos(cameraRotation[0]), 0.0f,
+        0.0f,                   0.0f,  0.0f,                   1.0f
     };
     float rotMatrix[16] = {0};
-    multiply(yawRot, 4, 4, pitchRot, 4, 4, rotMatrix);
+    mat4_multiply(yawRot, 4, 4, pitchRot, 4, rotMatrix);
     matrix[0] = rotMatrix[0];
     matrix[1] = rotMatrix[1];
     matrix[2] = rotMatrix[2];
@@ -222,19 +233,19 @@ struct Speed {
     float roll;
 };
 struct Speed cameraSpeed = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // only y-speed used
-float movementSpeed = 0.5f;
+float movementSpeed = 0.005f;
 
 // add cube collision box
 struct Rigid_Body cubeCollisionBox = {
     .vertices = (struct Vector3[]) {
-        {100.0f, 100.0f, 100.0f},
-        {100.0f, 100.0f, -100.0f},
-        {100.0f, -100.0f, 100.0f},
-        {100.0f, -100.0f, -100.0f},
-        {-100.0f, 100.0f, 100.0f},
-        {-100.0f, 100.0f, -100.0f},
-        {-100.0f, -100.0f, 100.0f},
-        {-100.0f, -100.0f, -100.0f}
+        {1.0f, 1.0f, 1.0f},
+        {1.0f, 1.0f, -1.0f},
+        {1.0f, -1.0f, 1.0f},
+        {1.0f, -1.0f, -1.0f},
+        {-1.0f, 1.0f, 1.0f},
+        {-1.0f, 1.0f, -1.0f},
+        {-1.0f, -1.0f, 1.0f},
+        {-1.0f, -1.0f, -1.0f}
     },
     .normals = (struct Vector3[]) {
         {1.0f, 0.0f, 0.0f},
@@ -252,14 +263,14 @@ struct Rigid_Body cubeCollisionBox = {
 
 struct Rigid_Body cameraCollisionBox = {
     .vertices = (struct Vector3[]) {
-        {20.0f, 20.0f, 20.0f},
-        {20.0f, 20.0f, -20.0f},
-        {20.0f, -120.0f, 20.0f},
-        {20.0f, -120.0f, -20.0f},
-        {-20.0f, 20.0f, 20.0f},
-        {-20.0f, 20.0f, -20.0f},
-        {-20.0f, -120.0f, 20.0f},
-        {-20.0f, -120.0f, -20.0f}
+        {1.0f, 1.0f, 1.0f},
+        {1.0f, 1.0f, -1.0f},
+        {1.0f, -2.0f, 1.0f},
+        {1.0f, -2.0f, -1.0f},
+        {-1.0f, 1.0f, 1.0f},
+        {-1.0f, 1.0f, -1.0f},
+        {-1.0f, -2.0f, 1.0f},
+        {-1.0f, -2.0f, -1.0f}
     },
     .normals = (struct Vector3[]) {
         {1.0f, 0.0f, 0.0f},
@@ -271,7 +282,7 @@ struct Rigid_Body cameraCollisionBox = {
     },
     .normal_count = 6,
     .vertex_count = 8,
-    .position = {0.0f, 0.0f, -300.0f},
+    .position = {0.0f, 0.0f, -3.0f},
     .radius = 3.0f
 };
 
@@ -375,12 +386,12 @@ struct Vector3 detectCollision(struct Rigid_Body body1, struct Rigid_Body body2)
 void collisionDetectionCamera(struct Rigid_Body cubeCollisionBox) { // nu enkel met onze collision box
     struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
     if (separation.x != 0.0f || separation.y != 0.0f || separation.z != 0.0f) {
-        camera[3] += separation.x; // undo movement
-        camera[7] += separation.y;
-        camera[11] += separation.z;
-        cameraCollisionBox.position.x = camera[3];
-        cameraCollisionBox.position.y = camera[7];
-        cameraCollisionBox.position.z = camera[11];
+        view[12] += separation.x; // undo x
+        view[13] += separation.y;
+        view[14] += separation.z;        
+        cameraCollisionBox.position.x = view[12];
+        cameraCollisionBox.position.y = view[13];
+        cameraCollisionBox.position.z = view[14];        
         float proj = dot(normalise(separation), (struct Vector3){cameraSpeed.x, cameraSpeed.y, cameraSpeed.z});
         cameraSpeed.x = 0; // proj * normalise(separation).x;
         cameraSpeed.y = 0; // proj * normalise(separation).y;
@@ -391,29 +402,29 @@ void collisionDetectionCamera(struct Rigid_Body cubeCollisionBox) { // nu enkel 
     print_on_screen(output_string);
     
     char output_string2[256];
-    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", camera[3], camera[7], camera[11]);
+    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", view[12], view[13], view[14]);
     print_on_screen(output_string2);
 }
 
-void cameraMovement(float *camera, float speed, float ms) {
+void cameraMovement(float *view, float speed, float ms) {
     cameraSpeed.x = speed * (buttonState.right - buttonState.left);
-    cameraSpeed.z = speed * -(buttonState.forward - buttonState.backward);
+    cameraSpeed.z = speed * (buttonState.forward - buttonState.backward);
     
     float yawRot[16] = {
-        cos(cameraRotation[0]), 0.0f, sin(cameraRotation[0]),
-        0.0f,       1.0f, 0.0f,
-       -sin(cameraRotation[0]), 0.0f, cos(cameraRotation[0])
+        cos(cameraRotation[0]), 0.0f, -sin(cameraRotation[0]),
+        0.0f,                1.0f,  0.0f,
+        sin(cameraRotation[0]), 0.0f, cos(cameraRotation[0])
     };
     float xSpeed = cameraSpeed.x * ms;
     float ySpeed = cameraSpeed.y * ms;
     float zSpeed = cameraSpeed.z * ms;
     float transSpeed[3] = {xSpeed, ySpeed, zSpeed};
-    multiply(yawRot, 3, 3, transSpeed, 3, 1, transSpeed); // in world coords
+    mat4_multiply(yawRot, 3, 3, transSpeed, 1, transSpeed); // in world coords
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
-    move(movit, camera);
-    cameraCollisionBox.position.x = camera[3];
-    cameraCollisionBox.position.y = camera[7];
-    cameraCollisionBox.position.z = camera[11];
+    move(movit, view);
+    cameraCollisionBox.position.x = view[12];
+    cameraCollisionBox.position.y = view[13];
+    cameraCollisionBox.position.z = view[14];
     
     collisionDetectionCamera(cubeCollisionBox);
     char output_string2[256];
@@ -424,22 +435,22 @@ void cameraMovement(float *camera, float speed, float ms) {
     snprintf(output_string, sizeof(output_string), "%4.2f,%4.2f,%4.2f\n", cameraCollisionBox.position.x, cameraCollisionBox.position.y, cameraCollisionBox.position.z);
     print_on_screen(output_string);
     char output_string2[256];
-    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", camera[3], camera[7], camera[11]);
+    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", view[12], view[13], view[14]);
     print_on_screen(output_string2);
     */
 }
 
 void applyGravity(struct Speed *speed, float *pos, float ms) { // gravity as velocity instead of acceleration
-    float gravity = 9.81f * 0.0005f;
+    float gravity = 9.81f * 0.0000025f;
     float gravitySpeed = gravity * ms;
-    #define GROUND_LEVEL 100.0f // todo: this is arbitrary based on 'eye-height' set in camera
+    #define GROUND_LEVEL 1.0f // todo: this is arbitrary based on 'eye-height' set in camera
     if (pos[1] > GROUND_LEVEL){
         speed->y -= gravitySpeed;
         // if (pos[1] < 0.0f) {pos[1] = 0.0f;}; // this doesn't work
     }
     else { // some sort of hit the ground / collision detection
         speed->y = 0.0f;
-        camera[7] = GROUND_LEVEL;
+        view[13] = GROUND_LEVEL;
     }
 }
 

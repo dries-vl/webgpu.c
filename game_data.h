@@ -16,6 +16,7 @@
 extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height);
 extern int   createGPUPipeline(void *context, const char *shader);
 extern int   createGPUMesh(void *context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
+extern void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[255][16], int bc, int fc);
 extern int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
 extern int   addGPUGlobalUniform(void *context, int pipeline_id, const void* data, int data_size);
 extern void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset, const void* data, int dataSize);

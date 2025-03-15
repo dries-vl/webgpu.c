@@ -191,7 +191,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                         buttonState.right = 1;
                     }
                     if (virtualKey == ' ' || virtualKey == VK_SPACE) {
-                        cameraSpeed.y = 2.5f;
+                        cameraSpeed.y = 0.01f;
                     }
                 }
                 else if (!isPressed) {
@@ -216,8 +216,8 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 LONG dy = raw->data.mouse.lLastY;
                 USHORT buttonFlags = raw->data.mouse.usButtonFlags;
                 // Handle mouse movement and button clicks
-                absolute_yaw(-dx * 0.002f, camera);
-                absolute_pitch(-dy * 0.002f, camera);
+                absolute_yaw(dx * 0.002f, view);
+                absolute_pitch(dy * 0.002f, view);
             }
             free(lpb); // Free allocated memory
             break;

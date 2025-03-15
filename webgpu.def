@@ -2,6 +2,7 @@ LIBRARY webgpu.dll
 
 EXPORTS
 DllMain
+__chkstk
 _dllstart
 _edata
 _end
@@ -21,3 +22,5 @@ frmwrk_setup_logging
 setGPUGlobalUniformValue
 setGPUInstanceBuffer
 setGPUMaterialUniformValue
+setGPUMeshBoneData
+tinyc_getbp
