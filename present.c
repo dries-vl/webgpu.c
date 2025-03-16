@@ -154,7 +154,7 @@ int tick(struct Platform *p, void *context) {
             1., 0, 0, 0,
             0, 1., 0, 0,
             0, 0, 1., 0,
-            0, 0, -2, 1
+            0, 0.5, -8, 1
         },
         .atlas_uv = {0, 0}
     };
@@ -208,7 +208,7 @@ int tick(struct Platform *p, void *context) {
         // todo: fix script for correct UVs etc.
         // p->unmap_file(&char2_mm);
         
-        struct MappedMemory cube_mm = load_mesh(p, "data/models/blender/bin/cube.bin", &v, &vc, &i, &ic);
+        struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
         cube_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &cube, 1);
         addGPUMaterialUniform(context, cube_mesh_id, &base_shader_id, sizeof(base_shader_id));
         p->unmap_file(&cube_mm);
@@ -254,6 +254,7 @@ int tick(struct Platform *p, void *context) {
             .velocity = {0}
         };
         addGameObject(&gameState, &cube);
+        gameState.player.instance = &character;
         for (int j = 0; j < 10; j++) {
             // instance data
             memcpy(&pines[j], &pine, sizeof(struct Instance));
@@ -289,8 +290,9 @@ int tick(struct Platform *p, void *context) {
     view[12] = gameState.player.instance->transform[12];
     view[13] = gameState.player.instance->transform[13];
     view[14] = gameState.player.instance->transform[14];
+    mat4_multiply(view, 4, 4, cameraPos, 4, view);
     //collisionDetectionCamera(cubeCollisionBox);
-    // struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
+    // struct Vector3 separation = detectCollision(playerCollisionBox, cubeCollisionBox);
     //printf("Collision detected: %4.2f\n", separation.x);
     //view[13] = cameraLocation[1];
     float inv[16];
