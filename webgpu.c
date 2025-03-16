@@ -5,21 +5,22 @@
 #include <stdbool.h>
 #include <time.h>
 #include <math.h>
-#include <limits.h>
 
 #include "wgpu.h"
 #include "game_data.h"
 
 #pragma region PREDEFINED DATA
 #define MAX_TEXTURES 4
-static const WGPUBindGroupLayoutDescriptor TEXTURE_LAYOUT_DESCRIPTOR = {
-    .entryCount = 1 + MAX_TEXTURES, // one extra for the sampler
+static const WGPUBindGroupLayoutDescriptor PER_MATERIAL_BINDGROUP_LAYOUT_DESC = {
+    .entryCount = 1 + MAX_TEXTURES, // one for the sampler + the textures
     .entries = (WGPUBindGroupLayoutEntry[]){
+        // Sampler
         {
             .binding = 0,
             .visibility = WGPUShaderStage_Fragment,
             .sampler = { .type = WGPUSamplerBindingType_Filtering }
         },
+        // Textures
         #define STANDARD_TEXTURE {.sampleType = WGPUTextureSampleType_Float, .viewDimension = WGPUTextureViewDimension_2D, .multisampled = false}
         {.binding = 1, .visibility = WGPUShaderStage_Fragment, .texture = STANDARD_TEXTURE},
         {.binding = 2, .visibility = WGPUShaderStage_Fragment, .texture = STANDARD_TEXTURE},
@@ -68,21 +69,19 @@ typedef struct {
     // pipeline
     WGPURenderPipeline pipeline;
     // global uniforms
-    WGPUBindGroup      globalUniformBindGroup;
-    WGPUBuffer         globalUniformBuffer;
+    WGPUBindGroup      pipeline_bindgroup;
+    WGPUBuffer         global_uniform_buffer;
     unsigned char      global_uniform_data[GLOBAL_UNIFORM_CAPACITY]; // global uniform data in RAM
     int                global_uniform_offset;
-    // buffer for material uniforms
-    WGPUBindGroup      materialUniformBindGroup;
-    WGPUBuffer         materialUniformBuffer;
+    WGPUBuffer         material_uniform_buffer;
 } Pipeline;
 
 typedef struct {
     bool               used;
     int                pipeline_id;
     int                mesh_ids[MAX_MESHES];
+    WGPUBindGroup      material_bindgroup;
     // textures
-    WGPUBindGroup      texture_bindgroup;
     WGPUTextureView    texture_views[MAX_TEXTURES];
     WGPUSampler        texture_sampler;
     WGPUTexture        textures[MAX_TEXTURES];
@@ -105,11 +104,11 @@ typedef struct {
     void      *instances; // instances in RAM (verts and indices are not kept in RAM) // todo: Instance instead of void
     int        instance_count;
     // animation
-    WGPUBindGroup bones_bindgroup;
+    WGPUBindGroup mesh_bindgroup;
     WGPUBuffer bone_buffer;
     float      *bones;
     int frame_count;
-    float current_bones[UCHAR_MAX * 16];
+    float current_bones[BONE_FRAME_SIZE];
     float current_frame;
 } Mesh;
 
@@ -125,26 +124,32 @@ typedef struct {
     Pipeline              pipelines[MAX_PIPELINES];
     Material              materials[MAX_MATERIALS];
     Mesh                  meshes[MAX_MESHES];
-    // Current frame objects (global for simplicity)
+    // current frame objects (global for simplicity)
     WGPUSurfaceTexture    currentSurfaceTexture;
     WGPUTextureView       currentView;
     WGPUCommandEncoder    currentEncoder;
     WGPURenderPassEncoder currentPass;
-    // Default 1 pixel texture global to assign to every empty texture slot for new meshes
+    // default texture to assign to every empty texture slot for new meshes (1x1 pixel)
     WGPUTexture      defaultTexture;
     WGPUTextureView  defaultTextureView;
-    // Default identity bones for meshes that are not animated
+    // default bones for meshes that are not animated (identity matrix)
     WGPUBuffer defaultBoneBuffer;
     WGPUBindGroup defaultBoneBindGroup;
-    float default_bones[UCHAR_MAX][16];
-    // global depth texture
+    float default_bones[MAX_BONES][16];
+    // depth texture
     WGPUDepthStencilState depthStencilState;
     WGPURenderPassDepthStencilAttachment depthAttachment;
-    // One standard uniform layout for all pipelines
-    WGPUBindGroupLayout global_uniform_layout;
-    WGPUBindGroupLayout mesh_uniforms_layout;
-    WGPUBindGroupLayout texture_layout;
-    WGPUBindGroupLayout bone_uniform_layout;
+    // shadow texture
+    WGPURenderPipeline shadow_pipeline;
+    WGPUBuffer shadow_uniform_buffer;
+    WGPUBindGroup shadow_bindgroup;
+    WGPUTexture shadow_texture;
+    WGPUTextureView shadow_texture_view;
+    WGPUSampler shadow_sampler;
+    // layouts for all the bindgroups
+    WGPUBindGroupLayout per_pipeline_layout; // *should have only one pipeline for all main rendering*
+    WGPUBindGroupLayout per_material_layout;
+    WGPUBindGroupLayout per_mesh_layout;
 } WebGPUContext;
 #pragma endregion
 
@@ -244,6 +249,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     adapter_opts.compatibleSurface = context.surface;
     adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance;
     //wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
+    // todo: this might not be possible in Web, so use another way to get the dedicated gpu there
     context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
     assert(context.adapter);
     wgpuAdapterRequestDevice(context.adapter, NULL, handle_request_device, &context);
@@ -251,40 +257,56 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     context.queue = wgpuDeviceGetQueue(context.device);
     assert(context.queue);
 
-    // Create the global uniform bind group layout
+    // Create the per-pipeline bind group layout (ex. the global uniforms, the dynamic offset buffer for all materials' uniforms, the shadow texture)
     {
-        WGPUBindGroupLayoutEntry entry = {0};
-        entry.binding = 0;
-        entry.visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-        entry.buffer.type = WGPUBufferBindingType_Uniform;
-        entry.buffer.minBindingSize = GLOBAL_UNIFORM_CAPACITY;
-        entry.buffer.hasDynamicOffset = 0;
+        WGPUBindGroupLayoutEntry entries[4] = {
+            // Per-pipeline global uniforms
+            {
+                .binding = 0,
+                .visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment,
+                .buffer.type = WGPUBufferBindingType_Uniform,
+                .buffer.minBindingSize = GLOBAL_UNIFORM_CAPACITY,
+                .buffer.hasDynamicOffset = 0,
+            },
+            // Per-material uniforms (with offset to differentiate materials)
+            {
+                .binding = 1,
+                .visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment,
+                .buffer.type = WGPUBufferBindingType_Uniform,
+                .buffer.minBindingSize = MATERIAL_UNIFORM_CAPACITY,
+                .buffer.hasDynamicOffset = 1,
+            },
+            // Shadow map texture view.
+            {
+                .binding = 2,
+                .visibility = WGPUShaderStage_Fragment,
+                .texture = {
+                    .sampleType = WGPUTextureSampleType_Depth, // Depth texture
+                    .viewDimension = WGPUTextureViewDimension_2D,
+                    .multisampled = false,
+                },
+            },
+            // Comparison sampler for shadow
+            {
+                .binding = 3,
+                .visibility = WGPUShaderStage_Fragment,
+                .sampler = {
+                    .type = WGPUSamplerBindingType_Comparison, // Comparison sampler for shadow mapping
+                },
+            },
+        };
         WGPUBindGroupLayoutDescriptor bglDesc = {0};
-        bglDesc.entryCount = 1;
-        bglDesc.entries = &entry;
-        context.global_uniform_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
+        bglDesc.entryCount = 4;
+        bglDesc.entries = entries;
+        context.per_pipeline_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
     }
 
-    // Create the mesh uniforms bind group layout
+    // Create the per-material bind group layout (ex. the textures)
     {
-        WGPUBindGroupLayoutEntry entry = {0};
-        entry.binding = 0;
-        entry.visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-        entry.buffer.type = WGPUBufferBindingType_Uniform;
-        entry.buffer.minBindingSize = MATERIAL_UNIFORM_CAPACITY;
-        entry.buffer.hasDynamicOffset = 1; // don't forget this (!)
-        WGPUBindGroupLayoutDescriptor bglDesc = {0};
-        bglDesc.entryCount = 1;
-        bglDesc.entries = &entry;
-        context.mesh_uniforms_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
-    }
-    
-    // Create the texture bind group layout
-    {
-        context.texture_layout = wgpuDeviceCreateBindGroupLayout(context.device, &TEXTURE_LAYOUT_DESCRIPTOR);
+        context.per_material_layout = wgpuDeviceCreateBindGroupLayout(context.device, &PER_MATERIAL_BINDGROUP_LAYOUT_DESC);
     }
 
-    // Create animation buffer bindgroup
+    // Create per-mesh bindgroup layout (ex. the bones)
     {
         // Define a bind group layout for bones (similar to your global uniform layout)
         WGPUBindGroupLayoutEntry boneEntry = {0};
@@ -295,13 +317,13 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         WGPUBindGroupLayoutDescriptor boneBGLDesc = {0};
         boneBGLDesc.entryCount = 1;
         boneBGLDesc.entries = &boneEntry;
-        context.bone_uniform_layout = wgpuDeviceCreateBindGroupLayout(context.device, &boneBGLDesc);
+        context.per_mesh_layout = wgpuDeviceCreateBindGroupLayout(context.device, &boneBGLDesc);
     }
 
     // Create default dummy bone data
     {
         // identity matrices
-        for (int i = 0; i < UCHAR_MAX; i++) {
+        for (int i = 0; i < MAX_BONES; i++) {
             for (int j = 0; j < 16; j++) {
                 context.default_bones[i][j] = (j % 5 == 0) ? 1.0f : 0.0f;
             }
@@ -325,13 +347,13 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         bgEntry.size = sizeof(context.default_bones);
 
         WGPUBindGroupDescriptor bgDesc = {0};
-        bgDesc.layout = context.bone_uniform_layout;
+        bgDesc.layout = context.per_mesh_layout;
         bgDesc.entryCount = 1;
         bgDesc.entries = &bgEntry;
         context.defaultBoneBindGroup = wgpuDeviceCreateBindGroup(context.device, &bgDesc);
     }
 
-    // Create a 1×1 texture to use as default value for empty texture slots
+    // Create default value for empty texture slots (1x1 texture)
     {
         unsigned char whitePixel[4] = {127,127,127,127};
         WGPUTextureDescriptor td = {0};
@@ -358,7 +380,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         context.defaultTextureView = wgpuTextureCreateView(context.defaultTexture, NULL);
     }
 
-    // Create a depth texture
+    // Create the depth texture attachment
     {
         WGPUTextureDescriptor depthTextureDesc = {
             .usage = WGPUTextureUsage_RenderAttachment,
@@ -381,6 +403,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .nextInChain = NULL,
         };
         WGPUTextureView depthTextureView = wgpuTextureCreateView(depthTexture, &depthViewDesc);
+
         // 3. Define the depth-stencil state for the pipeline
         WGPUStencilFaceState defaultStencilState = {
             .compare = WGPUCompareFunction_Always,  // Use a valid compare function
@@ -410,6 +433,35 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             // Set stencil values if using stencil; otherwise, leave them out.
         };
     }
+
+    // Create global shadow texture + sampler
+    {
+        WGPUTextureDescriptor shadowTextureDesc = {
+            .usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding,
+            .dimension = WGPUTextureDimension_2D,
+            .format = WGPUTextureFormat_Depth32Float,
+            .size = (WGPUExtent3D){ .width = 1024, .height = 1024, .depthOrArrayLayers = 1 },
+            .mipLevelCount = 1,
+            .sampleCount = 1,
+        };
+        context.shadow_texture = wgpuDeviceCreateTexture(context.device, &shadowTextureDesc);
+        context.shadow_texture_view = wgpuTextureCreateView(context.shadow_texture, NULL);
+        
+        // Create a comparison sampler for shadow sampling.
+        WGPUSamplerDescriptor shadowSamplerDesc = {
+            .addressModeU = WGPUAddressMode_ClampToEdge,
+            .addressModeV = WGPUAddressMode_ClampToEdge,
+            .addressModeW = WGPUAddressMode_ClampToEdge,
+            .maxAnisotropy = 1,
+            .magFilter = WGPUFilterMode_Nearest,
+            .minFilter = WGPUFilterMode_Nearest,
+            .mipmapFilter = WGPUMipmapFilterMode_Nearest,
+            .compare = WGPUCompareFunction_LessEqual,
+        };
+        context.shadow_sampler = wgpuDeviceCreateSampler(context.device, &shadowSamplerDesc);
+    }
+
+    create_shadow_pipeline(&context);
 
     WGPUSurfaceCapabilities caps = {0};
     wgpuSurfaceGetCapabilities(context.surface, context.adapter, &caps);
@@ -499,11 +551,15 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
 
     Pipeline *pipeline = &context->pipelines[pipeline_id];
 
-    // Create a pipeline layout with 4 bind groups:
-    // group 0 and 1: uniform buffers, group 2: textures, group 3: bones
-    WGPUBindGroupLayout bgls[4] = { context->global_uniform_layout, context->mesh_uniforms_layout, context->texture_layout, context->bone_uniform_layout };
+    // Create a pipeline layout with 3 bind groups:
+    #define LAYOUT_COUNT 3
+    WGPUBindGroupLayout bgls[LAYOUT_COUNT] = { 
+        context->per_pipeline_layout, 
+        context->per_material_layout, 
+        context->per_mesh_layout
+    };
     WGPUPipelineLayoutDescriptor layoutDesc = {0};
-    layoutDesc.bindGroupLayoutCount = 4;
+    layoutDesc.bindGroupLayoutCount = LAYOUT_COUNT;
     layoutDesc.bindGroupLayouts = bgls;
     WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(context->device, &layoutDesc);
     assert(pipelineLayout);
@@ -565,37 +621,42 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
         WGPUBufferDescriptor ubDesc = {0};
         ubDesc.size = GLOBAL_UNIFORM_CAPACITY;
         ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-        pipeline->globalUniformBuffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
+        pipeline->global_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
 
-        WGPUBindGroupEntry uEntry = {0};
-        uEntry.binding = 0;
-        uEntry.buffer = pipeline->globalUniformBuffer;
-        uEntry.offset = 0;
-        uEntry.size = GLOBAL_UNIFORM_CAPACITY;
+        WGPUBufferDescriptor ubDesc2 = {0};
+        ubDesc2.size = MATERIALS_UNIFORM_BUFFER_TOTAL_SIZE;
+        ubDesc2.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+        pipeline->material_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &ubDesc2);
+
+        #define ENTRY_COUNT 4
+        WGPUBindGroupEntry entries[ENTRY_COUNT] = {
+            {
+                .binding = 0,
+                .buffer = pipeline->global_uniform_buffer,
+                .offset = 0,
+                .size = GLOBAL_UNIFORM_CAPACITY,
+            },
+            {
+                .binding = 1,
+                .buffer = pipeline->material_uniform_buffer,
+                .offset = 0,
+                .size = MATERIAL_UNIFORM_CAPACITY,
+            },
+            {
+                .binding = 2,
+                .textureView = context->shadow_texture_view,
+            },
+            {
+                .binding = 3,
+                .sampler = context->shadow_sampler,
+            }
+        };
+
         WGPUBindGroupDescriptor uBgDesc = {0};
-        uBgDesc.layout = context->global_uniform_layout;
-        uBgDesc.entryCount = 1;
-        uBgDesc.entries = &uEntry;
-        pipeline->globalUniformBindGroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
-    }
-
-    // Create mesh uniforms bind group
-    {
-        WGPUBufferDescriptor ubDesc = {0};
-        ubDesc.size = MATERIALS_UNIFORM_BUFFER_TOTAL_SIZE;
-        ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-        pipeline->materialUniformBuffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
-
-        WGPUBindGroupEntry uEntry = {0};
-        uEntry.binding = 0;
-        uEntry.buffer = pipeline->materialUniformBuffer;
-        uEntry.offset = 0;
-        uEntry.size = MATERIAL_UNIFORM_CAPACITY;
-        WGPUBindGroupDescriptor uBgDesc = {0};
-        uBgDesc.layout = context->mesh_uniforms_layout;
-        uBgDesc.entryCount = 1;
-        uBgDesc.entries = &uEntry;
-        pipeline->materialUniformBindGroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
+        uBgDesc.layout = context->per_pipeline_layout;
+        uBgDesc.entryCount = ENTRY_COUNT;
+        uBgDesc.entries = entries;
+        pipeline->pipeline_bindgroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
     }
     
     wgpuShaderModuleRelease(shaderModule);
@@ -603,6 +664,220 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     
     printf("[webgpu.c] Created pipeline %d from shader: %s\n", pipeline_id, shader);
     return pipeline_id;
+}
+
+// Computes a light view–projection matrix for a 100x100 scene.
+// The scene is assumed to span from -50 to 50 in X and Z (centered at the origin).
+// We use an orthographic projection with left=-50, right=50, bottom=-50, top=50,
+// and set near and far to tightly cover the scene (e.g. near=50, far=150).
+// The light is assumed to come from the direction (0.5, -1, 0.5) (normalized)
+// and is placed at distance 100 along the opposite direction.
+// The resulting matrix is output in column‑major order in the array out[16].
+void computeLightViewProj(float out[16]) {
+    // --- Orthographic projection parameters ---
+    float left = -50.0f, right = 50.0f;
+    float bottom = -50.0f, top = 50.0f;
+    // Choose near and far so that the scene depth is tightly covered in light-space.
+    float nearVal = 1.0f, farVal = 150.0f;
+    // Standard orthographic projection matrix (row-major, OpenGL style):
+    // [ 2/(r-l)      0            0          -(r+l)/(r-l) ]
+    // [    0      2/(t-b)         0          -(t+b)/(t-b) ]
+    // [    0         0       -2/(f-n)       -(f+n)/(f-n) ]
+    // [    0         0            0               1       ]
+    float P[16] = {
+         2.0f/(right-left), 0, 0, 0,
+         0, 2.0f/(top-bottom), 0, 0,
+         0, 0, -2.0f/(farVal-nearVal), 0,
+         -(right+left)/(right-left), -(top+bottom)/(top-bottom), -(farVal+nearVal)/(farVal-nearVal), 1
+    };
+
+    // --- Light (view) parameters ---
+    // Choose a light direction (e.g., (0.5, -1, 0.5)) and normalize it.
+    float lx = 0.5f, ly = -1.0f, lz = 0.5f;
+    float len = sqrt(lx*lx + ly*ly + lz*lz);
+    lx /= len; ly /= len; lz /= len;
+    // Position the light far away along the opposite direction:
+    float distance = 100.0f;
+    // eye = sceneCenter - (lightDirection * distance)
+    float eye[3] = { -lx * distance, -ly * distance, -lz * distance };
+    float center[3] = { 0.0f, 0.0f, 0.0f };
+    float up[3] = { 0.0f, 1.0f, 0.0f };
+
+    // --- Compute the view matrix using a look-at function (row-major) ---
+    // f = normalize(center - eye)
+    float fwd[3] = { center[0]-eye[0], center[1]-eye[1], center[2]-eye[2] };
+    float fwdLen = sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]);
+    fwd[0] /= fwdLen; fwd[1] /= fwdLen; fwd[2] /= fwdLen;
+
+    // s = normalize(cross(fwd, up))
+    float s[3] = {
+        fwd[1]*up[2] - fwd[2]*up[1],
+        fwd[2]*up[0] - fwd[0]*up[2],
+        fwd[0]*up[1] - fwd[1]*up[0]
+    };
+    float sLen = sqrt(s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
+    s[0] /= sLen; s[1] /= sLen; s[2] /= sLen;
+
+    // u = cross(s, fwd)
+    float u[3] = {
+        s[1]*fwd[2] - s[2]*fwd[1],
+        s[2]*fwd[0] - s[0]*fwd[2],
+        s[0]*fwd[1] - s[1]*fwd[0]
+    };
+
+    // Build the view matrix V (row-major):
+    // [ s.x   s.y   s.z    -dot(s,eye) ]
+    // [ u.x   u.y   u.z    -dot(u,eye) ]
+    // [ -f.x -f.y  -f.z    dot(f,eye)  ]
+    // [  0     0     0         1       ]
+    float V[16] = {
+        s[0], s[1], s[2], 0,
+        u[0], u[1], u[2], 0,
+       -fwd[0], -fwd[1], -fwd[2], 0,
+        0, 0, 0, 1
+    };
+    // Compute translation components.
+    V[12] = - (s[0]*eye[0] + s[1]*eye[1] + s[2]*eye[2]);
+    V[13] = - (u[0]*eye[0] + u[1]*eye[1] + u[2]*eye[2]);
+    V[14] =   ( fwd[0]*eye[0] + fwd[1]*eye[1] + fwd[2]*eye[2]);
+
+    // --- Multiply projection and view matrices: M = P * V ---
+    float M[16] = {0};
+    for (int i = 0; i < 4; i++) {
+       for (int j = 0; j < 4; j++) {
+           for (int k = 0; k < 4; k++) {
+               M[i*4+j] += P[i*4+k] * V[k*4+j];
+           }
+       }
+    }
+
+    // --- Convert from row-major (M) to column-major order for WGSL ---
+    for (int i = 0; i < 4; i++) {
+       for (int j = 0; j < 4; j++) {
+          out[i*4+j] = M[j*4+i];
+       }
+    }
+}
+void create_shadow_pipeline(void *context_ptr) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
+    // 1. Create a bind group layout for the shadow uniform.
+    //    This layout has a single entry at binding 0 for the lightViewProj matrix.
+    WGPUBindGroupLayoutEntry shadowBGL_Entry = {0};
+    shadowBGL_Entry.binding = 0;
+    shadowBGL_Entry.visibility = WGPUShaderStage_Vertex;
+    shadowBGL_Entry.buffer.type = WGPUBufferBindingType_Uniform;
+    shadowBGL_Entry.buffer.minBindingSize = 64; // 4x4 f32 (16 * 4 bytes)
+    shadowBGL_Entry.buffer.hasDynamicOffset = false;
+
+    WGPUBindGroupLayoutDescriptor shadowBGLDesc = {0};
+    shadowBGLDesc.entryCount = 1;
+    shadowBGLDesc.entries = &shadowBGL_Entry;
+    WGPUBindGroupLayout shadowBindGroupLayout = wgpuDeviceCreateBindGroupLayout(context->device, &shadowBGLDesc);
+
+    // 2. Create a pipeline layout for the shadow pipeline
+    WGPUPipelineLayoutDescriptor shadowPLDesc = {0};
+    shadowPLDesc.bindGroupLayoutCount = 1;
+    shadowPLDesc.bindGroupLayouts = &shadowBindGroupLayout;
+    WGPUPipelineLayout shadowPipelineLayout = wgpuDeviceCreatePipelineLayout(context->device, &shadowPLDesc);
+
+    // 3. Load the shadow shader module.
+    WGPUShaderModule shadowShaderModule = loadWGSL(context->device, "data/shaders/shadow.wgsl");
+    assert(shadowShaderModule);
+
+    // 5. Set up a depth stencil state that matches your shadow texture format.
+    //    Here we assume your shadow texture was created with WGPUTextureFormat_Depth32Float.
+    // Define a default stencil face state with valid settings.
+    WGPUStencilFaceState defaultStencilState = {0};
+    defaultStencilState.compare = WGPUCompareFunction_Always;
+    defaultStencilState.failOp = WGPUStencilOperation_Keep;
+    defaultStencilState.depthFailOp = WGPUStencilOperation_Keep;
+    defaultStencilState.passOp = WGPUStencilOperation_Keep;
+    WGPUDepthStencilState shadowDepthStencil = {0};
+    shadowDepthStencil.format = WGPUTextureFormat_Depth32Float;
+    shadowDepthStencil.depthWriteEnabled = true;
+    shadowDepthStencil.depthCompare = WGPUCompareFunction_LessEqual;
+    shadowDepthStencil.stencilFront = defaultStencilState;
+    shadowDepthStencil.stencilBack = defaultStencilState;
+
+    // 6. Create the render pipeline descriptor for the shadow pipeline.
+    WGPURenderPipelineDescriptor shadowRPDesc = {0};
+    shadowRPDesc.layout = shadowPipelineLayout;
+
+    // Vertex stage.
+    shadowRPDesc.vertex.module = shadowShaderModule;
+    shadowRPDesc.vertex.entryPoint = "vs_main";
+    shadowRPDesc.vertex.bufferCount = 2;
+    shadowRPDesc.vertex.buffers = VERTEX_LAYOUT;
+
+    // For a depth-only pass, the fragment stage can be omitted.
+    // (If required by your implementation, you could supply a minimal fragment stage that writes nothing.)
+    shadowRPDesc.fragment = NULL;
+
+    // Set primitive state (you can adjust as needed).
+    WGPUPrimitiveState primState = {0};
+    primState.topology = WGPUPrimitiveTopology_TriangleList;
+    primState.cullMode = WGPUCullMode_Back;
+    primState.frontFace = WGPUFrontFace_CCW;
+    shadowRPDesc.primitive = primState;
+
+    // Multisample state.
+    WGPUMultisampleState msState = {0};
+    msState.count = 1;
+    msState.mask = 0xFFFFFFFF;
+    shadowRPDesc.multisample = msState;
+
+    // Attach the depth stencil state.
+    shadowRPDesc.depthStencil = &shadowDepthStencil;
+
+    // 7. Create the shadow render pipeline.
+    WGPURenderPipeline shadowPipeline = wgpuDeviceCreateRenderPipeline(context->device, &shadowRPDesc);
+    assert(shadowPipeline);
+
+    // Store the shadowPipeline in your context for later use in the shadow pass.
+    context->shadow_pipeline = shadowPipeline;
+
+    WGPUBufferDescriptor shadowUniformBufferDesc = {0};
+    shadowUniformBufferDesc.size = 64; // size of a 4x4 f32 matrix in bytes
+    shadowUniformBufferDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    context->shadow_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &shadowUniformBufferDesc);
+
+    // --- Create the shadow bind group ---
+    WGPUBindGroupEntry shadowBindGroupEntry = {0};
+    shadowBindGroupEntry.binding = 0;
+    shadowBindGroupEntry.buffer = context->shadow_uniform_buffer;
+    shadowBindGroupEntry.offset = 0;
+    shadowBindGroupEntry.size = 64;
+
+    WGPUBindGroupDescriptor shadowBindGroupDesc = {0};
+    shadowBindGroupDesc.layout = shadowBindGroupLayout; // created earlier
+    shadowBindGroupDesc.entryCount = 1;
+    shadowBindGroupDesc.entries = &shadowBindGroupEntry;
+    context->shadow_bindgroup = wgpuDeviceCreateBindGroup(context->device, &shadowBindGroupDesc);
+
+    // Assume lightViewProjData is a 64-byte array (or pointer) holding your light view-projection matrix.
+    // todo: we could modify the lighting each frame if we wanted to
+    float lightViewProjData[16] = {
+        -0.01414,  0.01154,  0.00408,  0.0,
+        0.0,      0.01152, -0.00816,  0.0,
+        0.01414,  0.01152,  0.00408,  0.0,
+        0.0,      0.006,   -0.001,   1.0 
+    };
+    // computeLightViewProj(lightViewProjData);
+    printf("Light View-Projection Matrix (column-major):\n");
+    for (int i = 0; i < 4; i++) {
+        printf("[ ");
+        for (int j = 0; j < 4; j++) {
+            printf("%f ", lightViewProjData[i*4+j]);
+        }
+        printf("]\n");
+    }
+    // Upload the lightViewProj matrix to the shadow uniform buffer.
+    wgpuQueueWriteBuffer(context->queue, context->shadow_uniform_buffer, 0, lightViewProjData, 64);
+
+    // Optionally, release the shader module and pipeline layout if no longer needed.
+    wgpuShaderModuleRelease(shadowShaderModule);
+    wgpuPipelineLayoutRelease(shadowPipelineLayout);
+    wgpuBindGroupLayoutRelease(shadowBindGroupLayout);
 }
 
 int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, int ic, void *ii, int iic) {
@@ -640,22 +915,22 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
         fprintf(stderr, "[webgpu.c] No more material slots!\n");
         return -1;
     }
-    Material *material = &context->materials[material_id]; // todo: separate
+    Material *material = &context->materials[material_id]; // todo: separate and don't create a new one every time
     int mesh_id = -1;
     for (int i = 0; i < MAX_MESHES; i++) {
         if (!context->meshes[i].used) {
             mesh_id = i;
-            context->meshes[i] = (Mesh) {0};
+            context->meshes[mesh_id] = (Mesh) {0};
             // set the first available mesh index in the list
             // todo: on deleting a mesh, loop over the list and fill up the gap with the furthest remaining mesh
             // todo: so that there is no gap of -1 that blocks everything behind it from being rendered
-            for (int i = 0; i < MAX_MESHES; i++) {
-                if (material->mesh_ids[i] == -1) {
-                    material->mesh_ids[i] = mesh_id;
+            for (int j = 0; j < MAX_MESHES; j++) {
+                if (material->mesh_ids[j] == -1) {
+                    material->mesh_ids[j] = mesh_id;
                     break;
                 }
             }
-            context->meshes[i].used = true;
+            context->meshes[mesh_id].used = true;
             break;
         }
     }
@@ -700,6 +975,7 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
     mesh->instance_count = iic;
 
     // Create the texture setup
+    // todo: in material instead (but no function for that yet)
     {
         // Create a sampler
         WGPUSamplerDescriptor samplerDesc = {0};
@@ -730,21 +1006,21 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
             entries[i+1].binding = i + 1;
             entries[i+1].textureView = material->texture_views[i];
         }
-        if (material->texture_bindgroup) {
-            wgpuBindGroupRelease(material->texture_bindgroup);
+        if (material->material_bindgroup) {
+            wgpuBindGroupRelease(material->material_bindgroup);
         }
         WGPUBindGroupDescriptor bgDesc = {0};
-        bgDesc.layout     = context->texture_layout;
+        bgDesc.layout     = context->per_material_layout;
         bgDesc.entryCount = totalEntries;
         bgDesc.entries    = entries;
-        material->texture_bindgroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
+        material->material_bindgroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
 
         free(entries);
     }
 
     // Set default bone uniform bindgroup & buffer
     {
-        mesh->bones_bindgroup = context->defaultBoneBindGroup;
+        mesh->mesh_bindgroup = context->defaultBoneBindGroup;
         mesh->bone_buffer = context->defaultBoneBuffer;
         mesh->bones = (float *)context->default_bones;
         mesh->frame_count = 1;
@@ -759,7 +1035,7 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
     return mesh_id;
 }
 
-void setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[CHAR_MAX][16], int bc, int fc) {
+void setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     Mesh* mesh = &context->meshes[mesh_id];
     // Set bone uniform bindgroup & buffer
@@ -779,10 +1055,10 @@ void setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[CHAR_MAX][16],
         bgEntry.size = sizeof(context->default_bones);
 
         WGPUBindGroupDescriptor bgDesc = {0};
-        bgDesc.layout = context->bone_uniform_layout;
+        bgDesc.layout = context->per_mesh_layout;
         bgDesc.entryCount = 1;
         bgDesc.entries = &bgEntry;
-        mesh->bones_bindgroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
+        mesh->mesh_bindgroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
     }
 
     mesh->bones = (float *)bf;
@@ -799,7 +1075,7 @@ int createGPUTexture(void *context_ptr, int mesh_id, void *data, int w, int h) {
     Mesh* mesh = &context->meshes[mesh_id];
     Material* material = &context->materials[mesh->material_id];
     Pipeline* pipeline = &context->pipelines[material->pipeline_id];
-    int max_textures = TEXTURE_LAYOUT_DESCRIPTOR.entryCount-1;
+    int max_textures = PER_MATERIAL_BINDGROUP_LAYOUT_DESC.entryCount-1;
     if (material->texture_count >= max_textures) {
         fprintf(stderr, "No more texture slots in mesh!"); // todo: allow re-assigning a new texture to a slot that was occupied
         return -1;
@@ -845,14 +1121,14 @@ int createGPUTexture(void *context_ptr, int mesh_id, void *data, int w, int h) {
                              ? material->texture_views[i]
                              : context->defaultTextureView;
     }
-    if (material->texture_bindgroup) {
-        wgpuBindGroupRelease(material->texture_bindgroup);
+    if (material->material_bindgroup) {
+        wgpuBindGroupRelease(material->material_bindgroup);
     }
     WGPUBindGroupDescriptor bgDesc = {0};
-    bgDesc.layout     = context->texture_layout;
+    bgDesc.layout     = context->per_material_layout;
     bgDesc.entryCount = totalEntries;
     bgDesc.entries    = e;
-    material->texture_bindgroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
+    material->material_bindgroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
     free(e);
 
     printf("Added texture to material %d at slot %d (binding=%d)\n", mesh->material_id, slot, slot+1);
@@ -945,13 +1221,11 @@ static void updateMeshAnimationFrame(WebGPUContext *context, int mesh_id) {
     if (nextFrame >= mesh->frame_count)
         nextFrame = 0;
 
-    int numBones = 255;  // Adjust this to your actual number of bones
-
     // For each bone, interpolate between the current and next frame
-    for (int b = 0; b < numBones; b++)
+    for (int b = 0; b < MAX_BONES; b++)
     {
-        int baseCurrent = (frame * numBones + b) * 16;
-        int baseNext    = (nextFrame * numBones + b) * 16;
+        int baseCurrent = (frame * MAX_BONES + b) * 16;
+        int baseNext    = (nextFrame * MAX_BONES + b) * 16;
         for (int i = 0; i < 16; i++)
         {
             float currentVal = mesh->bones[baseCurrent + i];
@@ -1032,7 +1306,72 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     context->default_bones[0][2] = sinA;
     context->default_bones[0][8] = -sinA;
     context->default_bones[0][10] = cosA;
-    
+
+    // SHADOWS
+    {
+        // 1. Create a command encoder for the shadow pass.
+        WGPUCommandEncoderDescriptor shadowEncDesc = {0};
+        WGPUCommandEncoder shadowEncoder = wgpuDeviceCreateCommandEncoder(context->device, &shadowEncDesc);
+
+        // 2. Set up a render pass descriptor for the shadow pass.
+        //    This render pass uses no color attachment (depth-only).
+        WGPURenderPassDepthStencilAttachment shadowDepthAttachment = {0};
+        shadowDepthAttachment.view = context->shadow_texture_view;
+        shadowDepthAttachment.depthLoadOp = WGPULoadOp_Clear;
+        shadowDepthAttachment.depthStoreOp = WGPUStoreOp_Store;
+        shadowDepthAttachment.depthClearValue = 1.0f;
+        // (Stencil settings can be added if you use them.)
+        WGPURenderPassDescriptor shadowPassDesc = {0};
+        shadowPassDesc.colorAttachmentCount = 0; // no color attachments
+        shadowPassDesc.depthStencilAttachment = &shadowDepthAttachment;
+
+        // 3. Begin the shadow render pass.
+        WGPURenderPassEncoder shadowPass = wgpuCommandEncoderBeginRenderPass(shadowEncoder, &shadowPassDesc);
+
+        // 4. Bind the shadow pipeline.
+        wgpuRenderPassEncoderSetPipeline(shadowPass, context->shadow_pipeline);
+        wgpuRenderPassEncoderSetBindGroup(shadowPass, 0, context->shadow_bindgroup, 0, NULL);
+
+        // 5. For each mesh that casts shadows, set its vertex/index/instance buffers and draw.
+        //    (This is similar to your main render loop; you may loop through your scene meshes.)
+        for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
+            if (context->pipelines[pipeline_id].used) {
+                Pipeline *pipeline = &context->pipelines[pipeline_id];
+                // You might need to set a shadow-specific bind group (for the lightViewProj matrix)
+                // e.g., wgpuRenderPassEncoderSetBindGroup(shadowPass, 0, shadowGlobalBindGroup, 0, NULL);
+                // Then for each mesh in your pipeline:
+                for (int j = 0; j < MAX_MATERIALS && pipeline->material_ids[j] > -1; j++) {
+                    int material_id = pipeline->material_ids[j];
+                    Material *material = &context->materials[material_id];
+                    for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
+                        int mesh_id = material->mesh_ids[k];
+                        Mesh *mesh = &context->meshes[mesh_id];
+                        // Bind the mesh's vertex and instance buffers.
+                        wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
+                        wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 1, mesh->instanceBuffer, 0, WGPU_WHOLE_SIZE);
+                        // Bind the index buffer.
+                        wgpuRenderPassEncoderSetIndexBuffer(shadowPass, mesh->indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                        // Draw the mesh.
+                        wgpuRenderPassEncoderDrawIndexed(shadowPass, mesh->indexCount, mesh->instance_count, 0, 0, 0);
+                    }
+                }
+            }
+        }
+
+        // 6. End the shadow render pass and finish encoding.
+        wgpuRenderPassEncoderEnd(shadowPass);
+        wgpuRenderPassEncoderRelease(shadowPass);
+        WGPUCommandBufferDescriptor shadowCmdDesc = {0};
+        WGPUCommandBuffer shadowCmdBuf = wgpuCommandEncoderFinish(shadowEncoder, &shadowCmdDesc);
+        wgpuCommandEncoderRelease(shadowEncoder);
+        // Submit the shadow command buffer.
+        wgpuQueueSubmit(context->queue, 1, &shadowCmdBuf);
+        wgpuCommandBufferRelease(shadowCmdBuf);
+
+        // ----- Now proceed with your main render pass -----
+        // (The main pass will sample context->shadow_texture_view using the PCF code in your fragment shader.)
+    }
+
     // Loop through all pipelines and draw each one
     for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
         if (context->pipelines[pipeline_id].used) {
@@ -1040,18 +1379,15 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
             Pipeline *pipeline = &context->pipelines[pipeline_id];
             // Set the render pipeline // todo: does it matter where we call this?
             // todo: is it possible to create the command/renderpass encoders, set the pipeline once at the beginning, and then keep reusing it?
-
             wgpuRenderPassEncoderSetPipeline(context->currentPass, pipeline->pipeline);
             // Write CPU–side uniform data to GPU
             // todo: condition to only do when updated data
-            wgpuQueueWriteBuffer(context->queue, pipeline->globalUniformBuffer, 0, pipeline->global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
-            // Bind uniform bind group (group 0).
-            wgpuRenderPassEncoderSetBindGroup(context->currentPass, 0, pipeline->globalUniformBindGroup, 0, NULL); // group 0 for global uniforms
+            wgpuQueueWriteBuffer(context->queue, pipeline->global_uniform_buffer, 0, pipeline->global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
 
             for (int j = 0; j < MAX_MATERIALS && pipeline->material_ids[j] > -1; j++) {
 
                 int material_id = pipeline->material_ids[j];
-                if (!context->materials[material_id].used) printf("[FATAL WARNING] An unused material was left in the pipeline's list of material ids");
+                if (!context->materials[material_id].used) {printf("[FATAL WARNING] An unused material was left in the pipeline's list of material ids\n"); continue;}
                 Material *material = &context->materials[material_id];
 
                 unsigned int material_uniform_offset = material_id * MATERIAL_UNIFORM_CAPACITY;
@@ -1061,27 +1397,29 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                 // todo: we can also do that for the global uniforms
                 if (1) {
                     // todo: we can batch this write buffer call into one single call for the pipeline instead
-                    wgpuQueueWriteBuffer(context->queue, pipeline->materialUniformBuffer, material_uniform_offset, material->uniform_data, MATERIAL_UNIFORM_CAPACITY);
+                    wgpuQueueWriteBuffer(context->queue, pipeline->material_uniform_buffer, material_uniform_offset, material->uniform_data, MATERIAL_UNIFORM_CAPACITY);
                 }
                 // Set the dynamic offset to point to the uniform values for this material
                 // *info* max size of 64kb -> with 1000 meshes we can have at most 64 bytes of uniform data per mesh (!)
-                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 1, pipeline->materialUniformBindGroup, 1, &material_uniform_offset); // group 1 for per-mesh uniforms
-                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 2, material->texture_bindgroup, 0, NULL); // group 2 for textures
+                // Bind per-pipeline bind group (group 0) (global uniforms, material uniforms, shadows), pass offset for the material uniforms
+                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 0, pipeline->pipeline_bindgroup, 1, &material_uniform_offset);
+                // Bind per-material bind group (group 1) // todo: we could fit all the textures into the pipeline, up to 1000 bindings in one bindgroup -> avoid this call for every material
+                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 1, material->material_bindgroup, 0, NULL);
 
                 for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
                     
                     int mesh_id = material->mesh_ids[k];
-                    if (!context->meshes[mesh_id].used) printf("[FATAL WARNING] An unused mesh was left in the material's list of mesh ids");;
+                    if (!context->meshes[mesh_id].used) {printf("[FATAL WARNING] An unused mesh (%d) was left in the material's (%d) list of mesh ids\n", mesh_id, material_id); continue;}
                     Mesh *mesh = &context->meshes[mesh_id];
                     
-                    // todo: based on mesh setting UPDATE_MESH_BONES
+                    // todo: based on mesh setting PLAYING_ANIMATION or something
                     if (mesh->animated) {
                         updateMeshAnimationFrame(context, mesh_id);
                         wgpuQueueWriteBuffer(context->queue,mesh->bone_buffer,0,mesh->current_bones, sizeof(context->default_bones));
                     }
                     // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
                     if (1) {
-                        wgpuRenderPassEncoderSetBindGroup(context->currentPass, 3, mesh->bones_bindgroup, 0, NULL);
+                        wgpuRenderPassEncoderSetBindGroup(context->currentPass, 2, mesh->mesh_bindgroup, 0, NULL);
                     }
                     // todo: make this based on mesh setting UPDATE_MESH_INSTANCES, then we don't need to do this for static meshes
                     // If the mesh requires instance data updates, update the instance buffer (this is really expensive!)

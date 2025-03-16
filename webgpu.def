@@ -9,10 +9,12 @@ _end
 _etext
 addGPUGlobalUniform
 addGPUMaterialUniform
+computeLightViewProj
 createGPUContext
 createGPUMesh
 createGPUPipeline
 createGPUTexture
+create_shadow_pipeline
 drawGPUFrame
 frmwrk_device_create_buffer_init
 frmwrk_load_shader_module

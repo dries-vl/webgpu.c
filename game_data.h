@@ -8,6 +8,8 @@
 #define MATERIAL_UNIFORM_CAPACITY     256  // bytes per mesh in mesh uniform buffer (dynamic offset blocks in uniform buffer cannot be smaller than 256 bytes)
 #define GLOBAL_UNIFORM_CAPACITY   1024  // bytes per pipeline uniform buffer
 #define MATERIALS_UNIFORM_BUFFER_TOTAL_SIZE (MAX_MATERIALS * MATERIAL_UNIFORM_CAPACITY) // this cannot be bigger than 65536 bytes
+#define MAX_BONES 64
+#define BONE_FRAME_SIZE (MAX_BONES * 16)
 
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
 // todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
@@ -15,6 +17,7 @@
 // todo : platform provides these functions to presentation layer via a struct (then they don't need to be compiled together)
 extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height);
 extern int   createGPUPipeline(void *context, const char *shader);
+extern void  create_shadow_pipeline(void *context);
 extern int   createGPUMesh(void *context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
 extern void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[255][16], int bc, int fc);
 extern int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);

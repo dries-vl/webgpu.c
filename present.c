@@ -181,6 +181,7 @@ int tick(struct Platform *p, void *context) {
         init_done = 1;
         // CREATE MATERIALS
         main_pipeline = createGPUPipeline(context, "data/shaders/shader.wgsl");
+        create_shadow_pipeline(context);
         // hud_material_id = createGPUPipeline(context, "data/shaders/hud.wgsl");
 
         // LOAD MESHES FROM DISK

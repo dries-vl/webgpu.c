@@ -53,7 +53,7 @@ typedef struct {
     unsigned char bone_indices[4]; // 4 bytes (bone indices)
 } Vertex;
 
-#define MAX_BONES UCHAR_MAX
+#define MAX_BONES 64
 
 // Convert a float in [0,1] to an 8-bit unsigned normalized value.
 static unsigned char float_to_unorm8(float v) {
