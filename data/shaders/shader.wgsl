@@ -71,8 +71,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         let transformedNormal = i_transform * skin_matrix * vec4<f32>(input.normal.xyz, 0.0);
         let worldNormal = normalize(transformedNormal.xyz);
         let diff = max(dot(worldNormal, -vec3(0.5, -0.8, 0.5)), 0.0);
-        output.world_normal = worldNormal; // Store for reflection calculations
-        output.l = diff;//pow(diff, 3.0) * 5.;
+        output.l = pow(diff, 3.0) * 5.;
 
         output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
     } else if (m_uniforms.shader == 0u) {
