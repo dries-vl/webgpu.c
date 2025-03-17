@@ -72,7 +72,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         let worldNormal = normalize(transformedNormal.xyz);
         let diff = max(dot(worldNormal, -vec3(0.5, -0.8, 0.5)), 0.0);
         output.world_normal = worldNormal; // Store for reflection calculations
-        output.l = pow(diff, 3.0) * 5.;
+        output.l = diff;//pow(diff, 3.0) * 5.;
 
         output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
     } else if (m_uniforms.shader == 0u) {
@@ -101,10 +101,13 @@ struct VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(tex_0, texture_sampler, input.uv);
-    let depth = 1. / (input.pos.z / input.pos.w);
+    if (tex_color.a < 0.2) {
+        discard;
+    }
+    let depth = (input.pos.z / input.pos.w);
     let ambient_light = 0.75;
     let light_color = vec3(1.,1.,.8);
-    var color = tex_color.rgb * (ambient_light + light_color * input.l) * depth;
+    var color = tex_color.rgb * (ambient_light + light_color * input.l) - tex_color.rgb * (depth/60.0);
     return vec4<f32>(color, tex_color.a);
 
 }

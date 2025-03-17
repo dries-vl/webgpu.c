@@ -78,6 +78,12 @@ float view[16] = {
         0.0f, 0.0f, 1.0f, 0.0f,
         0.0f, 0.0f, 0.0f, 1.0f
 };
+float cameraPos[16] = { // camera pos relative to player
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.8f, -2.5f, 1.0f
+};
 float cameraRotation[2] = {0.0f, 0.0f}; // yaw, pitch
 struct ButtonState buttonState = {0, 0, 0, 0};
 
@@ -322,16 +328,16 @@ struct Rigid_Body pineCollisionBox = {
     .radius = 3.0f // not used
 };
 
-struct Rigid_Body cameraCollisionBox = {
+struct Rigid_Body playerCollisionBox = {
     .vertices = (struct Vector3[]) {
-        {0.5f, 0.5f, 0.5f},
-        {0.5f, 0.5f, -0.5f},
-        {0.5f, -1.0f, 0.5f},
-        {0.5f, -1.0f, -0.5f},
-        {-0.5f, 0.5f, 0.5f},
-        {-0.5f, 0.5f, -0.5f},
-        {-0.5f, -1.0f, 0.5f},
-        {-0.5f, -1.0f, -0.5f}
+        {0.4f, 0.6f, 0.4f},
+        {0.4f, 0.6f, -0.4f},
+        {0.4f, 0.0f, 0.4f},
+        {0.4f, 0.0f, -0.4f},
+        {-0.4f, 0.6f, 0.4f},
+        {-0.4f, 0.6f, -0.4f},
+        {-0.4f, 0.0f, 0.4f},
+        {-0.4f, 0.0f, -0.4f}
     },
     .normals = (struct Vector3[]) {
         {1.0f, 0.0f, 0.0f},
@@ -444,14 +450,14 @@ struct Vector3 detectCollision(struct Rigid_Body body1, struct Rigid_Body body2)
 }; // SAT
 
 void collisionDetectionCamera(struct Rigid_Body cubeCollisionBox) { // nu enkel met onze collision box
-    struct Vector3 separation = detectCollision(cameraCollisionBox, cubeCollisionBox);
+    struct Vector3 separation = detectCollision(playerCollisionBox, cubeCollisionBox);
     if (separation.x != 0.0f || separation.y != 0.0f || separation.z != 0.0f) {
         view[12] += separation.x; // undo x
         view[13] += separation.y;
         view[14] += separation.z;        
-        cameraCollisionBox.position.x = view[12];
-        cameraCollisionBox.position.y = view[13];
-        cameraCollisionBox.position.z = view[14];        
+        playerCollisionBox.position.x = view[12];
+        playerCollisionBox.position.y = view[13];
+        playerCollisionBox.position.z = view[14];        
         //float proj = dot(normalise(separation), (struct Vector3){cameraSpeed.x, cameraSpeed.y, cameraSpeed.z});
         cameraSpeed.x = 0; // proj * normalise(separation).x;
         cameraSpeed.y = 0; // proj * normalise(separation).y;
@@ -482,10 +488,10 @@ void collision(struct GameObject *mover, struct GameObject *stator) {
     }
 }
 
-void cameraMovement(float *view, float speed, float ms) {
+void cameraMovement(float *view, float speed, float ms) { // unused
     cameraSpeed.x = speed * (buttonState.right - buttonState.left);
     cameraSpeed.z = speed * (buttonState.forward - buttonState.backward);
-    
+
     float yawRot[9] = {
         cos(cameraRotation[0]), 0.0f, -sin(cameraRotation[0]),
         0.0f,                   1.0f,  0.0f,
@@ -498,9 +504,9 @@ void cameraMovement(float *view, float speed, float ms) {
     mat4_multiply(yawRot, 3, 3, transSpeed, 1, transSpeed); // in world coords
     struct Vector3 movit = {transSpeed[0], transSpeed[1], transSpeed[2]};
     move(movit, view);
-    cameraCollisionBox.position.x = view[12];
-    cameraCollisionBox.position.y = view[13];
-    cameraCollisionBox.position.z = view[14];
+    playerCollisionBox.position.x = view[12];
+    playerCollisionBox.position.y = view[13];
+    playerCollisionBox.position.z = view[14];
     
     collisionDetectionCamera(cubeCollisionBox);
     char output_string2[256];
@@ -508,7 +514,7 @@ void cameraMovement(float *view, float speed, float ms) {
     print_on_screen(output_string2);
     /*
     char output_string[256];
-    snprintf(output_string, sizeof(output_string), "%4.2f,%4.2f,%4.2f\n", cameraCollisionBox.position.x, cameraCollisionBox.position.y, cameraCollisionBox.position.z);
+    snprintf(output_string, sizeof(output_string), "%4.2f,%4.2f,%4.2f\n", playerCollisionBox.position.x, playerCollisionBox.position.y, playerCollisionBox.position.z);
     print_on_screen(output_string);
     char output_string2[256];
     snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", view[12], view[13], view[14]);
@@ -535,19 +541,34 @@ void playerMovement(float speed, float ms, struct GameObject *player) {
     player->collisionBox.position.x = player->instance->transform[12];
     player->collisionBox.position.y = player->instance->transform[13];
     player->collisionBox.position.z = player->instance->transform[14];
+
+    // set player rotation
+    if (fabs(movit.x) > 0.00001 || fabs(movit.z) > 0.00001) { // if move update rotation
+        // if (movit.z == 0.0f) {movit.z = 0.0001f;} // avoid division by zero JANK not needed for atan2???
+        float charRot = atan2(movit.x, movit.z);
+        player->instance->transform[0] = cos(charRot);
+        player->instance->transform[1] = 0.0f;
+        player->instance->transform[2] = -sin(charRot);
+        player->instance->transform[4] = 0.0f;
+        player->instance->transform[5] = 1.0f;
+        player->instance->transform[6] = 0.0f;
+        player->instance->transform[8] = sin(charRot);
+        player->instance->transform[9] = 0.0f;
+        player->instance->transform[10] = cos(charRot);
+    }
     
     for (int i = 0; i < gameState.object_count; i++) {
         collision(player, &gameState.objects[i]);
     }
     char output_string2[256];
-    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", player->velocity.x, player->velocity.y, player->velocity.z);
+    snprintf(output_string2, sizeof(output_string2), "%4.2f,%4.2f,%4.2f\n", player->instance->transform[12], player->instance->transform[13], player->instance->transform[14]);
     print_on_screen(output_string2);
 }
 
 void applyGravity(struct Speed *speed, float *pos, float ms) { 
     float gravity = 9.81f * 0.0000025f;
     float gravitySpeed = gravity * ms;
-    #define GROUND_LEVEL 1.0f // todo: this is arbitrary based on 'eye-height' set in camera
+    #define GROUND_LEVEL 0.0f // todo: this is arbitrary based on 'eye-height' set in camera
     if (pos[1] > GROUND_LEVEL){
         speed->y -= gravitySpeed;
         // if (pos[1] < 0.0f) {pos[1] = 0.0f;}; // this doesn't work
@@ -589,8 +610,8 @@ unsigned int fnv1a(const char *s) {
 
 void initGamestate(struct GameState *gameState) {
     // player/camera
-    gameState->player.collisionBox = cameraCollisionBox;
-    memcpy(gameState->player.instance->transform, view, sizeof(view));
+    gameState->player.collisionBox = playerCollisionBox;
+    //memcpy(gameState->player.instance->transform, view, sizeof(view));
     gameState->player.velocity = cameraSpeed;
     // objects
     //gameState->objects[0].collisionBox = cubeCollisionBox;
