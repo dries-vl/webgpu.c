@@ -48,20 +48,12 @@ struct VertexInput {
     @location(15) i_atlas_uv: vec2<f32>,
 };
 
-struct VertexOutput {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) color: vec3<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) l: f32,
-    @location(3) world_pos: vec4<f32>,
-};
-
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var output: VertexOutput;
     let i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
     let vertex_position = vec4<f32>(input.position, 1.0);
-    if (m_uniforms.shader == 1u) {
+    if (m_uniforms.shader >= 1u) {
         // BASE SHADER
         // Skin the vertex by blending bone transforms
         let skin_matrix = 
@@ -71,12 +63,15 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
             b_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
 
         let world_space = i_transform * skin_matrix * vertex_position;
-        output.pos = g_uniforms.projection * g_uniforms.view * world_space;
+        let view_space = g_uniforms.view * world_space;
+        output.pos = g_uniforms.projection * view_space;
         output.world_pos = world_space;
+        output.view_pos = view_space.xyz; // Store view-space position
 
         let transformedNormal = i_transform * skin_matrix * vec4<f32>(input.normal.xyz, 0.0);
         let worldNormal = normalize(transformedNormal.xyz);
         let diff = max(dot(worldNormal, -vec3(0.5, -0.8, 0.5)), 0.0);
+        output.world_normal = worldNormal; // Store for reflection calculations
         output.l = pow(diff, 3.0) * 5.;
 
         output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
@@ -92,6 +87,16 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     
     return output;
 }
+
+struct VertexOutput {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) color: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) l: f32,
+    @location(3) world_pos: vec4<f32>, // For shadow map lighting calculations
+    @location(4) world_normal: vec3<f32>, // World-space normal for reflections
+    @location(5) view_pos: vec3<f32>,    // View-space position for reflections
+};
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {

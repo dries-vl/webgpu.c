@@ -122,6 +122,7 @@ int tick(struct Platform *p, void *context) {
     // todo: RGB 3x8bit textures, no alpha
     static int hud_shader_id = 0;
     static int base_shader_id = 1;
+    static int reflect_shader_id = 2;
 
     static int ground_mesh_id;
     static int quad_mesh_id;
@@ -210,7 +211,7 @@ int tick(struct Platform *p, void *context) {
         
         struct MappedMemory cube_mm = load_mesh(p, "data/models/blender/bin/cube.bin", &v, &vc, &i, &ic);
         cube_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &cube, 1);
-        addGPUMaterialUniform(context, cube_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        addGPUMaterialUniform(context, cube_mesh_id, &reflect_shader_id, sizeof(reflect_shader_id));
         p->unmap_file(&cube_mm);
 
         // PREDEFINED MESHES

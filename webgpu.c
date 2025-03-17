@@ -257,9 +257,29 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     context.queue = wgpuDeviceGetQueue(context.device);
     assert(context.queue);
 
+    WGPUSurfaceCapabilities caps = {0};
+    wgpuSurfaceGetCapabilities(context.surface, context.adapter, &caps);
+    WGPUTextureFormat chosenFormat = WGPUTextureFormat_RGBA8UnormSrgb;
+    // *Rgba8UnormSrgb seems slightly slower than Rgba8Unorm for some reason*
+    // if (caps.formatCount > 0) { // selects Rgba8UnormSrgb it seems
+    //     chosenFormat = caps.formats[0];
+    // }
+
+    context.config = (WGPUSurfaceConfiguration){
+        .device = context.device,
+        .format = chosenFormat,
+        .width = width,
+        .height = height,
+        .usage = WGPUTextureUsage_RenderAttachment,
+        .alphaMode = WGPUCompositeAlphaMode_Auto,
+        .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
+    };
+    wgpuSurfaceConfigure(context.surface, &context.config);
+
     // Create the per-pipeline bind group layout (ex. the global uniforms, the dynamic offset buffer for all materials' uniforms, the shadow texture)
     {
-        WGPUBindGroupLayoutEntry entries[4] = {
+        #define PIPELINE_BINDGROUP_ENTRIES 4
+        WGPUBindGroupLayoutEntry entries[PIPELINE_BINDGROUP_ENTRIES] = {
             // Per-pipeline global uniforms
             {
                 .binding = 0,
@@ -296,7 +316,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             },
         };
         WGPUBindGroupLayoutDescriptor bglDesc = {0};
-        bglDesc.entryCount = 4;
+        bglDesc.entryCount = PIPELINE_BINDGROUP_ENTRIES;
         bglDesc.entries = entries;
         context.per_pipeline_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
     }
@@ -384,6 +404,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     {
         WGPUTextureDescriptor depthTextureDesc = {
             .usage = WGPUTextureUsage_RenderAttachment,
+            .label = "DEPTH TEXTURE",
             .dimension = WGPUTextureDimension_2D,
             .size = { .width = width, .height = height, .depthOrArrayLayers = 1 },
             .format = WGPUTextureFormat_Depth24PlusStencil8, // Or Depth32Float if supported
@@ -394,6 +415,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         WGPUTexture depthTexture = wgpuDeviceCreateTexture(context.device, &depthTextureDesc);
         // 2. Create a texture view for the depth texture
         WGPUTextureViewDescriptor depthViewDesc = {
+            .label = "DEPTH TEXTURE VIEW",
             .format = depthTextureDesc.format,
             .dimension = WGPUTextureViewDimension_2D,
             .baseMipLevel = 0,
@@ -460,27 +482,11 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         };
         context.shadow_sampler = wgpuDeviceCreateSampler(context.device, &shadowSamplerDesc);
     }
-
-    create_shadow_pipeline(&context);
-
-    WGPUSurfaceCapabilities caps = {0};
-    wgpuSurfaceGetCapabilities(context.surface, context.adapter, &caps);
-    WGPUTextureFormat chosenFormat = WGPUTextureFormat_RGBA8UnormSrgb;
-    // *Rgba8UnormSrgb seems slightly slower than Rgba8Unorm for some reason*
-    // if (caps.formatCount > 0) { // selects Rgba8UnormSrgb it seems
-    //     chosenFormat = caps.formats[0];
-    // }
-
-    context.config = (WGPUSurfaceConfiguration){
-        .device = context.device,
-        .format = chosenFormat,
-        .width = width,
-        .height = height,
-        .usage = WGPUTextureUsage_RenderAttachment,
-        .alphaMode = WGPUCompositeAlphaMode_Auto,
-        .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
-    };
-    wgpuSurfaceConfigure(context.surface, &context.config);
+    
+    // Create the shadow map pipeline for the shadowmap render pass //todo: can we not reuse the same pipeline (?)
+    {
+        create_shadow_pipeline(&context);
+    }
 
     context.initialized = true;
     printf("[webgpu.c] wgpuInit done.\n");
@@ -1279,7 +1285,8 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     WGPURenderPassDescriptor passDesc = {0};
     passDesc.colorAttachmentCount = 1;
     passDesc.colorAttachments = &colorAtt;
-    passDesc.depthStencilAttachment = &context->depthAttachment,
+    passDesc.depthStencilAttachment = &context->depthAttachment;
+    
     context->currentPass = wgpuCommandEncoderBeginRenderPass(context->currentEncoder, &passDesc);
 
     wgpuRenderPassEncoderSetViewport(
@@ -1297,17 +1304,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         (uint32_t)viewport_width, (uint32_t)viewport_height
     );
 
-    // Animate a specific bone—for example, rotate bone 0 around the Y axis.
-    static float angle = 1.; // Your time value (e.g. from a timer)
-    angle += 0.01;
-    float cosA = cos(angle);
-    float sinA = sin(angle);
-    context->default_bones[0][0] = cosA;
-    context->default_bones[0][2] = sinA;
-    context->default_bones[0][8] = -sinA;
-    context->default_bones[0][10] = cosA;
-
-    // SHADOWS
+    // SHADOW PASS
     {
         // 1. Create a command encoder for the shadow pass.
         WGPUCommandEncoderDescriptor shadowEncDesc = {0};
@@ -1447,7 +1444,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     wgpuRenderPassEncoderEnd(context->currentPass);
     wgpuRenderPassEncoderRelease(context->currentPass);
     context->currentPass = NULL;
-
+    
     // Finish command encoding and submit.
     WGPUCommandBufferDescriptor cmdDesc = {0};
     WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(context->currentEncoder, &cmdDesc);
@@ -1458,7 +1455,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     // float ms_waited_on_gpu = fenceAndWait(context);
 
     // Release command buffer and present the surface.
-    wgpuCommandBufferRelease(cmdBuf);
+        wgpuCommandBufferRelease(cmdBuf);
     wgpuSurfacePresent(context->surface);
     wgpuTextureViewRelease(context->currentView);
     context->currentView = NULL;
