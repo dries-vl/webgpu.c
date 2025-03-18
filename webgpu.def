@@ -9,7 +9,6 @@ _end
 _etext
 addGPUGlobalUniform
 addGPUMaterialUniform
-computeLightViewProj
 createGPUContext
 createGPUMesh
 createGPUPipeline

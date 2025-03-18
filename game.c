@@ -622,3 +622,94 @@ void addGameObject(struct GameState *gameState, struct GameObject *gameObject) {
     gameState->object_count++;
 }
 #pragma endregion
+
+// Computes a dynamic light view-projection matrix based on the camera position.
+// The resulting matrix is in column-major order (for WGSL).
+void computeDynamicLightViewProj(float out[16], const float cameraPos[3]) {
+    // --- Orthographic projection parameters (adjust as needed) ---
+    float left = -.01f, right = .01f;
+    float bottom = -.01f, top = .01f;
+    float nearVal = 1.0f, farVal = 1500.0f;
+    // Build the orthographic projection matrix in row-major order.
+    float P[16] = {
+         2.0f / (right - left),    0.0f,                     0.0f,                      0.0f,
+         0.0f,                     2.0f / (top - bottom),    0.0f,                      0.0f,
+         0.0f,                     0.0f,                    -2.0f / (farVal - nearVal), 0.0f,
+        -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(farVal + nearVal) / (farVal - nearVal), 1.0f
+    };
+
+    // --- Light parameters ---
+    // Use the same light direction as before.
+    float lx = 0.5f, ly = -1.0f, lz = 0.5f;
+    float len = sqrt(lx * lx + ly * ly + lz * lz);
+    lx /= len; ly /= len; lz /= len;
+
+    // Use the current camera position as the center of the shadow frustum.
+    float center[3] = { cameraPos[0], cameraPos[1], cameraPos[2] };
+    // Position the light at a fixed distance from the center along the opposite light direction.
+    float distance = 100.0f; // Adjust as needed
+    float eye[3] = {
+        center[0] - lx * distance,
+        center[1] - ly * distance,
+        center[2] - lz * distance
+    };
+
+    // --- Compute the view matrix (lookAt) in row-major order ---
+    // Compute forward vector f = normalize(center - eye)
+    float f[3] = {
+        center[0] - eye[0],
+        center[1] - eye[1],
+        center[2] - eye[2]
+    };
+    float fLen = sqrt(f[0]*f[0] + f[1]*f[1] + f[2]*f[2]);
+    f[0] /= fLen; f[1] /= fLen; f[2] /= fLen;
+
+    // Up vector: assuming Y is up.
+    float up[3] = { 0.0f, 1.0f, 0.0f };
+
+    // Compute right vector s = normalize(cross(f, up))
+    float s[3] = {
+        f[1]*up[2] - f[2]*up[1],
+        f[2]*up[0] - f[0]*up[2],
+        f[0]*up[1] - f[1]*up[0]
+    };
+    float sLen = sqrt(s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
+    s[0] /= sLen; s[1] /= sLen; s[2] /= sLen;
+
+    // Recompute up vector u = cross(s, f)
+    float u[3] = {
+        s[1]*f[2] - s[2]*f[1],
+        s[2]*f[0] - s[0]*f[2],
+        s[0]*f[1] - s[1]*f[0]
+    };
+
+    // Build the lookAt view matrix in row-major order.
+    // [ s.x,   s.y,   s.z,   -dot(s, eye) ]
+    // [ u.x,   u.y,   u.z,   -dot(u, eye) ]
+    // [ -f.x, -f.y,  -f.z,    dot(f, eye) ]
+    // [ 0,     0,     0,       1          ]
+    float V[16] = {
+         s[0], s[1], s[2], - (s[0]*eye[0] + s[1]*eye[1] + s[2]*eye[2]),
+         u[0], u[1], u[2], - (u[0]*eye[0] + u[1]*eye[1] + u[2]*eye[2]),
+        -f[0], -f[1], -f[2],   (f[0]*eye[0] + f[1]*eye[1] + f[2]*eye[2]),
+         0.0f,  0.0f,  0.0f, 1.0f
+    };
+
+    // --- Multiply the projection and view matrices: M = P * V ---
+    float M[16] = {0};
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            for (int k = 0; k < 4; k++) {
+                M[i*4 + j] += P[i*4 + k] * V[k*4 + j];
+            }
+        }
+    }
+
+    // --- Convert from row-major (M) to column-major order for WGSL ---
+    // (This transposition is necessary because WGSL expects column-major matrices.)
+    for (int i = 0; i < 4; i++) {
+       for (int j = 0; j < 4; j++) {
+          out[i*4 + j] = M[j*4 + i];
+       }
+    }
+}

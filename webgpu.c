@@ -139,6 +139,9 @@ typedef struct {
     // depth texture
     WGPUDepthStencilState depthStencilState;
     WGPURenderPassDepthStencilAttachment depthAttachment;
+    // msaa texture
+    WGPUTexture msaa_texture;
+    WGPUTextureView msaa_texture_view;
     // shadow texture
     WGPURenderPipeline shadow_pipeline;
     WGPUBuffer shadow_uniform_buffer;
@@ -409,7 +412,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .size = { .width = width, .height = height, .depthOrArrayLayers = 1 },
             .format = WGPUTextureFormat_Depth24PlusStencil8, // Or Depth32Float if supported
             .mipLevelCount = 1,
-            .sampleCount = 1,
+            .sampleCount = MSAA ? 4 : 1,
             .nextInChain = NULL,
         };
         WGPUTexture depthTexture = wgpuDeviceCreateTexture(context.device, &depthTextureDesc);
@@ -454,6 +457,21 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .depthClearValue = 1.0f,            // Clear value (far plane)
             // Set stencil values if using stencil; otherwise, leave them out.
         };
+    }
+
+    // Create a multisample texture for MSAA
+    if (MSAA) {
+        WGPUTextureDescriptor msaaDesc = {0};
+        msaaDesc.usage = WGPUTextureUsage_RenderAttachment;
+        msaaDesc.dimension = WGPUTextureDimension_2D;
+        msaaDesc.format = context.config.format;
+        msaaDesc.size.width  = width;
+        msaaDesc.size.height = height;
+        msaaDesc.size.depthOrArrayLayers = 1;
+        msaaDesc.mipLevelCount = 1;
+        msaaDesc.sampleCount   = 4; // Should match ms.count
+        context.msaa_texture = wgpuDeviceCreateTexture(context.device, &msaaDesc);
+        context.msaa_texture_view = wgpuTextureCreateView(context.msaa_texture, NULL);
     }
 
     // Create global shadow texture + sampler
@@ -612,7 +630,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     prim.frontFace = WGPUFrontFace_CCW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
-    ms.count = 1;
+    ms.count = MSAA ? 4 : 1; // *MSAA anti aliasing* ~set it to 1 to avoid, and don't set the target to msaa texture in draw_frame
     ms.mask = 0xFFFFFFFF;
     rpDesc.multisample = ms;
     // add depth texture
@@ -672,98 +690,6 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     return pipeline_id;
 }
 
-// Computes a light view–projection matrix for a 100x100 scene.
-// The scene is assumed to span from -50 to 50 in X and Z (centered at the origin).
-// We use an orthographic projection with left=-50, right=50, bottom=-50, top=50,
-// and set near and far to tightly cover the scene (e.g. near=50, far=150).
-// The light is assumed to come from the direction (0.5, -1, 0.5) (normalized)
-// and is placed at distance 100 along the opposite direction.
-// The resulting matrix is output in column‑major order in the array out[16].
-void computeLightViewProj(float out[16]) {
-    // --- Orthographic projection parameters ---
-    float left = -50.0f, right = 50.0f;
-    float bottom = -50.0f, top = 50.0f;
-    // Choose near and far so that the scene depth is tightly covered in light-space.
-    float nearVal = 1.0f, farVal = 150.0f;
-    // Standard orthographic projection matrix (row-major, OpenGL style):
-    // [ 2/(r-l)      0            0          -(r+l)/(r-l) ]
-    // [    0      2/(t-b)         0          -(t+b)/(t-b) ]
-    // [    0         0       -2/(f-n)       -(f+n)/(f-n) ]
-    // [    0         0            0               1       ]
-    float P[16] = {
-         2.0f/(right-left), 0, 0, 0,
-         0, 2.0f/(top-bottom), 0, 0,
-         0, 0, -2.0f/(farVal-nearVal), 0,
-         -(right+left)/(right-left), -(top+bottom)/(top-bottom), -(farVal+nearVal)/(farVal-nearVal), 1
-    };
-
-    // --- Light (view) parameters ---
-    // Choose a light direction (e.g., (0.5, -1, 0.5)) and normalize it.
-    float lx = 0.5f, ly = -1.0f, lz = 0.5f;
-    float len = sqrt(lx*lx + ly*ly + lz*lz);
-    lx /= len; ly /= len; lz /= len;
-    // Position the light far away along the opposite direction:
-    float distance = 100.0f;
-    // eye = sceneCenter - (lightDirection * distance)
-    float eye[3] = { -lx * distance, -ly * distance, -lz * distance };
-    float center[3] = { 0.0f, 0.0f, 0.0f };
-    float up[3] = { 0.0f, 1.0f, 0.0f };
-
-    // --- Compute the view matrix using a look-at function (row-major) ---
-    // f = normalize(center - eye)
-    float fwd[3] = { center[0]-eye[0], center[1]-eye[1], center[2]-eye[2] };
-    float fwdLen = sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]);
-    fwd[0] /= fwdLen; fwd[1] /= fwdLen; fwd[2] /= fwdLen;
-
-    // s = normalize(cross(fwd, up))
-    float s[3] = {
-        fwd[1]*up[2] - fwd[2]*up[1],
-        fwd[2]*up[0] - fwd[0]*up[2],
-        fwd[0]*up[1] - fwd[1]*up[0]
-    };
-    float sLen = sqrt(s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
-    s[0] /= sLen; s[1] /= sLen; s[2] /= sLen;
-
-    // u = cross(s, fwd)
-    float u[3] = {
-        s[1]*fwd[2] - s[2]*fwd[1],
-        s[2]*fwd[0] - s[0]*fwd[2],
-        s[0]*fwd[1] - s[1]*fwd[0]
-    };
-
-    // Build the view matrix V (row-major):
-    // [ s.x   s.y   s.z    -dot(s,eye) ]
-    // [ u.x   u.y   u.z    -dot(u,eye) ]
-    // [ -f.x -f.y  -f.z    dot(f,eye)  ]
-    // [  0     0     0         1       ]
-    float V[16] = {
-        s[0], s[1], s[2], 0,
-        u[0], u[1], u[2], 0,
-       -fwd[0], -fwd[1], -fwd[2], 0,
-        0, 0, 0, 1
-    };
-    // Compute translation components.
-    V[12] = - (s[0]*eye[0] + s[1]*eye[1] + s[2]*eye[2]);
-    V[13] = - (u[0]*eye[0] + u[1]*eye[1] + u[2]*eye[2]);
-    V[14] =   ( fwd[0]*eye[0] + fwd[1]*eye[1] + fwd[2]*eye[2]);
-
-    // --- Multiply projection and view matrices: M = P * V ---
-    float M[16] = {0};
-    for (int i = 0; i < 4; i++) {
-       for (int j = 0; j < 4; j++) {
-           for (int k = 0; k < 4; k++) {
-               M[i*4+j] += P[i*4+k] * V[k*4+j];
-           }
-       }
-    }
-
-    // --- Convert from row-major (M) to column-major order for WGSL ---
-    for (int i = 0; i < 4; i++) {
-       for (int j = 0; j < 4; j++) {
-          out[i*4+j] = M[j*4+i];
-       }
-    }
-}
 void create_shadow_pipeline(void *context_ptr) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     // 1. Create a bind group layout for the shadow uniform.
@@ -772,7 +698,7 @@ void create_shadow_pipeline(void *context_ptr) {
     shadowBGL_Entry.binding = 0;
     shadowBGL_Entry.visibility = WGPUShaderStage_Vertex;
     shadowBGL_Entry.buffer.type = WGPUBufferBindingType_Uniform;
-    shadowBGL_Entry.buffer.minBindingSize = 64; // 4x4 f32 (16 * 4 bytes)
+    shadowBGL_Entry.buffer.minBindingSize = GLOBAL_UNIFORM_CAPACITY;
     shadowBGL_Entry.buffer.hasDynamicOffset = false;
 
     WGPUBindGroupLayoutDescriptor shadowBGLDesc = {0};
@@ -843,7 +769,7 @@ void create_shadow_pipeline(void *context_ptr) {
     context->shadow_pipeline = shadowPipeline;
 
     WGPUBufferDescriptor shadowUniformBufferDesc = {0};
-    shadowUniformBufferDesc.size = 64; // size of a 4x4 f32 matrix in bytes
+    shadowUniformBufferDesc.size = GLOBAL_UNIFORM_CAPACITY;
     shadowUniformBufferDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     context->shadow_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &shadowUniformBufferDesc);
 
@@ -852,33 +778,13 @@ void create_shadow_pipeline(void *context_ptr) {
     shadowBindGroupEntry.binding = 0;
     shadowBindGroupEntry.buffer = context->shadow_uniform_buffer;
     shadowBindGroupEntry.offset = 0;
-    shadowBindGroupEntry.size = 64;
+    shadowBindGroupEntry.size = shadowUniformBufferDesc.size;
 
     WGPUBindGroupDescriptor shadowBindGroupDesc = {0};
     shadowBindGroupDesc.layout = shadowBindGroupLayout; // created earlier
     shadowBindGroupDesc.entryCount = 1;
     shadowBindGroupDesc.entries = &shadowBindGroupEntry;
     context->shadow_bindgroup = wgpuDeviceCreateBindGroup(context->device, &shadowBindGroupDesc);
-
-    // Assume lightViewProjData is a 64-byte array (or pointer) holding your light view-projection matrix.
-    // todo: we could modify the lighting each frame if we wanted to
-    float lightViewProjData[16] = {
-        -0.01414,  0.01154,  0.00408,  0.0,
-        0.0,      0.01152, -0.00816,  0.0,
-        0.01414,  0.01152,  0.00408,  0.0,
-        0.0,      0.006,   -0.001,   1.0 
-    };
-    // computeLightViewProj(lightViewProjData);
-    printf("Light View-Projection Matrix (column-major):\n");
-    for (int i = 0; i < 4; i++) {
-        printf("[ ");
-        for (int j = 0; j < 4; j++) {
-            printf("%f ", lightViewProjData[i*4+j]);
-        }
-        printf("]\n");
-    }
-    // Upload the lightViewProj matrix to the shadow uniform buffer.
-    wgpuQueueWriteBuffer(context->queue, context->shadow_uniform_buffer, 0, lightViewProjData, 64);
 
     // Optionally, release the shader module and pipeline layout if no longer needed.
     wgpuShaderModuleRelease(shadowShaderModule);
@@ -1279,6 +1185,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     context->currentEncoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
     WGPURenderPassColorAttachment colorAtt = {0};
     colorAtt.view = context->currentView;
+    if (MSAA) {colorAtt.view = context->msaa_texture_view; colorAtt.resolveTarget = context->currentView;}
     colorAtt.loadOp = WGPULoadOp_Clear;
     colorAtt.storeOp = WGPUStoreOp_Store;
     colorAtt.clearValue = (WGPUColor){0., 0., 0., 1.0};
@@ -1305,6 +1212,8 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     );
 
     // SHADOW PASS
+    // Reuse the global pipeline uniform data in the shader uniforms // todo: is it possible to reuse the same gpu-buffer and write only once?
+    wgpuQueueWriteBuffer(context->queue, context->shadow_uniform_buffer, 0, context->pipelines[0].global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
     {
         // 1. Create a command encoder for the shadow pass.
         WGPUCommandEncoderDescriptor shadowEncDesc = {0};
@@ -1320,7 +1229,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         // (Stencil settings can be added if you use them.)
         WGPURenderPassDescriptor shadowPassDesc = {0};
         shadowPassDesc.colorAttachmentCount = 0; // no color attachments
-        shadowPassDesc.depthStencilAttachment = &shadowDepthAttachment;
+        shadowPassDesc.depthStencilAttachment = &shadowDepthAttachment;   
 
         // 3. Begin the shadow render pass.
         WGPURenderPassEncoder shadowPass = wgpuCommandEncoderBeginRenderPass(shadowEncoder, &shadowPassDesc);
@@ -1334,9 +1243,6 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
             if (context->pipelines[pipeline_id].used) {
                 Pipeline *pipeline = &context->pipelines[pipeline_id];
-                // You might need to set a shadow-specific bind group (for the lightViewProj matrix)
-                // e.g., wgpuRenderPassEncoderSetBindGroup(shadowPass, 0, shadowGlobalBindGroup, 0, NULL);
-                // Then for each mesh in your pipeline:
                 for (int j = 0; j < MAX_MATERIALS && pipeline->material_ids[j] > -1; j++) {
                     int material_id = pipeline->material_ids[j];
                     Material *material = &context->materials[material_id];

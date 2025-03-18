@@ -2,6 +2,8 @@
 #define GAME_DATA_H_
 // todo: avoid this header file, just have it in one of the C files, ideally game.c (it compiles like that, but ide errors annoying) 
 
+static const int MSAA = 0;
+
 #define MAX_PIPELINES             2 // todo: remove, only one pipeline
 #define MAX_MESHES                128
 #define MAX_MATERIALS          256 // todo: MAX_MATERIALS that matches with the 256 bytes x 256 materials limit -> can reuse material for different mesh by using atlas for textures + instance atlas uv

@@ -301,6 +301,14 @@ int tick(struct Platform *p, void *context) {
     setGPUGlobalUniformValue(context, main_pipeline, timeOffset, &timeVal, sizeof(float));
     setGPUGlobalUniformValue(context, main_pipeline, viewOffset, &inv, sizeof(view));
 
+    // SET POSITION FOR SHADOWS
+    float lightViewProjData[16];
+    computeDynamicLightViewProj(lightViewProjData, playerLocation);
+    static int light_proj_offset = -1;
+    if (light_proj_offset == -1) light_proj_offset = addGPUGlobalUniform(context, 0, lightViewProjData, sizeof(lightViewProjData));
+    setGPUGlobalUniformValue(context, main_pipeline, light_proj_offset, lightViewProjData, sizeof(lightViewProjData));
+    // END SHADOWS
+
     // update the instances of the text
     setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
 
