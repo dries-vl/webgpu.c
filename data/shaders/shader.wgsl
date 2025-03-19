@@ -8,24 +8,24 @@ struct GlobalUniforms {
 struct MaterialUniforms {
     shader: u32,
 };
-struct BoneUniforms {
+struct MeshUniforms {
     bones: array<mat4x4<f32>, 64>, // 64 bones
 };
 
-@group(0) @binding(0) // *group 0 for global* (pipeline)
-var<uniform> g_uniforms: GlobalUniforms;
-@group(0) @binding(1)
-var<uniform> m_uniforms: MaterialUniforms;
-@group(0) @binding(2)
-var shadow_map: texture_depth_2d;
-@group(0) @binding(3)
-var shadow_sampler: sampler_comparison;
-@group(1) @binding(0) // *group 1 for per-material*
-var texture_sampler: sampler;
+@group(0) @binding(0) // *group 0 for global* (global uniforms)
+var<uniform> global_uniforms: GlobalUniforms;
+@group(1) @binding(0) // *group 1 for pipeline* (material uniforms, shadows)
+var<uniform> material_uniforms: MaterialUniforms;
 @group(1) @binding(1)
+var shadow_map: texture_depth_2d;
+@group(1) @binding(2)
+var shadow_sampler: sampler_comparison;
+@group(2) @binding(0) // *group 2 for per-material* (textures)
+var texture_sampler: sampler;
+@group(2) @binding(1)
 var tex_0: texture_2d<f32>;
-@group(2) @binding(0) // *group 2 for per-mesh*
-var<uniform> b_uniforms: BoneUniforms;
+@group(3) @binding(0) // *group 3 for per-mesh* (bones)
+var<uniform> mesh_uniforms: MeshUniforms;
 
 struct VertexInput {
     @location(1) position: vec3<f32>,
@@ -47,17 +47,17 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     var output: VertexOutput;
     let i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
     let vertex_position = vec4<f32>(input.position, 1.0);
-    if (m_uniforms.shader >= 1u) {
+    if (material_uniforms.shader >= 1u) {
         // BASE SHADER
         let skin_matrix = 
-            b_uniforms.bones[input.bone_indices[0]] * input.bone_weights[0] +
-            b_uniforms.bones[input.bone_indices[1]] * input.bone_weights[1] +
-            b_uniforms.bones[input.bone_indices[2]] * input.bone_weights[2] +
-            b_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
+            mesh_uniforms.bones[input.bone_indices[0]] * input.bone_weights[0] +
+            mesh_uniforms.bones[input.bone_indices[1]] * input.bone_weights[1] +
+            mesh_uniforms.bones[input.bone_indices[2]] * input.bone_weights[2] +
+            mesh_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
 
         let world_space = i_transform * skin_matrix * vertex_position;
-        let view_space = g_uniforms.view * world_space;
-        output.pos = g_uniforms.projection * view_space;
+        let view_space = global_uniforms.view * world_space;
+        output.pos = global_uniforms.projection * view_space;
         output.world_pos = world_space;
         output.view_pos = view_space.xyz;
 
@@ -65,17 +65,17 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         let world_space_normal = normalize((i_transform * skin_matrix * vec4<f32>(input.normal.xyz, 0.0)).xyz);
         let diff = max(dot(world_space_normal, -vec3(0.5, -0.8, 0.5)), 0.0);
         output.world_normal = world_space_normal; // Store for reflection calculations
-        output.l = pow(diff, 2.0) * 2.;
+        output.l = diff;
 
         // SHADOW
-        let light_space_pos = g_uniforms.light_view_proj * i_transform * skin_matrix * vertex_position;
+        let light_space_pos = global_uniforms.light_view_proj * i_transform * skin_matrix * vertex_position;
         // Convert XY (-1, 1) to (0, 1), Y is flipped because texture coords are Y-down, Z is already in (0, 1) space
         output.shadow_pos = vec3(light_space_pos.xy * vec2(0.5, -0.5) + vec2(0.5), light_space_pos.z);
 
         // NORMAL, UV
         output.frag_normal = input.normal.xyz;
         output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
-    } else if (m_uniforms.shader == 0u) {
+    } else if (material_uniforms.shader == 0u) {
         // HUD SHADER
         // let i = vertex_index % 3u;
         // output.color = vec3<f32>(select(0.0, 1.0, i == 0u), select(0.0, 1.0, i == 1u), select(0.0, 1.0, i == 2u)); // barycentric coords
@@ -126,15 +126,15 @@ fn calculate_shadow(input: VertexOutput) -> f32 {
     // let lambertFactor = max(dot(normalize(scene.lightPos - input.fragPos), normalize(input.fragNorm)), 0.0);
     // let lightingFactor = min(ambientFactor + visibility * lambertFactor, 1.0);
 
-    return shadow;
+    return smoothstep(.3, .7, shadow);
 }
 
 
 // fn calculate_shadow(input: VertexOutput) -> f32 {
 //     var shadow_factor: f32 = 1.0;
-//     if (m_uniforms.shader == 1u) {
+//     if (material_uniforms.shader == 1u) {
 //         // Transform world position into light space.
-//         let shadow_coord = g_uniforms.light_view_proj * input.world_pos;
+//         let shadow_coord = global_uniforms.light_view_proj * input.world_pos;
 //         let shadow_ndc = shadow_coord.xyz / shadow_coord.w;
 //         // Convert from NDC [-1,1] to UV space [0,1]
 //         let shadow_uv = shadow_ndc.xy * 0.5 + vec2<f32>(0.5, 0.5);

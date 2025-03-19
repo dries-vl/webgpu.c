@@ -712,10 +712,10 @@ void normalize(float v[3]) {
 // around the camera (or player). 'playerLocation' is a 3-element array.
 void computeDynamicLightViewProj(float light_view_proj[16], const float playerLocation[3]) {
     // 1. Define the region to cover.
-    float left   = -20.0f;
-    float right  =  20.0f;
-    float bottom = -20.0f;
-    float top    =  20.0f;
+    float left   = -5.0f;
+    float right  =  5.0f;
+    float bottom = -5.0f;
+    float top    =  5.0f;
     float near_plane = -100.0f;
     float far_plane  = 100.0f;
     float ortho[16];

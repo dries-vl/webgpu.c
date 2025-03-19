@@ -70,12 +70,9 @@ typedef struct {
     WGPURenderPipeline pipeline;
     // global uniforms
     WGPUBindGroup      pipeline_bindgroup;
-    WGPUBuffer         global_uniform_buffer;
-    unsigned char      global_uniform_data[GLOBAL_UNIFORM_CAPACITY]; // global uniform data in RAM
-    int                global_uniform_offset;
     WGPUBuffer         material_uniform_buffer;
 } Pipeline;
-
+    
 typedef struct {
     bool               used;
     int                pipeline_id;
@@ -140,17 +137,21 @@ typedef struct {
     WGPUDepthStencilState depthStencilState;
     WGPURenderPassDepthStencilAttachment depthAttachment;
     // msaa texture
-    WGPUTexture msaa_texture;
+    WGPUTexture     msaa_texture;
     WGPUTextureView msaa_texture_view;
     // shadow texture
     WGPURenderPipeline shadow_pipeline;
-    WGPUBuffer shadow_uniform_buffer;
-    WGPUBindGroup shadow_bindgroup;
-    WGPUTexture shadow_texture;
-    WGPUTextureView shadow_texture_view;
-    WGPUSampler shadow_sampler;
+    WGPUTexture        shadow_texture;
+    WGPUTextureView    shadow_texture_view;
+    WGPUSampler        shadow_sampler;
+    // global bindgroup
+    WGPUBindGroupLayout global_layout;
+    WGPUBindGroup       global_bindgroup;
+    WGPUBuffer          global_uniform_buffer;
+    unsigned char       global_uniform_data[GLOBAL_UNIFORM_CAPACITY]; // global uniform data in RAM
+    int                 global_uniform_offset;
     // layouts for all the bindgroups
-    WGPUBindGroupLayout per_pipeline_layout; // *should have only one pipeline for all main rendering*
+    WGPUBindGroupLayout main_pipeline_layout;
     WGPUBindGroupLayout per_material_layout;
     WGPUBindGroupLayout per_mesh_layout;
 } WebGPUContext;
@@ -279,10 +280,9 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     };
     wgpuSurfaceConfigure(context.surface, &context.config);
 
-    // Create the per-pipeline bind group layout (ex. the global uniforms, the dynamic offset buffer for all materials' uniforms, the shadow texture)
+    // Create the global bindgroup layout + create the bindgroup
     {
-        #define PIPELINE_BINDGROUP_ENTRIES 4
-        WGPUBindGroupLayoutEntry entries[PIPELINE_BINDGROUP_ENTRIES] = {
+        WGPUBindGroupLayoutEntry entries[1] = {
             // Per-pipeline global uniforms
             {
                 .binding = 0,
@@ -290,10 +290,43 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
                 .buffer.type = WGPUBufferBindingType_Uniform,
                 .buffer.minBindingSize = GLOBAL_UNIFORM_CAPACITY,
                 .buffer.hasDynamicOffset = 0,
-            },
+            }
+        };
+        WGPUBindGroupLayoutDescriptor bglDesc = {0};
+        bglDesc.entryCount = 1;
+        bglDesc.entries = entries;
+        context.global_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
+        
+        {
+            WGPUBufferDescriptor ubDesc = {0};
+            ubDesc.size = GLOBAL_UNIFORM_CAPACITY;
+            ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+            context.global_uniform_buffer = wgpuDeviceCreateBuffer(context.device, &ubDesc);
+            
+            enum { entry_count = 1 };
+            WGPUBindGroupEntry entries[entry_count] = {
+                {
+                    .binding = 0,
+                    .buffer = context.global_uniform_buffer,
+                    .offset = 0,
+                    .size = GLOBAL_UNIFORM_CAPACITY,
+                }
+            };
+            WGPUBindGroupDescriptor uBgDesc = {0};
+            uBgDesc.layout = context.global_layout;
+            uBgDesc.entryCount = entry_count;
+            uBgDesc.entries = entries;
+            context.global_bindgroup = wgpuDeviceCreateBindGroup(context.device, &uBgDesc);
+        }
+    }
+
+    // Create the per-pipeline bind group layout (ex. the dynamic offset buffer for all materials' uniforms, the shadow texture)
+    {
+        #define PIPELINE_BINDGROUP_ENTRIES 3
+        WGPUBindGroupLayoutEntry entries[PIPELINE_BINDGROUP_ENTRIES] = {
             // Per-material uniforms (with offset to differentiate materials)
             {
-                .binding = 1,
+                .binding = 0,
                 .visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment,
                 .buffer.type = WGPUBufferBindingType_Uniform,
                 .buffer.minBindingSize = MATERIAL_UNIFORM_CAPACITY,
@@ -301,7 +334,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             },
             // Shadow map texture view.
             {
-                .binding = 2,
+                .binding = 1,
                 .visibility = WGPUShaderStage_Fragment,
                 .texture = {
                     .sampleType = WGPUTextureSampleType_Depth, // Depth texture
@@ -311,7 +344,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             },
             // Comparison sampler for shadow
             {
-                .binding = 3,
+                .binding = 2,
                 .visibility = WGPUShaderStage_Fragment,
                 .sampler = {
                     .type = WGPUSamplerBindingType_Comparison, // Comparison sampler for shadow mapping
@@ -321,7 +354,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         WGPUBindGroupLayoutDescriptor bglDesc = {0};
         bglDesc.entryCount = PIPELINE_BINDGROUP_ENTRIES;
         bglDesc.entries = entries;
-        context.per_pipeline_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
+        context.main_pipeline_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
     }
 
     // Create the per-material bind group layout (ex. the textures)
@@ -480,7 +513,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding,
             .dimension = WGPUTextureDimension_2D,
             .format = WGPUTextureFormat_Depth32Float,
-            .size = (WGPUExtent3D){ .width = 2048, .height = 2048, .depthOrArrayLayers = 1 },
+            .size = (WGPUExtent3D){ .width = 1024, .height = 1024, .depthOrArrayLayers = 1 },
             .mipLevelCount = 1,
             .sampleCount = 1,
         };
@@ -489,21 +522,16 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         
         // Create a comparison sampler for shadow sampling.
         WGPUSamplerDescriptor shadowSamplerDesc = {
-            .addressModeU = WGPUAddressMode_ClampToEdge,
+            .addressModeU = WGPUAddressMode_ClampToEdge, // todo: we need a way to avoid reading beyond the shadow texture
             .addressModeV = WGPUAddressMode_ClampToEdge,
             .addressModeW = WGPUAddressMode_ClampToEdge,
             .maxAnisotropy = 1,
-            .magFilter = WGPUFilterMode_Nearest,
-            .minFilter = WGPUFilterMode_Nearest,
+            .magFilter = WGPUFilterMode_Linear,
+            .minFilter = WGPUFilterMode_Linear,
             .mipmapFilter = WGPUMipmapFilterMode_Nearest,
             .compare = WGPUCompareFunction_LessEqual,
         };
         context.shadow_sampler = wgpuDeviceCreateSampler(context.device, &shadowSamplerDesc);
-    }
-    
-    // Create the shadow map pipeline for the shadowmap render pass //todo: can we not reuse the same pipeline (?)
-    {
-        create_shadow_pipeline(&context);
     }
 
     context.initialized = true;
@@ -576,9 +604,10 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     Pipeline *pipeline = &context->pipelines[pipeline_id];
 
     // Create a pipeline layout with 3 bind groups:
-    #define LAYOUT_COUNT 3
-    WGPUBindGroupLayout bgls[LAYOUT_COUNT] = { 
-        context->per_pipeline_layout, 
+    #define LAYOUT_COUNT 4
+    WGPUBindGroupLayout bgls[LAYOUT_COUNT] = {
+        context->global_layout,
+        context->main_pipeline_layout, 
         context->per_material_layout, 
         context->per_mesh_layout
     };
@@ -607,7 +636,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     colorTarget.format = context->config.format;
     colorTarget.writeMask = WGPUColorWriteMask_All;
     // --- enable alpha blending --- // todo: maybe later if we want water (?)
-     {
+    {
          colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
              .color = (WGPUBlendComponent){
                  .srcFactor = WGPUBlendFactor_SrcAlpha,
@@ -620,12 +649,12 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
                  .operation = WGPUBlendOperation_Add,
              }
          }};
-     }
+    }
     fragState.targets = &colorTarget;
     rpDesc.fragment = &fragState;
     
     WGPUPrimitiveState prim = {0};
-    prim.topology = WGPUPrimitiveTopology_LineStrip; // *info* use LineStrip to see the wireframe (line width?)
+    prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe (line width?)
     prim.cullMode = WGPUCullMode_Back;
     prim.frontFace = WGPUFrontFace_CCW;
     rpDesc.primitive = prim;
@@ -640,44 +669,33 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     WGPURenderPipeline gpu_pipeline = wgpuDeviceCreateRenderPipeline(context->device, &rpDesc);
     pipeline->pipeline = gpu_pipeline;
     
-    // Create global uniform bind group
+    // Create pipeline bind group
     {
-        WGPUBufferDescriptor ubDesc = {0};
-        ubDesc.size = GLOBAL_UNIFORM_CAPACITY;
-        ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-        pipeline->global_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
-
         WGPUBufferDescriptor ubDesc2 = {0};
         ubDesc2.size = MATERIALS_UNIFORM_BUFFER_TOTAL_SIZE;
         ubDesc2.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
         pipeline->material_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &ubDesc2);
 
-        #define ENTRY_COUNT 4
+        #define ENTRY_COUNT 3
         WGPUBindGroupEntry entries[ENTRY_COUNT] = {
             {
                 .binding = 0,
-                .buffer = pipeline->global_uniform_buffer,
-                .offset = 0,
-                .size = GLOBAL_UNIFORM_CAPACITY,
-            },
-            {
-                .binding = 1,
                 .buffer = pipeline->material_uniform_buffer,
                 .offset = 0,
                 .size = MATERIAL_UNIFORM_CAPACITY,
             },
             {
-                .binding = 2,
+                .binding = 1,
                 .textureView = context->shadow_texture_view,
             },
             {
-                .binding = 3,
+                .binding = 2,
                 .sampler = context->shadow_sampler,
             }
         };
 
         WGPUBindGroupDescriptor uBgDesc = {0};
-        uBgDesc.layout = context->per_pipeline_layout;
+        uBgDesc.layout = context->main_pipeline_layout;
         uBgDesc.entryCount = ENTRY_COUNT;
         uBgDesc.entries = entries;
         pipeline->pipeline_bindgroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
@@ -692,25 +710,19 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
 
 void create_shadow_pipeline(void *context_ptr) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
-    // 1. Create a bind group layout for the shadow uniform.
-    //    This layout has a single entry at binding 0 for the lightViewProj matrix.
-    WGPUBindGroupLayoutEntry shadowBGL_Entry = {0};
-    shadowBGL_Entry.binding = 0;
-    shadowBGL_Entry.visibility = WGPUShaderStage_Vertex;
-    shadowBGL_Entry.buffer.type = WGPUBufferBindingType_Uniform;
-    shadowBGL_Entry.buffer.minBindingSize = GLOBAL_UNIFORM_CAPACITY;
-    shadowBGL_Entry.buffer.hasDynamicOffset = false;
 
-    WGPUBindGroupLayoutDescriptor shadowBGLDesc = {0};
-    shadowBGLDesc.entryCount = 1;
-    shadowBGLDesc.entries = &shadowBGL_Entry;
-    WGPUBindGroupLayout shadowBindGroupLayout = wgpuDeviceCreateBindGroupLayout(context->device, &shadowBGLDesc);
+    WGPUBindGroupLayout layouts[2] = {
+        context->global_layout, context->per_mesh_layout
+    };
+    assert(context->global_layout);
+    assert(context->main_pipeline_layout);
 
     // 2. Create a pipeline layout for the shadow pipeline
     WGPUPipelineLayoutDescriptor shadowPLDesc = {0};
-    shadowPLDesc.bindGroupLayoutCount = 1;
-    shadowPLDesc.bindGroupLayouts = &shadowBindGroupLayout;
+    shadowPLDesc.bindGroupLayoutCount = 2;
+    shadowPLDesc.bindGroupLayouts = layouts;
     WGPUPipelineLayout shadowPipelineLayout = wgpuDeviceCreatePipelineLayout(context->device, &shadowPLDesc);
+    assert(shadowPipelineLayout);
 
     // 3. Load the shadow shader module.
     WGPUShaderModule shadowShaderModule = loadWGSL(context->device, "data/shaders/shadow.wgsl");
@@ -742,7 +754,6 @@ void create_shadow_pipeline(void *context_ptr) {
     shadowRPDesc.vertex.buffers = VERTEX_LAYOUT;
 
     // For a depth-only pass, the fragment stage can be omitted.
-    // (If required by your implementation, you could supply a minimal fragment stage that writes nothing.)
     shadowRPDesc.fragment = NULL;
 
     // Set primitive state (you can adjust as needed).
@@ -762,34 +773,13 @@ void create_shadow_pipeline(void *context_ptr) {
     shadowRPDesc.depthStencil = &shadowDepthStencil;
 
     // 7. Create the shadow render pipeline.
-    WGPURenderPipeline shadowPipeline = wgpuDeviceCreateRenderPipeline(context->device, &shadowRPDesc);
-    assert(shadowPipeline);
-
-    // Store the shadowPipeline in your context for later use in the shadow pass.
-    context->shadow_pipeline = shadowPipeline;
-
-    WGPUBufferDescriptor shadowUniformBufferDesc = {0};
-    shadowUniformBufferDesc.size = GLOBAL_UNIFORM_CAPACITY;
-    shadowUniformBufferDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-    context->shadow_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &shadowUniformBufferDesc);
-
-    // --- Create the shadow bind group ---
-    WGPUBindGroupEntry shadowBindGroupEntry = {0};
-    shadowBindGroupEntry.binding = 0;
-    shadowBindGroupEntry.buffer = context->shadow_uniform_buffer;
-    shadowBindGroupEntry.offset = 0;
-    shadowBindGroupEntry.size = shadowUniformBufferDesc.size;
-
-    WGPUBindGroupDescriptor shadowBindGroupDesc = {0};
-    shadowBindGroupDesc.layout = shadowBindGroupLayout; // created earlier
-    shadowBindGroupDesc.entryCount = 1;
-    shadowBindGroupDesc.entries = &shadowBindGroupEntry;
-    context->shadow_bindgroup = wgpuDeviceCreateBindGroup(context->device, &shadowBindGroupDesc);
+    context->shadow_pipeline = wgpuDeviceCreateRenderPipeline(context->device, &shadowRPDesc);
+    assert(context->shadow_pipeline);
 
     // Optionally, release the shader module and pipeline layout if no longer needed.
     wgpuShaderModuleRelease(shadowShaderModule);
     wgpuPipelineLayoutRelease(shadowPipelineLayout);
-    wgpuBindGroupLayoutRelease(shadowBindGroupLayout);
+    printf("[webgpu.c] Created shadow pipeline \n");
 }
 
 int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, int ic, void *ii, int iic) {
@@ -1051,33 +1041,31 @@ int createGPUTexture(void *context_ptr, int mesh_id, void *data, int w, int h) {
 #pragma region UNIFORMS
 int addGPUGlobalUniform(void *context_ptr, int pipeline_id, const void* data, int data_size) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
-    Pipeline *pipeline = &context->pipelines[pipeline_id];
     // Inline alignment determination using ternary operators
     int alignment = (data_size <= 4) ? 4 :
                     (data_size <= 8) ? 8 :
                     16; // Default for vec3, vec4, mat4x4, or larger
     // Align the offset to the correct boundary (based on WGSL rules)
-    int aligned_offset = (pipeline->global_uniform_offset + (alignment - 1)) & ~(alignment - 1);
+    int aligned_offset = (context->global_uniform_offset + (alignment - 1)) & ~(alignment - 1);
     // Check if the new offset exceeds buffer capacity
     if (aligned_offset + data_size > GLOBAL_UNIFORM_CAPACITY) {
         // todo: print warning on screen or in log that this failed
         return -1;
     }
     // Copy the data into the aligned buffer
-    memcpy(pipeline->global_uniform_data + aligned_offset, data, data_size);
+    memcpy(context->global_uniform_data + aligned_offset, data, data_size);
     // Update the current offset
-    pipeline->global_uniform_offset = aligned_offset + data_size;
+    context->global_uniform_offset = aligned_offset + data_size;
     // todo: print on screen that uniform changed
     return aligned_offset;
 }
 void setGPUGlobalUniformValue(void *context_ptr, int pipeline_id, int offset, const void* data, int dataSize) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
-    Pipeline *pipeline = &context->pipelines[pipeline_id];
-    if (offset < 0 || offset + dataSize > pipeline->global_uniform_offset) {
+    if (offset < 0 || offset + dataSize > context->global_uniform_offset) {
         // todo: print warning on screen or in log that this failed
         return;
     }
-    memcpy(pipeline->global_uniform_data + offset, data, dataSize);
+    memcpy(context->global_uniform_data + offset, data, dataSize);
 }
 int addGPUMaterialUniform(void *context_ptr, int material_id, const void* data, int data_size) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
@@ -1211,9 +1199,13 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         (uint32_t)viewport_width, (uint32_t)viewport_height
     );
 
+    // Write CPU–side uniform data to GPU
+    // todo: condition to only do when updated data
+    wgpuQueueWriteBuffer(context->queue, context->global_uniform_buffer, 0, context->global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
+
     // SHADOW PASS
     // Reuse the global pipeline uniform data in the shader uniforms // todo: is it possible to reuse the same gpu-buffer and write only once?
-    wgpuQueueWriteBuffer(context->queue, context->shadow_uniform_buffer, 0, context->pipelines[0].global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
+    // wgpuQueueWriteBuffer(context->queue, context->shadow_uniform_buffer, 0, context->pipelines[0].global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
     {
         // 1. Create a command encoder for the shadow pass.
         WGPUCommandEncoderDescriptor shadowEncDesc = {0};
@@ -1236,10 +1228,9 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
 
         // 4. Bind the shadow pipeline.
         wgpuRenderPassEncoderSetPipeline(shadowPass, context->shadow_pipeline);
-        wgpuRenderPassEncoderSetBindGroup(shadowPass, 0, context->shadow_bindgroup, 0, NULL);
+        wgpuRenderPassEncoderSetBindGroup(shadowPass, 0, context->global_bindgroup, 0, NULL);
 
-        // 5. For each mesh that casts shadows, set its vertex/index/instance buffers and draw.
-        //    (This is similar to your main render loop; you may loop through your scene meshes.)
+        // 5. For each mesh that casts shadows, draw
         for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
             if (context->pipelines[pipeline_id].used) {
                 Pipeline *pipeline = &context->pipelines[pipeline_id];
@@ -1249,6 +1240,10 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                     for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
                         int mesh_id = material->mesh_ids[k];
                         Mesh *mesh = &context->meshes[mesh_id];
+                        // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
+                        if (1) {
+                            wgpuRenderPassEncoderSetBindGroup(shadowPass, 1, mesh->mesh_bindgroup, 0, NULL);
+                        }
                         // Bind the mesh's vertex and instance buffers.
                         wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
                         wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 1, mesh->instanceBuffer, 0, WGPU_WHOLE_SIZE);
@@ -1262,6 +1257,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         }
 
         // 6. End the shadow render pass and finish encoding.
+        // printf()
         wgpuRenderPassEncoderEnd(shadowPass);
         wgpuRenderPassEncoderRelease(shadowPass);
         WGPUCommandBufferDescriptor shadowCmdDesc = {0};
@@ -1283,9 +1279,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
             // Set the render pipeline // todo: does it matter where we call this?
             // todo: is it possible to create the command/renderpass encoders, set the pipeline once at the beginning, and then keep reusing it?
             wgpuRenderPassEncoderSetPipeline(context->currentPass, pipeline->pipeline);
-            // Write CPU–side uniform data to GPU
-            // todo: condition to only do when updated data
-            wgpuQueueWriteBuffer(context->queue, pipeline->global_uniform_buffer, 0, pipeline->global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
+            wgpuRenderPassEncoderSetBindGroup(context->currentPass, 0, context->global_bindgroup, 0, NULL);
 
             for (int j = 0; j < MAX_MATERIALS && pipeline->material_ids[j] > -1; j++) {
 
@@ -1305,9 +1299,9 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                 // Set the dynamic offset to point to the uniform values for this material
                 // *info* max size of 64kb -> with 1000 meshes we can have at most 64 bytes of uniform data per mesh (!)
                 // Bind per-pipeline bind group (group 0) (global uniforms, material uniforms, shadows), pass offset for the material uniforms
-                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 0, pipeline->pipeline_bindgroup, 1, &material_uniform_offset);
+                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 1, pipeline->pipeline_bindgroup, 1, &material_uniform_offset);
                 // Bind per-material bind group (group 1) // todo: we could fit all the textures into the pipeline, up to 1000 bindings in one bindgroup -> avoid this call for every material
-                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 1, material->material_bindgroup, 0, NULL);
+                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 2, material->material_bindgroup, 0, NULL);
 
                 for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
                     
@@ -1322,7 +1316,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                     }
                     // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
                     if (1) {
-                        wgpuRenderPassEncoderSetBindGroup(context->currentPass, 2, mesh->mesh_bindgroup, 0, NULL);
+                        wgpuRenderPassEncoderSetBindGroup(context->currentPass, 3, mesh->mesh_bindgroup, 0, NULL);
                     }
                     // todo: make this based on mesh setting UPDATE_MESH_INSTANCES, then we don't need to do this for static meshes
                     // If the mesh requires instance data updates, update the instance buffer (this is really expensive!)
