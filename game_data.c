@@ -45,7 +45,7 @@ static struct Vertex quad_vertices[4] = {
     {
         .data = {0},
         .position = {-0.5f, 0.5f, 0.0f},
-        .normal = {0},
+        .normal = {0., 0., 1., 0.},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(0.0f), FLOAT_TO_U16(0.0f)},
         .bone_weights = {UCHAR_MAX, 0, 0, 0},
@@ -54,7 +54,7 @@ static struct Vertex quad_vertices[4] = {
     {
         .data = {0},
         .position = {0.5f, 0.5f, 0.0f},
-        .normal = {0},
+        .normal = {0., 0., 1., 0.},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(1.0f), FLOAT_TO_U16(0.0f)},
         .bone_weights = {UCHAR_MAX, 0, 0, 0},
@@ -63,7 +63,7 @@ static struct Vertex quad_vertices[4] = {
     {
         .data = {0},
         .position = {-0.5f, -0.5f, 0.0f},
-        .normal = {0},
+        .normal = {0., 0., 1., 0.},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(0.0f), FLOAT_TO_U16(1.0f)},
         .bone_weights = {UCHAR_MAX, 0, 0, 0},
@@ -72,7 +72,7 @@ static struct Vertex quad_vertices[4] = {
     {
         .data = {0},
         .position = {0.5f, -0.5f, 0.0f},
-        .normal = {0},
+        .normal = {0., 0., 1., 0.},
         .tangent = {0},
         .uv = {FLOAT_TO_U16(1.0f), FLOAT_TO_U16(1.0f)},
         .bone_weights = {UCHAR_MAX, 0, 0, 0},

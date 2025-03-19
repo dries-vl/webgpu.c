@@ -302,11 +302,11 @@ int tick(struct Platform *p, void *context) {
     setGPUGlobalUniformValue(context, main_pipeline, viewOffset, &inv, sizeof(view));
 
     // SET POSITION FOR SHADOWS
-    float lightViewProjData[16];
-    computeDynamicLightViewProj(lightViewProjData, playerLocation);
+    float light_view_proj[16]; // Q: should we pass view and proj separately instead for simplicity and flexibility?
+    computeDynamicLightViewProj(light_view_proj, playerLocation);
     static int light_proj_offset = -1;
-    if (light_proj_offset == -1) light_proj_offset = addGPUGlobalUniform(context, 0, lightViewProjData, sizeof(lightViewProjData));
-    setGPUGlobalUniformValue(context, main_pipeline, light_proj_offset, lightViewProjData, sizeof(lightViewProjData));
+    if (light_proj_offset == -1) light_proj_offset = addGPUGlobalUniform(context, 0, light_view_proj, sizeof(light_view_proj));
+    setGPUGlobalUniformValue(context, main_pipeline, light_proj_offset, light_view_proj, sizeof(light_view_proj));
     // END SHADOWS
 
     // update the instances of the text

@@ -480,7 +480,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding,
             .dimension = WGPUTextureDimension_2D,
             .format = WGPUTextureFormat_Depth32Float,
-            .size = (WGPUExtent3D){ .width = 1024, .height = 1024, .depthOrArrayLayers = 1 },
+            .size = (WGPUExtent3D){ .width = 2048, .height = 2048, .depthOrArrayLayers = 1 },
             .mipLevelCount = 1,
             .sampleCount = 1,
         };

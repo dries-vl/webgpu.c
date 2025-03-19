@@ -489,7 +489,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     RegisterClassEx(&wc);
 
     HWND hwnd = CreateWindowEx(
-        0, wc.lpszClassName, "Generic Uniform & Texture Demo",
+        0, wc.lpszClassName, "WebGPU renderer!",
         WS_VISIBLE | WS_POPUP,  // WS_POPUP makes it borderless
         CW_USEDEFAULT, CW_USEDEFAULT,
         WINDOW_WIDTH, WINDOW_HEIGHT, NULL, NULL, hInstance, NULL

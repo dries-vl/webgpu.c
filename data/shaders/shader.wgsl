@@ -3,7 +3,7 @@ struct GlobalUniforms {
     time: f32,
     view: mat4x4<f32>,  // View matrix
     projection: mat4x4<f32>,    // Projection matrix
-    lightViewProj: mat4x4<f32>
+    light_view_proj: mat4x4<f32>
 };
 struct MaterialUniforms {
     shader: u32,
@@ -49,7 +49,6 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     let vertex_position = vec4<f32>(input.position, 1.0);
     if (m_uniforms.shader >= 1u) {
         // BASE SHADER
-        // Skin the vertex by blending bone transforms
         let skin_matrix = 
             b_uniforms.bones[input.bone_indices[0]] * input.bone_weights[0] +
             b_uniforms.bones[input.bone_indices[1]] * input.bone_weights[1] +
@@ -60,14 +59,21 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         let view_space = g_uniforms.view * world_space;
         output.pos = g_uniforms.projection * view_space;
         output.world_pos = world_space;
-        output.view_pos = view_space.xyz; // Store view-space position
+        output.view_pos = view_space.xyz;
 
-        let transformedNormal = i_transform * skin_matrix * vec4<f32>(input.normal.xyz, 0.0);
-        let worldNormal = normalize(transformedNormal.xyz);
-        let diff = max(dot(worldNormal, -vec3(0.5, -0.8, 0.5)), 0.0);
-        output.world_normal = worldNormal; // Store for reflection calculations
-        output.l = pow(diff, 3.0) * 2.;
+        // DIRECTIONAL LIGHT
+        let world_space_normal = normalize((i_transform * skin_matrix * vec4<f32>(input.normal.xyz, 0.0)).xyz);
+        let diff = max(dot(world_space_normal, -vec3(0.5, -0.8, 0.5)), 0.0);
+        output.world_normal = world_space_normal; // Store for reflection calculations
+        output.l = pow(diff, 2.0) * 2.;
 
+        // SHADOW
+        let light_space_pos = g_uniforms.light_view_proj * i_transform * skin_matrix * vertex_position;
+        // Convert XY (-1, 1) to (0, 1), Y is flipped because texture coords are Y-down, Z is already in (0, 1) space
+        output.shadow_pos = vec3(light_space_pos.xy * vec2(0.5, -0.5) + vec2(0.5), light_space_pos.z);
+
+        // NORMAL, UV
+        output.frag_normal = input.normal.xyz;
         output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
     } else if (m_uniforms.shader == 0u) {
         // HUD SHADER
@@ -90,6 +96,8 @@ struct VertexOutput {
     @location(3) world_pos: vec4<f32>, // For shadow map lighting calculations
     @location(4) world_normal: vec3<f32>, // World-space normal for reflections
     @location(5) view_pos: vec3<f32>,    // View-space position for reflections
+    @location(6) frag_normal: vec3<f32>,
+    @location(7) shadow_pos: vec3<f32>
 };
 
 @fragment
@@ -98,40 +106,55 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if (tex_color.a < 0.2) {
         discard;
     }
-    let depth = (input.pos.z / input.pos.w);
-    let ambient_light = 0.5;
-    let light_color = vec3(1.,1.,.5);
-    var color = tex_color.rgb * (ambient_light + light_color * input.l) - tex_color.rgb * (depth/60.0);
-
     let shadow = calculate_shadow(input);
+    let depth = (input.pos.z / input.pos.w);
+    let ambient_light = 0.2;
+    let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
+    let dir_light_color = vec3(1.,1.,.5) * input.l * shadow;
+    var color = tex_color.rgb * (ambient_light_color + dir_light_color);
+    color = color - (color * (depth/20.0));
+
     return vec4<f32>(color * max(0.5, shadow), tex_color.a);
+    // return vec4<f32>(vec3(shadow), tex_color.a);
 }
 
 fn calculate_shadow(input: VertexOutput) -> f32 {
-    var shadow_factor: f32 = 1.0;
-    if (m_uniforms.shader == 1u) {
-        // Transform world position into light space.
-        let shadow_coord = g_uniforms.lightViewProj * input.world_pos;
-        let shadow_ndc = shadow_coord.xyz / shadow_coord.w;
-        // Convert from NDC [-1,1] to UV space [0,1]
-        let shadow_uv = shadow_ndc.xy * 0.5 + vec2<f32>(0.5, 0.5);
-        let shadow_depth = shadow_ndc.z * 0.5 + 0.5;
-    
-        // PCF settings.
-        let bias = 0.005;
-        let texel_size = vec2<f32>(1.0 / 1024.0, 1.0 / 1024.0); // assuming 1024x1024 shadow map resolution
-        var shadow_sum: f32 = 0.0;
 
-        shadow_sum = textureSampleCompare(shadow_map, shadow_sampler, shadow_uv, shadow_depth - bias);
-        // 3x3 kernel sampling
-        // for (var x: i32 = -1; x <= 1; x = x + 1) {
-        //     for (var y: i32 = -1; y <= 1; y = y + 1) {
-        //         let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-        //         shadow_sum += textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - bias);
-        //     }
-        // }
-        // shadow_factor = shadow_sum / 9.0;
-        shadow_factor = shadow_sum;
-    }
-    return shadow_factor;
+    let shadow = textureSampleCompare(shadow_map, shadow_sampler, input.shadow_pos.xy, input.shadow_pos.z - 0.005);
+    
+    // todo: lambert factor
+    // let lambertFactor = max(dot(normalize(scene.lightPos - input.fragPos), normalize(input.fragNorm)), 0.0);
+    // let lightingFactor = min(ambientFactor + visibility * lambertFactor, 1.0);
+
+    return shadow;
 }
+
+
+// fn calculate_shadow(input: VertexOutput) -> f32 {
+//     var shadow_factor: f32 = 1.0;
+//     if (m_uniforms.shader == 1u) {
+//         // Transform world position into light space.
+//         let shadow_coord = g_uniforms.light_view_proj * input.world_pos;
+//         let shadow_ndc = shadow_coord.xyz / shadow_coord.w;
+//         // Convert from NDC [-1,1] to UV space [0,1]
+//         let shadow_uv = shadow_ndc.xy * 0.5 + vec2<f32>(0.5, 0.5);
+//         let shadow_depth = shadow_ndc.z * 0.5 + 0.5;
+    
+//         // PCF settings.
+//         let bias = 0.005;
+//         let texel_size = vec2<f32>(1.0 / 1024.0, 1.0 / 1024.0); // assuming 1024x1024 shadow map resolution
+//         var shadow_sum: f32 = 0.0;
+
+//         shadow_sum = textureSampleCompare(shadow_map, shadow_sampler, shadow_uv, shadow_depth - bias);
+//         // 3x3 kernel sampling
+//         // for (var x: i32 = -1; x <= 1; x = x + 1) {
+//         //     for (var y: i32 = -1; y <= 1; y = y + 1) {
+//         //         let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+//         //         shadow_sum += textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - bias);
+//         //     }
+//         // }
+//         // shadow_factor = shadow_sum / 9.0;
+//         shadow_factor = shadow_sum;
+//     }
+//     return shadow_factor;
+// }
