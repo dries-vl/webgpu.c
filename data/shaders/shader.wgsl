@@ -71,7 +71,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         let light_space_pos = global_uniforms.light_view_proj * i_transform * skin_matrix * vertex_position;
         // Convert XY (-1, 1) to (0, 1), Y is flipped because texture coords are Y-down, Z is already in (0, 1) space
         output.shadow_pos = vec3(light_space_pos.xy * vec2(0.5, -0.5) + vec2(0.5), light_space_pos.z);
-
+        output.color = global_uniforms.light_view_proj * i_transform * skin_matrix * vertex_position;
         // NORMAL, UV
         output.frag_normal = input.normal.xyz;
         output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
@@ -90,7 +90,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
-    @location(0) color: vec3<f32>,
+    @location(0) color: vec4<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) l: f32,
     @location(3) world_pos: vec4<f32>, // For shadow map lighting calculations
@@ -113,19 +113,26 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let dir_light_color = vec3(1.,1.,.5) * input.l * shadow;
     var color = tex_color.rgb * (ambient_light_color + dir_light_color);
     color = color - (color * (depth/20.0));
+    color = color * max(0.5, shadow);
 
-    return vec4<f32>(color * max(0.5, shadow), tex_color.a);
+    // return vec4<f32>(color, tex_color.a);
+    return vec4<f32>(color_based_on_shadow_uv(input.shadow_pos), 0., tex_color.a);
+    // return vec4<f32>(vec3(smoothstep(0.51, 0.52, 1. - input.color.z)), tex_color.a);
     // return vec4<f32>(vec3(shadow), tex_color.a);
+    // return vec4<f32>(vec3(1./depth), tex_color.a);
+}
+
+fn color_based_on_shadow_uv(shadow_uv: vec3<f32>) -> vec2<f32> {
+    if (shadow_uv.x > 1. || shadow_uv.x < 0. || shadow_uv.y > 1. || shadow_uv.y < 0) {
+        return vec2(0.);
+    }
+    return vec2(shadow_uv.z);
 }
 
 fn calculate_shadow(input: VertexOutput) -> f32 {
 
-    let shadow = textureSampleCompare(shadow_map, shadow_sampler, input.shadow_pos.xy, input.shadow_pos.z - 0.005);
+    let shadow = textureSampleCompare(shadow_map, shadow_sampler, input.shadow_pos.xy, input.shadow_pos.z - 0.001);
     
-    // todo: lambert factor
-    // let lambertFactor = max(dot(normalize(scene.lightPos - input.fragPos), normalize(input.fragNorm)), 0.0);
-    // let lightingFactor = min(ambientFactor + visibility * lambertFactor, 1.0);
-
     return smoothstep(.3, .7, shadow);
 }
 

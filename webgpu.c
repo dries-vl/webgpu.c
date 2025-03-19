@@ -759,7 +759,7 @@ void create_shadow_pipeline(void *context_ptr) {
     // Set primitive state (you can adjust as needed).
     WGPUPrimitiveState primState = {0};
     primState.topology = WGPUPrimitiveTopology_TriangleList;
-    primState.cullMode = WGPUCullMode_Back;
+    primState.cullMode = WGPUCullMode_Front; // todo: why does cull front seem to behave like cull back for shadows (?) the light view proj maybe (?)
     primState.frontFace = WGPUFrontFace_CCW;
     shadowRPDesc.primitive = primState;
 
