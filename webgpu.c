@@ -625,7 +625,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     rpDesc.fragment = &fragState;
     
     WGPUPrimitiveState prim = {0};
-    prim.topology = WGPUPrimitiveTopology_TriangleList; // *info* use LineStrip to see the wireframe (line width?)
+    prim.topology = WGPUPrimitiveTopology_LineStrip; // *info* use LineStrip to see the wireframe (line width?)
     prim.cullMode = WGPUCullMode_Back;
     prim.frontFace = WGPUFrontFace_CCW;
     rpDesc.primitive = prim;

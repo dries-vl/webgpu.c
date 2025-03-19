@@ -9,5 +9,7 @@ clang --% --target=wasm32 -Wl,--allow-undefined -nostdlib -Wl,--no-entry -Wl,--e
 tcc webgpu.c -L. -lwgpu_native -shared -rdynamic
 tcc main.c -L. -lwebgpu -run
 
-# screenshots
-![shadows.png](data/screenshots/shadows.png.jpg)
+# basic shadow map implementation
+![shadows.png](data/screenshots/shadows.png)
+# wireframe view
+![wireframe.png](data/screenshots/wireframe.png)
