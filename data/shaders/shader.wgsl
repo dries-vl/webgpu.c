@@ -64,8 +64,8 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         // DIRECTIONAL LIGHT
         let world_space_normal = normalize((i_transform * skin_matrix * vec4<f32>(input.normal.xyz, 0.0)).xyz);
         let diff = max(dot(world_space_normal, -vec3(0.5, -0.8, 0.5)), 0.0);
-        output.world_normal = world_space_normal; // Store for reflection calculations
-        output.l = diff;
+        output.world_normal = world_space_normal;
+        output.l = diff * 10.;
 
         // SHADOW
         let light_space_pos = global_uniforms.light_view_proj * i_transform * skin_matrix * vertex_position;
@@ -111,17 +111,21 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let ambient_light = 0.2;
     let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
     let dir_light_color = vec3(1.,1.,.5) * input.l * shadow;
-    var color = tex_color.rgb * (ambient_light_color + dir_light_color);
-    color = color - (color * (depth/20.0));
-    color = color * max(0.5, shadow);
+    var color = tex_color.rgb * min(ambient_light_color + dir_light_color, vec3(1.));
 
-    // return vec4<f32>(color, tex_color.a);
-    return vec4<f32>(color_based_on_shadow_uv(input.shadow_pos), 0., tex_color.a);
-    // return vec4<f32>(vec3(smoothstep(0.51, 0.52, 1. - input.color.z)), tex_color.a);
-    // return vec4<f32>(vec3(shadow), tex_color.a);
-    // return vec4<f32>(vec3(1./depth), tex_color.a);
+    color = color - (color * (depth/20.0));
+
+    return vec4<f32>(color, tex_color.a);
+    // todo: normals are not smoothed between triangles in some meshes, causing jank lighting
+    // todo: is it possible that the char mesh's normals don't make sense (?)
+    // return vec4<f32>(input.world_normal, tex_color.a); //*draw normals*
+    // return vec4<f32>(color_based_on_shadow_uv(input.shadow_pos), 0., tex_color.a); //*draw shadowmap extent*
+    // return vec4<f32>(vec3(smoothstep(0.51, 0.52, 1. - input.color.z)), tex_color.a); //*draw shadowmap*
+    // return vec4<f32>(vec3(shadow), tex_color.a); //*draw only shadows*
+    // return vec4<f32>(vec3(1./depth), tex_color.a); //*draw depth*
 }
 
+// function to show the extent of the shadow map
 fn color_based_on_shadow_uv(shadow_uv: vec3<f32>) -> vec2<f32> {
     if (shadow_uv.x > 1. || shadow_uv.x < 0. || shadow_uv.y > 1. || shadow_uv.y < 0) {
         return vec2(0.);
@@ -131,37 +135,17 @@ fn color_based_on_shadow_uv(shadow_uv: vec3<f32>) -> vec2<f32> {
 
 fn calculate_shadow(input: VertexOutput) -> f32 {
 
-    let shadow = textureSampleCompare(shadow_map, shadow_sampler, input.shadow_pos.xy, input.shadow_pos.z - 0.001);
-    
-    return smoothstep(.3, .7, shadow);
+    // 3x3 kernel sampling
+    // PCF settings.
+    let bias = 0.001;
+    let texel_size = vec2<f32>(1. / 1024.0, 1. / 1024.0); // assuming 1024x1024 shadow map resolution
+    var shadow_sum: f32 = 0.0;
+    for (var x: i32 = -2; x <= 2; x = x + 1) {
+        for (var y: i32 = -2; y <= 2; y = y + 1) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            shadow_sum += textureSampleCompare(shadow_map, shadow_sampler, input.shadow_pos.xy + offset, input.shadow_pos.z - bias);
+        }
+    }
+    let shadow_factor = shadow_sum / 25.0;
+    return smoothstep(.2, 1., shadow_factor);
 }
-
-
-// fn calculate_shadow(input: VertexOutput) -> f32 {
-//     var shadow_factor: f32 = 1.0;
-//     if (material_uniforms.shader == 1u) {
-//         // Transform world position into light space.
-//         let shadow_coord = global_uniforms.light_view_proj * input.world_pos;
-//         let shadow_ndc = shadow_coord.xyz / shadow_coord.w;
-//         // Convert from NDC [-1,1] to UV space [0,1]
-//         let shadow_uv = shadow_ndc.xy * 0.5 + vec2<f32>(0.5, 0.5);
-//         let shadow_depth = shadow_ndc.z * 0.5 + 0.5;
-    
-//         // PCF settings.
-//         let bias = 0.005;
-//         let texel_size = vec2<f32>(1.0 / 1024.0, 1.0 / 1024.0); // assuming 1024x1024 shadow map resolution
-//         var shadow_sum: f32 = 0.0;
-
-//         shadow_sum = textureSampleCompare(shadow_map, shadow_sampler, shadow_uv, shadow_depth - bias);
-//         // 3x3 kernel sampling
-//         // for (var x: i32 = -1; x <= 1; x = x + 1) {
-//         //     for (var y: i32 = -1; y <= 1; y = y + 1) {
-//         //         let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-//         //         shadow_sum += textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - bias);
-//         //     }
-//         // }
-//         // shadow_factor = shadow_sum / 9.0;
-//         shadow_factor = shadow_sum;
-//     }
-//     return shadow_factor;
-// }
