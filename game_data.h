@@ -13,6 +13,11 @@ static const int MSAA = 0;
 #define MAX_BONES 64
 #define BONE_FRAME_SIZE (MAX_BONES * 16)
 
+enum MeshFlags {
+    MESH_ANIMATED = 1 << 0,
+    MESH_CAST_SHADOWS = 1 << 1
+};
+
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
 // todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
 /* GRAPHICS LAYER API */
@@ -20,8 +25,8 @@ static const int MSAA = 0;
 extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height);
 extern int   createGPUPipeline(void *context, const char *shader);
 extern void  create_shadow_pipeline(void *context);
-extern int   createGPUMesh(void *context, int material_id, void *v, int vc, void *i, int ic, void *ii, int iic);
-extern void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[255][16], int bc, int fc);
+extern int   createGPUMesh(void *context, int material_id, enum MeshFlags flags, void *v, int vc, void *i, int ic, void *ii, int iic);
+extern void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc);
 extern int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
 extern int   addGPUGlobalUniform(void *context, int pipeline_id, const void* data, int data_size);
 extern void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset, const void* data, int dataSize);
@@ -47,7 +52,6 @@ struct Instance { // 96 bytes
     float animation_phase; // 4 bytes f32
     unsigned short atlas_uv[2]; // 4 bytes n16 // *info* the texture index is a per-mesh uniform, and this picks within that texture for atlases
 };
-
 
 
 

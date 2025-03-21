@@ -90,7 +90,7 @@ typedef struct {
 
 typedef struct {
     bool       used;
-    bool       animated;
+    enum MeshFlags  flags;
     int        material_id;
     // buffers
     WGPUBuffer vertexBuffer;
@@ -782,7 +782,7 @@ void create_shadow_pipeline(void *context_ptr) {
     printf("[webgpu.c] Created shadow pipeline \n");
 }
 
-int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, int ic, void *ii, int iic) {
+int createGPUMesh(void *context_ptr, int pipeline_id, enum MeshFlags flags, void *v, int vc, void *i, int ic, void *ii, int iic) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     if (!context->initialized) {
         fprintf(stderr, "[webgpu.c] wgpuCreateInstancedMesh called before init!\n");
@@ -930,6 +930,8 @@ int createGPUMesh(void *context_ptr, int pipeline_id, void *v, int vc, void *i, 
         mesh->current_frame = 0.;
     }
     
+    mesh->flags = flags;
+
     mesh->material_id = mesh_id;
     material->pipeline_id = pipeline_id;
     printf("[webgpu.c] Created instanced mesh %d with %d vertices, %d indices, and %d instances for pipeline %d\n",
@@ -967,7 +969,7 @@ void setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16]
     mesh->frame_count = fc;
     memcpy(mesh->current_bones, bf, sizeof(mesh->current_bones));
     mesh->current_frame = 0.;
-    mesh->animated = 1;
+    mesh->flags = mesh->flags | MESH_ANIMATED;
     // Upload the identity matrix to the buffer.
     wgpuQueueWriteBuffer(context->queue, mesh->bone_buffer, 0, bf, sizeof(context->default_bones));
 }
@@ -1240,17 +1242,19 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                     for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
                         int mesh_id = material->mesh_ids[k];
                         Mesh *mesh = &context->meshes[mesh_id];
-                        // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
-                        if (1) {
-                            wgpuRenderPassEncoderSetBindGroup(shadowPass, 1, mesh->mesh_bindgroup, 0, NULL);
+                        if (mesh->flags & MESH_CAST_SHADOWS) {
+                            // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
+                            if (1) {
+                                wgpuRenderPassEncoderSetBindGroup(shadowPass, 1, mesh->mesh_bindgroup, 0, NULL);
+                            }
+                            // Bind the mesh's vertex and instance buffers.
+                            wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
+                            wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 1, mesh->instanceBuffer, 0, WGPU_WHOLE_SIZE);
+                            // Bind the index buffer.
+                            wgpuRenderPassEncoderSetIndexBuffer(shadowPass, mesh->indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                            // Draw the mesh.
+                            wgpuRenderPassEncoderDrawIndexed(shadowPass, mesh->indexCount, mesh->instance_count, 0, 0, 0);
                         }
-                        // Bind the mesh's vertex and instance buffers.
-                        wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
-                        wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 1, mesh->instanceBuffer, 0, WGPU_WHOLE_SIZE);
-                        // Bind the index buffer.
-                        wgpuRenderPassEncoderSetIndexBuffer(shadowPass, mesh->indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-                        // Draw the mesh.
-                        wgpuRenderPassEncoderDrawIndexed(shadowPass, mesh->indexCount, mesh->instance_count, 0, 0, 0);
                     }
                 }
             }
@@ -1310,7 +1314,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                     Mesh *mesh = &context->meshes[mesh_id];
                     
                     // todo: based on mesh setting PLAYING_ANIMATION or something
-                    if (mesh->animated) {
+                    if (mesh->flags & MESH_ANIMATED) {
                         updateMeshAnimationFrame(context, mesh_id);
                         wgpuQueueWriteBuffer(context->queue,mesh->bone_buffer,0,mesh->current_bones, sizeof(context->default_bones));
                     }

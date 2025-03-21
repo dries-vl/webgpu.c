@@ -193,7 +193,7 @@ int tick(struct Platform *p, void *context) {
         // 2127 vertices, 2127 indices
         struct MappedMemory character_mm = load_animated_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
         printf("frame count: %d, bone count: %d\n", fc, bc);
-        character_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &character, 1);
+        character_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
         addGPUMaterialUniform(context, character_mesh_id, &base_shader_id, sizeof(base_shader_id));
         setGPUMeshBoneData(context, character_mesh_id, bf, bc, fc);
         // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
@@ -203,7 +203,7 @@ int tick(struct Platform *p, void *context) {
         void *bf1; int bc1, fc1;
         struct MappedMemory char2_mm = load_animated_mesh(p, "data/models/blender/bin/charA2.bin", &v, &vc, &i, &ic, &bf1, &bc1, &fc1);
         printf("frame count: %d, bone count: %d\n", fc1, bc1);
-        char2_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &character2, 1);
+        char2_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character2, 1);
         addGPUMaterialUniform(context, char2_mesh_id, &base_shader_id, sizeof(base_shader_id));
         setGPUMeshBoneData(context, char2_mesh_id, bf1, bc1, fc1);
         // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
@@ -211,14 +211,14 @@ int tick(struct Platform *p, void *context) {
         // p->unmap_file(&char2_mm);
         
         struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
-        cube_mesh_id = createGPUMesh(context, main_pipeline, v, vc, i, ic, &cube, 1);
+        cube_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &cube, 1);
         addGPUMaterialUniform(context, cube_mesh_id, &reflect_shader_id, sizeof(reflect_shader_id));
         p->unmap_file(&cube_mm);
 
         // PREDEFINED MESHES
-        ground_mesh_id = createGPUMesh(context, main_pipeline, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
+        ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
         addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
-        quad_mesh_id = createGPUMesh(context, main_pipeline, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
+        quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
         addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
         // todo: one shared material
         // todo: why are functions directly available here (should use struct?) ~Instance struct should be known, functions not somehow
@@ -264,7 +264,7 @@ int tick(struct Platform *p, void *context) {
             pines[j].transform[14] = 10.0 * sin(j * 0.314 * 2);
             // mesh
             struct MappedMemory pine_mm = load_mesh(p, "data/models/bin/pine.bin", &v, &vc, &i, &ic);
-            pine_mesh_id[j] = createGPUMesh(context, main_pipeline, v, vc, i, ic, &pines[j], 1);
+            pine_mesh_id[j] = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &pines[j], 1);
             p->unmap_file(&pine_mm);
             // texture
             struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap_2.bin", &w, &h);
