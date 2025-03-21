@@ -9,6 +9,9 @@ make sure that clang does not link with stdlib, doesn't expect a main function, 
 > tcc webgpu.c -L. -lwgpu_native -shared -rdynamic
 > tcc main.c -L. -lwebgpu -run
 
+# compiling with GCC (in powershell with ';' to separate successive commands)
+> gcc main.c -L. -lwebgpu; ./a.exe
+
 # basic shadow map implementation
 ![shadows.png](data/screenshots/shadows.png)
 # wireframe view

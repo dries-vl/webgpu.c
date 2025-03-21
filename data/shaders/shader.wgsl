@@ -103,17 +103,20 @@ struct VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(tex_0, texture_sampler, input.uv);
-    if (tex_color.a < 0.2) {
+    if (tex_color.a < 0.5) {
         discard;
     }
-    let shadow = calculate_shadow(input);
-    let depth = (input.pos.z / input.pos.w);
-    let ambient_light = 0.2;
-    let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
-    let dir_light_color = vec3(1.,1.,.5) * input.l * shadow;
-    var color = tex_color.rgb * min(ambient_light_color + dir_light_color, vec3(1.));
+    var color = tex_color.rgb;
+    if (material_uniforms.shader >= 1) {
+        let shadow = calculate_shadow(input);
+        let depth = (input.pos.z / input.pos.w);
+        let ambient_light = 0.2;
+        let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
+        let dir_light_color = vec3(1.,1.,.5) * input.l * shadow;
+        color = tex_color.rgb * min(ambient_light_color + dir_light_color, vec3(1.));
 
-    color = color - (color * (depth/20.0));
+        color = color - (color * (depth/20.0));
+    }
 
     return vec4<f32>(color, tex_color.a);
     // todo: normals are not smoothed between triangles in some meshes, causing jank lighting
@@ -140,12 +143,13 @@ fn calculate_shadow(input: VertexOutput) -> f32 {
     let bias = 0.001;
     let texel_size = vec2<f32>(1. / 1024.0, 1. / 1024.0); // assuming 1024x1024 shadow map resolution
     var shadow_sum: f32 = 0.0;
-    for (var x: i32 = -2; x <= 2; x = x + 1) {
-        for (var y: i32 = -2; y <= 2; y = y + 1) {
+    let samples: i32 = 1;
+    for (var x: i32 = -samples; x <= samples; x = x + 1) {
+        for (var y: i32 = -samples; y <= samples; y = y + 1) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
             shadow_sum += textureSampleCompare(shadow_map, shadow_sampler, input.shadow_pos.xy + offset, input.shadow_pos.z - bias);
         }
     }
-    let shadow_factor = shadow_sum / 25.0;
+    let shadow_factor = shadow_sum / pow(f32(samples * 2 + 1), 2.);
     return smoothstep(.2, 1., shadow_factor);
 }

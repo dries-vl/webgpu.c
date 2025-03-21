@@ -77,7 +77,7 @@ inline unsigned long long read_cycle_count() {
     return __rdtsc();
 }
 #else
-inline unsigned long long read_cycle_count() {
+unsigned long long read_cycle_count() { // inline fails with gcc, but works with tcc (?)
     unsigned int lo, hi;
     __asm__ __volatile__ (
         "rdtsc"
