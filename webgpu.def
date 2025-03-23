@@ -2,6 +2,8 @@ LIBRARY webgpu.dll
 
 EXPORTS
 DllMain
+MSAA_ENABLED
+SHADOWS_ENABLED
 __chkstk
 _dllstart
 _edata

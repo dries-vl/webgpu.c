@@ -10,6 +10,7 @@
 #include "game_data.h"
 
 #pragma region PREDEFINED DATA
+static const WGPUTextureFormat screen_color_format = WGPUTextureFormat_RGBA8UnormSrgb;
 #define MAX_TEXTURES 4
 static const WGPUBindGroupLayoutDescriptor PER_MATERIAL_BINDGROUP_LAYOUT_DESC = {
     .entryCount = 1 + MAX_TEXTURES, // one for the sampler + the textures
@@ -36,8 +37,8 @@ static const WGPUVertexBufferLayout VERTEX_LAYOUT[2] = {
         .attributes = (const WGPUVertexAttribute[]) {
             { .format = WGPUVertexFormat_Uint32x4, .offset = 0,  .shaderLocation = 0 }, // data[4]  (16 bytes)
             { .format = WGPUVertexFormat_Float32x3, .offset = 16, .shaderLocation = 1 }, // position[3] (12 bytes)
-            { .format = WGPUVertexFormat_Unorm8x4,   .offset = 28, .shaderLocation = 2 }, // normal[4]  (4 bytes)
-            { .format = WGPUVertexFormat_Unorm8x4,   .offset = 32, .shaderLocation = 3 }, // tangent[4] (4 bytes)
+            { .format = WGPUVertexFormat_Snorm8x4,   .offset = 28, .shaderLocation = 2 }, // normal[4]  (4 bytes)
+            { .format = WGPUVertexFormat_Snorm8x4,   .offset = 32, .shaderLocation = 3 }, // tangent[4] (4 bytes)
             { .format = WGPUVertexFormat_Unorm16x2,  .offset = 36, .shaderLocation = 4 }, // uv[2]      (4 bytes)
             { .format = WGPUVertexFormat_Unorm8x4,   .offset = 40, .shaderLocation = 5 }, // bone_weights[4] (4 bytes)
             { .format = WGPUVertexFormat_Uint8x4,    .offset = 44, .shaderLocation = 6 }  // bone_indices[4] (4 bytes)
@@ -263,7 +264,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     WGPUSurfaceCapabilities caps = {0};
     wgpuSurfaceGetCapabilities(context.surface, context.adapter, &caps);
-    WGPUTextureFormat chosenFormat = WGPUTextureFormat_RGBA8UnormSrgb;
+    WGPUTextureFormat chosenFormat = screen_color_format;
     // *Rgba8UnormSrgb seems slightly slower than Rgba8Unorm for some reason*
     // if (caps.formatCount > 0) { // selects Rgba8UnormSrgb it seems
     //     chosenFormat = caps.formats[0];
@@ -443,9 +444,9 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .label = "DEPTH TEXTURE",
             .dimension = WGPUTextureDimension_2D,
             .size = { .width = width, .height = height, .depthOrArrayLayers = 1 },
-            .format = WGPUTextureFormat_Depth24PlusStencil8, // Or Depth32Float if supported
+            .format = WGPUTextureFormat_Depth32Float, // Or Depth32Float if supported
             .mipLevelCount = 1,
-            .sampleCount = MSAA ? 4 : 1,
+            .sampleCount = MSAA_ENABLED ? 4 : 1,
             .nextInChain = NULL,
         };
         WGPUTexture depthTexture = wgpuDeviceCreateTexture(context.device, &depthTextureDesc);
@@ -493,7 +494,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     }
 
     // Create a multisample texture for MSAA
-    if (MSAA) {
+    if (MSAA_ENABLED) {
         WGPUTextureDescriptor msaaDesc = {0};
         msaaDesc.usage = WGPUTextureUsage_RenderAttachment;
         msaaDesc.dimension = WGPUTextureDimension_2D;
@@ -659,7 +660,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     prim.frontFace = WGPUFrontFace_CCW;
     rpDesc.primitive = prim;
     WGPUMultisampleState ms = {0};
-    ms.count = MSAA ? 4 : 1; // *MSAA anti aliasing* ~set it to 1 to avoid, and don't set the target to msaa texture in draw_frame
+    ms.count = MSAA_ENABLED ? 4 : 1; // *MSAA anti aliasing* ~set it to 1 to avoid, and don't set the target to msaa texture in draw_frame
     ms.mask = 0xFFFFFFFF;
     rpDesc.multisample = ms;
     // add depth texture
@@ -921,6 +922,7 @@ int createGPUMesh(void *context_ptr, int pipeline_id, enum MeshFlags flags, void
     }
 
     // Set default bone uniform bindgroup & buffer
+    // todo: animations should become per-instance instead of per-mesh
     {
         mesh->mesh_bindgroup = context->defaultBoneBindGroup;
         mesh->bone_buffer = context->defaultBoneBuffer;
@@ -1162,7 +1164,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
     if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success) return 0.0f;
     WGPUTextureViewDescriptor d = {
-        .format = WGPUTextureFormat_RGBA8UnormSrgb,
+        .format = screen_color_format,
         .dimension = WGPUTextureViewDimension_2D,
         .baseMipLevel = 0,
         .mipLevelCount = 1,
@@ -1175,7 +1177,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     context->currentEncoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
     WGPURenderPassColorAttachment colorAtt = {0};
     colorAtt.view = context->currentView;
-    if (MSAA) {colorAtt.view = context->msaa_texture_view; colorAtt.resolveTarget = context->currentView;}
+    if (MSAA_ENABLED) {colorAtt.view = context->msaa_texture_view; colorAtt.resolveTarget = context->currentView;}
     colorAtt.loadOp = WGPULoadOp_Clear;
     colorAtt.storeOp = WGPUStoreOp_Store;
     colorAtt.clearValue = (WGPUColor){0., 0., 0., 1.0};
@@ -1186,6 +1188,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     
     context->currentPass = wgpuCommandEncoderBeginRenderPass(context->currentEncoder, &passDesc);
 
+    /*
     wgpuRenderPassEncoderSetViewport(
         context->currentPass,
         offset_x,   // x
@@ -1200,6 +1203,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         (uint32_t)offset_x, (uint32_t)offset_y,
         (uint32_t)viewport_width, (uint32_t)viewport_height
     );
+    */
 
     // Write CPU–side uniform data to GPU
     // todo: condition to only do when updated data
@@ -1208,7 +1212,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     // SHADOW PASS
     // Reuse the global pipeline uniform data in the shader uniforms // todo: is it possible to reuse the same gpu-buffer and write only once?
     // wgpuQueueWriteBuffer(context->queue, context->shadow_uniform_buffer, 0, context->pipelines[0].global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
-    {
+    if (SHADOWS_ENABLED) {
         // 1. Create a command encoder for the shadow pass.
         WGPUCommandEncoderDescriptor shadowEncDesc = {0};
         WGPUCommandEncoder shadowEncoder = wgpuDeviceCreateCommandEncoder(context->device, &shadowEncDesc);
@@ -1270,9 +1274,6 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         // Submit the shadow command buffer.
         wgpuQueueSubmit(context->queue, 1, &shadowCmdBuf);
         wgpuCommandBufferRelease(shadowCmdBuf);
-
-        // ----- Now proceed with your main render pass -----
-        // (The main pass will sample context->shadow_texture_view using the PCF code in your fragment shader.)
     }
 
     // Loop through all pipelines and draw each one
@@ -1355,16 +1356,17 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     wgpuCommandEncoderRelease(context->currentEncoder);
     wgpuQueueSubmit(context->queue, 1, &cmdBuf);
 
-    // Wait on the fence to measure GPU work time
-    // float ms_waited_on_gpu = fenceAndWait(context);
+    // Wait on the fence to measure GPU work time // *ONLY USE FOR DEBUG, OTHERWISE DON'T SYNC TO AVOID SLOWDOWN*
+    float ms_waited_on_gpu = 0.;
+    ms_waited_on_gpu = fenceAndWait(context);
 
     // Release command buffer and present the surface.
-        wgpuCommandBufferRelease(cmdBuf);
+    wgpuCommandBufferRelease(cmdBuf);
     wgpuSurfacePresent(context->surface);
     wgpuTextureViewRelease(context->currentView);
     context->currentView = NULL;
     wgpuTextureRelease(context->currentSurfaceTexture.texture);
     context->currentSurfaceTexture.texture = NULL;
 
-    return -1.0;
+    return ms_waited_on_gpu;
 }

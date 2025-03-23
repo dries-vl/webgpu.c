@@ -1,10 +1,13 @@
 // Global uniform block containing the light view-projection matrix,
-// among other parameters (brightness, time, etc.).
+// among other parameters (brightness, time, etc.)
+// todo: we should use a struct in the C-code to avoid ordering issues and spaggheti mess
 struct GlobalUniforms {
     brightness: f32,
     time: f32,
     view: mat4x4<f32>,         // unused in shadow pass
     projection: mat4x4<f32>,   // unused in shadow pass
+    shadows: u32,              // unused in shadow pass
+    camera_world_space: vec4<f32>,
     light_view_proj: mat4x4<f32>,
 };
 struct MeshUniforms {

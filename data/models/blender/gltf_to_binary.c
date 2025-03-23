@@ -46,8 +46,8 @@ typedef struct {
 typedef struct {
     unsigned int data[4];         // 16 bytes (unused placeholder)
     float position[3];            // 12 bytes
-    unsigned char normal[4];      // 4 bytes (normalized)
-    unsigned char tangent[4];     // 4 bytes (normalized)
+    char normal[4];               // 4 bytes (signed normalized)
+    char tangent[4];              // 4 bytes (signed normalized)
     unsigned short uv[2];         // 4 bytes (16-bit texcoords)
     unsigned char bone_weights[4]; // 4 bytes (0–255 weights)
     unsigned char bone_indices[4]; // 4 bytes (bone indices)
@@ -61,6 +61,14 @@ static unsigned char float_to_unorm8(float v) {
     if (n < 0)   n = 0;
     if (n > 255) n = 255;
     return (unsigned char)n;
+}
+
+// Convert a float in [-1,1] to an 8-bit signed normalized value.
+static char float_to_snorm8(float v) {
+    int n = (int)roundf(v * 127.0f);
+    if (n < -128) n = -128;
+    if (n > 127)  n = 127;
+    return (char)n;
 }
 
 // Multiply two 4x4 matrices (a and b) assumed to be in column-major order.
@@ -428,25 +436,26 @@ static void process_file(const char* filename) {
             float norm[3] = {0};
             cgltf_accessor_read_float(norm_accessor, i, norm, 3);
             for (int j = 0; j < 3; j++)
-                vertices[i].normal[j] = float_to_unorm8(norm[j]);
+                vertices[i].normal[j] = float_to_snorm8(norm[j]);
         } else {
             float default_norm[3] = {0.0f, 0.0f, 1.0f};
             for (int j = 0; j < 3; j++)
-                vertices[i].normal[j] = float_to_unorm8(default_norm[j]);
+                vertices[i].normal[j] = float_to_snorm8(default_norm[j]);
         }
-        vertices[i].normal[3] = 255;
+        // Set the fourth component to maximum positive value for snorm (equivalent to 1.0 normalized)
+        vertices[i].normal[3] = 127;
 
         // Tangent.
         if (tang_accessor) {
             float tang[4];
             cgltf_accessor_read_float(tang_accessor, i, tang, 4);
             for (int j = 0; j < 4; j++)
-                vertices[i].tangent[j] = float_to_unorm8(tang[j]);
+                vertices[i].tangent[j] = float_to_snorm8(tang[j]);
         } else {
-            vertices[i].tangent[0] = float_to_unorm8(1.0f);
-            vertices[i].tangent[1] = float_to_unorm8(0.0f);
-            vertices[i].tangent[2] = float_to_unorm8(0.0f);
-            vertices[i].tangent[3] = float_to_unorm8(1.0f);
+            vertices[i].tangent[0] = float_to_snorm8(1.0f);
+            vertices[i].tangent[1] = float_to_snorm8(0.0f);
+            vertices[i].tangent[2] = float_to_snorm8(0.0f);
+            vertices[i].tangent[3] = float_to_snorm8(1.0f);
         }
 
         // Texcoord.
@@ -630,9 +639,9 @@ static void process_file(const char* filename) {
                     cgltf_node* bone_node = skin->joints[b];
                     float G_current[16];
                     compute_global_transform(bone_node, anim, t, G_current);
-float combined[16];
-multiply_matrix4x4(G_current, &corrected_invBind[b * 16], combined);
-memcpy(finalBone, combined, 16 * sizeof(float));
+                    float combined[16];
+                    multiply_matrix4x4(G_current, &corrected_invBind[b * 16], combined);
+                    memcpy(finalBone, combined, 16 * sizeof(float));
 #ifdef DEBUG_BONES
                     if (f==0) {
                         printf("Bone %u final transform (frame=0):\n", b);

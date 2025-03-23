@@ -399,6 +399,7 @@ struct debug_info {
     int ms_index; 
     int avg_count; 
     float count;
+    float slowest;
     float ms_last_frame;
     float ms_waited_on_gpu;
 };
@@ -449,8 +450,14 @@ void draw_debug_info() {
     debug_info.count += debug_info.ms_last_frame - debug_info.ms_last_60_frames[debug_info.ms_index];
     debug_info.ms_last_60_frames[debug_info.ms_index] = debug_info.ms_last_frame;
     debug_info.ms_index = (debug_info.ms_index + 1) % debug_info.avg_count;
+    debug_info.slowest = 0.0;
+    for (int i = 0; i < 60; i++) {
+        if (debug_info.ms_last_60_frames[i] > debug_info.slowest) debug_info.slowest = debug_info.ms_last_60_frames[i];
+    }
     char perf_avg_string[256];
     snprintf(perf_avg_string, sizeof(perf_avg_string), "Average frame timing last %d frames: %4.2fms\n", debug_info.avg_count, debug_info.count / (float) debug_info.avg_count);
+    print_on_screen(perf_avg_string);
+    snprintf(perf_avg_string, sizeof(perf_avg_string), "Slowest frame timing last %d frames: %4.2fms\n", debug_info.avg_count, debug_info.slowest);
     print_on_screen(perf_avg_string);
 }
 static long ticks_per_second;

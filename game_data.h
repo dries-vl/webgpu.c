@@ -2,7 +2,8 @@
 #define GAME_DATA_H_
 // todo: avoid this header file, just have it in one of the C files, ideally game.c (it compiles like that, but ide errors annoying) 
 
-static const int MSAA = 0;
+extern const int MSAA_ENABLED = 0;
+extern const int SHADOWS_ENABLED = 1;
 
 #define MAX_PIPELINES             2 // todo: remove, only one pipeline
 #define MAX_MESHES                128
@@ -38,8 +39,8 @@ extern float drawGPUFrame(void *context, int offset_x, int offset_y, int viewpor
 struct Vertex { // 48 bytes
     unsigned int data[4]; // 16 bytes u32 // *info* raw data
     float position[3]; // 12 bytes f32
-    unsigned char normal[4];   // 4 bytes n8
-    unsigned char tangent[4];   // 4 bytes n8
+    char normal[4];   // 4 bytes n8
+    char tangent[4];   // 4 bytes n8
     unsigned short uv[2];       // 4 bytes n16
     unsigned char bone_weights[4]; // 4 bytes n8
     unsigned char bone_indices[4]; // 4 bytes u8 // *info* max 256 bones

@@ -6,13 +6,14 @@
 #include <string.h>
 #include <stdint.h>
 #include <windows.h>
+#include <math.h>
 
 // The new target vertex struct. 48 bytes total.
 typedef struct {
     unsigned int data[4];          // 16 bytes u32 // *info* raw data
     float position[3];             // 12 bytes f32
-    unsigned char normal[4];       // 4 bytes n8
-    unsigned char tangent[4];      // 4 bytes n8
+    char normal[4];                // 4 bytes n8 (signed normalized)
+    char tangent[4];               // 4 bytes n8 (signed normalized)
     unsigned short uv[2];          // 4 bytes n16
     unsigned char bone_weights[4]; // 4 bytes n8
     unsigned char bone_indices[4]; // 4 bytes u8 // *info* max 256 bones
@@ -92,6 +93,14 @@ void push_back_Vertex(VertexArray *arr, Vertex v) {
         }
     }
     arr->data[arr->count++] = v;
+}
+
+// Convert a float in [-1,1] to an 8-bit signed normalized value.
+static char float_to_snorm8(float v) {
+    int n = (int)roundf(v * 127.0f);
+    if (n < -128) n = -128;
+    if (n > 127)  n = 127;
+    return (char)n;
 }
 
 static unsigned short float_to_half(float f) {
@@ -233,23 +242,28 @@ void process_obj_file(const char *filepath) {
                         vert.position[0] = vert.position[1] = vert.position[2] = 0.0f;
                     }
                     
-                    // Normal: convert float normal to 8-bit per channel.
+                    // Normal: convert float normal to 8-bit per channel (signed).
                     if (faceIndices[k].vn != 0 && faceIndices[k].vn <= (int)normals.count) {
                         Vec3 norm = normals.data[faceIndices[k].vn - 1];
-                        // Map from [-1,1] to [0,255]
-                        vert.normal[0] = (unsigned char)((norm.x * 0.5f + 0.5f) * 255.0f);
-                        vert.normal[1] = (unsigned char)((norm.y * 0.5f + 0.5f) * 255.0f);
-                        vert.normal[2] = (unsigned char)((norm.z * 0.5f + 0.5f) * 255.0f);
-                        vert.normal[3] = 0; // extra component (could be used for sign or left as 0)
+                        vert.normal[0] = float_to_snorm8(norm.x);
+                        vert.normal[1] = float_to_snorm8(norm.y);
+                        vert.normal[2] = float_to_snorm8(norm.z);
+                        vert.normal[3] = 127; // represents 1.0 in snorm8
                     } else {
-                        // Default normal: a neutral value (128 represents 0 in our mapping)
-                        vert.normal[0] = vert.normal[1] = vert.normal[2] = 128;
-                        vert.normal[3] = 0;
+                        // Default normal: (0, 0, 1)
+                        vert.normal[0] = float_to_snorm8(0.0f);
+                        vert.normal[1] = float_to_snorm8(0.0f);
+                        vert.normal[2] = float_to_snorm8(1.0f);
+                        vert.normal[3] = 127;
                     }
                     
-                    // Tangent: not provided by OBJ; default to zero.
-                    vert.tangent[0] = vert.tangent[1] = vert.tangent[2] = vert.tangent[3] = 0;
+                    // Tangent: not provided by OBJ; use a default tangent.
+                    vert.tangent[0] = float_to_snorm8(1.0f);
+                    vert.tangent[1] = float_to_snorm8(0.0f);
+                    vert.tangent[2] = float_to_snorm8(0.0f);
+                    vert.tangent[3] = float_to_snorm8(1.0f);
                     
+                    // Texture coordinates.
                     if (faceIndices[k].vt != 0 && faceIndices[k].vt <= (int)uvs.count) {
                         Vec2 uv = uvs.data[faceIndices[k].vt - 1];
                         float u = uv.u < 0 ? 0 : (uv.u > 1 ? 1 : uv.u);
@@ -282,7 +296,7 @@ void process_obj_file(const char *filepath) {
     fclose(fp);
     
     // Create output folder "bin" is assumed to exist (or created by main)
-    // Build the output file name: "bin/<basename>.bin"
+    // Build the output file name: "bin\<basename>.bin"
     char outputPath[MAX_PATH];
     const char *filename = strrchr(filepath, '\\');
     if (!filename)

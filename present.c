@@ -117,12 +117,13 @@ int tick(struct Platform *p, void *context) {
     static int character_mesh_id;
     static int char2_mesh_id;
     static int cube_mesh_id;
+    static int cube_outline_id;
 
     // todo: separate material from mesh -> set material when creating mesh, and set shader once in material
     // todo: RGB 3x8bit textures, no alpha
     static int hud_shader_id = 0;
     static int base_shader_id = 1;
-    static int reflect_shader_id = 2;
+    static int outline_shader_id = 2;
 
     static int ground_mesh_id;
     static int quad_mesh_id;
@@ -148,6 +149,9 @@ int tick(struct Platform *p, void *context) {
     static int timeOffset;
     static int viewOffset; 
     static int projectionOffset;
+    static int shadowsOffset;
+    static float camera_world_space_offset;
+    static float camera_world_space[4] = {0};
 
     // instance data cannot go out of scope!
     static struct Instance character = {
@@ -212,7 +216,7 @@ int tick(struct Platform *p, void *context) {
         
         struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
         cube_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &cube, 1);
-        addGPUMaterialUniform(context, cube_mesh_id, &reflect_shader_id, sizeof(reflect_shader_id));
+        addGPUMaterialUniform(context, cube_mesh_id, &base_shader_id, sizeof(base_shader_id));
         p->unmap_file(&cube_mm);
 
         // PREDEFINED MESHES
@@ -221,7 +225,6 @@ int tick(struct Platform *p, void *context) {
         quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
         addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
         // todo: one shared material
-        // todo: why are functions directly available here (should use struct?) ~Instance struct should be known, functions not somehow
 
         // TEXTURE
         int w, h = 0;
@@ -247,6 +250,8 @@ int tick(struct Platform *p, void *context) {
         timeOffset = addGPUGlobalUniform(context, main_pipeline, &timeVal, sizeof(float));
         viewOffset = addGPUGlobalUniform(context, main_pipeline, view, sizeof(view));
         projectionOffset = addGPUGlobalUniform(context, main_pipeline, projection, sizeof(projection));
+        shadowsOffset = addGPUGlobalUniform(context, main_pipeline, &SHADOWS_ENABLED, sizeof(SHADOWS_ENABLED));
+        camera_world_space_offset = addGPUGlobalUniform(context, main_pipeline, &camera_world_space, sizeof(camera_world_space));
 
         // gamestate shit
         initGamestate(&gameState);
@@ -298,22 +303,28 @@ int tick(struct Platform *p, void *context) {
     //printf("Collision detected: %4.2f\n", separation.x);
     //view[13] = cameraLocation[1];
     float inv[16];
-    inverseViewMatrix(view, inv); // todo: why do we need the inverse here?
+    inverseViewMatrix(view, inv);
     setGPUGlobalUniformValue(context, main_pipeline, timeOffset, &timeVal, sizeof(float));
     setGPUGlobalUniformValue(context, main_pipeline, viewOffset, &inv, sizeof(view));
 
-    // SET POSITION FOR SHADOWS
-    float light_view_proj[16]; // Q: should we pass view and proj separately instead for simplicity and flexibility?
-    computeDynamicLightViewProj(light_view_proj, playerLocation);
-    static int light_proj_offset = -1;
-    if (light_proj_offset == -1) light_proj_offset = addGPUGlobalUniform(context, 0, light_view_proj, sizeof(light_view_proj));
-    setGPUGlobalUniformValue(context, main_pipeline, light_proj_offset, light_view_proj, sizeof(light_view_proj));
+    float new_[4] = {view[12], view[13], view[14], 1.0};
+    memcpy(camera_world_space, &new_, sizeof(camera_world_space));
+    setGPUGlobalUniformValue(context, main_pipeline, camera_world_space_offset, &camera_world_space, sizeof(camera_world_space));
+
+    // SET SHADOWS
+    if (SHADOWS_ENABLED) {
+        static int light_proj_offset = -1;
+        float light_view_proj[16]; // Q: should we pass view and proj separately instead for simplicity and flexibility?
+        computeDynamicLightViewProj(light_view_proj, playerLocation);
+        if (light_proj_offset == -1) light_proj_offset = addGPUGlobalUniform(context, 0, light_view_proj, sizeof(light_view_proj));
+        setGPUGlobalUniformValue(context, main_pipeline, light_proj_offset, light_view_proj, sizeof(light_view_proj));
+    }
     // END SHADOWS
 
     // update the instances of the text
     setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
 
-    drawGPUFrame(context, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+    float gpu_ms = drawGPUFrame(context, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
 
     {
         screen_chars_index = 0;
@@ -321,6 +332,18 @@ int tick(struct Platform *p, void *context) {
         memset(char_instances, 0, sizeof(char_instances));
         setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
     }
+
+    char gpu_string[256];
+    static float last_60_gpu_times[60] = {0};
+    float avg_last_60_frames = 0.0;
+    static index = 0;
+    last_60_gpu_times[index] = gpu_ms;
+    index = (index + 1) % 60;
+    for (int i = 0; i < 60; i++) {
+        avg_last_60_frames += last_60_gpu_times[i] / 60.;
+    }
+    snprintf(gpu_string, sizeof(gpu_string), "GPU time: %4.2fms\n", avg_last_60_frames);
+    print_on_screen(gpu_string);
 
     return 0;
 }
