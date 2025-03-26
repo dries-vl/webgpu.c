@@ -20,3 +20,7 @@ make sure that clang does not link with stdlib, doesn't expect a main function, 
 ![depth.png](data/screenshots/depth.png)
 # shadow map extent
 ![shadow_map.png](data/screenshots/shadow_map.png)
+# volumetric lighting expensive raymarching implementation
+![volumetric.png](data/screenshots/volumetric.png)
+# reflections
+![reflections.png](data/screenshots/reflections.png)

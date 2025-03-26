@@ -157,16 +157,16 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     if (material_uniforms.shader == 1) {
-        // apply light
-        let ambient_light = 0.2;
-        let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
-        let dir_light_color = vec3(1.,1.,.5) * input.light * shadow;
-        color = color * min(ambient_light_color + dir_light_color, vec3(1.));
         // obscure depth
         let depth_limit = 20.0;
         let depth_cutoff = pow(depth/depth_limit, 4.0);
         color = color - (color * depth_cutoff);
         alpha = alpha - (alpha * depth_cutoff);
+        // apply light
+        let ambient_light = 0.2;
+        let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
+        let dir_light_color = vec3(1.,1.,.5) * input.light * shadow;
+        color = color * min(ambient_light_color + dir_light_color, vec3(1.));
     }
 
     // Inline Volumetric Lighting Pass
