@@ -115,6 +115,8 @@ int tick(struct Platform *p, void *context) {
     static int main_pipeline;
     
     static int character_mesh_id;
+    static int character_shadow_id;
+    static int character_reflection_id;
     static int char2_mesh_id;
     static int cube_mesh_id;
     static int cube_outline_id;
@@ -123,7 +125,8 @@ int tick(struct Platform *p, void *context) {
     // todo: RGB 3x8bit textures, no alpha
     static int hud_shader_id = 0;
     static int base_shader_id = 1;
-    static int outline_shader_id = 2;
+    static int shadow_shader_id = 2;
+    static int reflection_shader_id = 3;
 
     static int ground_mesh_id;
     static int quad_mesh_id;
@@ -198,20 +201,26 @@ int tick(struct Platform *p, void *context) {
         struct MappedMemory character_mm = load_animated_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
         printf("frame count: %d, bone count: %d\n", fc, bc);
         character_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
-        addGPUMaterialUniform(context, character_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        character_shadow_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
+        character_reflection_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
+        addGPUMaterialUniform(context, character_mesh_id, &base_shader_id, sizeof(int));
+        addGPUMaterialUniform(context, character_shadow_id, &shadow_shader_id, sizeof(int));
+        addGPUMaterialUniform(context, character_reflection_id, &reflection_shader_id, sizeof(int));
         setGPUMeshBoneData(context, character_mesh_id, bf, bc, fc);
+        setGPUMeshBoneData(context, character_shadow_id, bf, bc, fc);
+        setGPUMeshBoneData(context, character_reflection_id, bf, bc, fc);
         // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
         // todo: fix script for correct UVs etc.
         // p->unmap_file(&character_mm);
         
-        void *bf1; int bc1, fc1;
-        struct MappedMemory char2_mm = load_animated_mesh(p, "data/models/blender/bin/charA2.bin", &v, &vc, &i, &ic, &bf1, &bc1, &fc1);
-        printf("frame count: %d, bone count: %d\n", fc1, bc1);
-        char2_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character2, 1);
-        addGPUMaterialUniform(context, char2_mesh_id, &base_shader_id, sizeof(base_shader_id));
-        setGPUMeshBoneData(context, char2_mesh_id, bf1, bc1, fc1);
-        // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
-        // todo: fix script for correct UVs etc.
+        // void *bf1; int bc1, fc1;
+        // struct MappedMemory char2_mm = load_animated_mesh(p, "data/models/blender/bin/charA2.bin", &v, &vc, &i, &ic, &bf1, &bc1, &fc1);
+        // printf("frame count: %d, bone count: %d\n", fc1, bc1);
+        // char2_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character2, 1);
+        // addGPUMaterialUniform(context, char2_mesh_id, &shadow_shader_id, sizeof(shadow_shader_id));
+        // setGPUMeshBoneData(context, char2_mesh_id, bf1, bc1, fc1);
+        // // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
+        // // todo: fix script for correct UVs etc.
         // p->unmap_file(&char2_mm);
         
         struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
@@ -242,6 +251,7 @@ int tick(struct Platform *p, void *context) {
 
         struct MappedMemory colormap_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
         colormap_texture_id = createGPUTexture(context, character_mesh_id, colormap_mm.data, w, h);
+        colormap_texture_id = createGPUTexture(context, character_reflection_id, colormap_mm.data, w, h);
         colormap_texture_id = createGPUTexture(context, char2_mesh_id, colormap_mm.data, w, h);
         p->unmap_file(&colormap_mm);
 
@@ -324,7 +334,7 @@ int tick(struct Platform *p, void *context) {
     // update the instances of the text
     setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
 
-    float gpu_ms = drawGPUFrame(context, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+    float gpu_ms = drawGPUFrame(context, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0);
 
     {
         screen_chars_index = 0;

@@ -49,7 +49,7 @@ struct VertexInput {
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var output: VertexOutput;
-    let i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
+    var i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
     let vertex_position = vec4<f32>(input.position, 1.0);
     if (material_uniforms.shader >= 1u) {
         // BASE SHADER
@@ -59,19 +59,26 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
             mesh_uniforms.bones[input.bone_indices[2]] * input.bone_weights[2] +
             mesh_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
 
-        let world_space = i_transform * skin_matrix * vertex_position;
-        let view_space = global_uniforms.view * world_space;
-        output.pos = global_uniforms.projection * view_space;
+        var world_space = i_transform * skin_matrix * vertex_position;
+
+        if (material_uniforms.shader == 2) {
+            let above = 0.01;
+            let distance = -(world_space.y - above) / vec3(0.5, -0.8, 0.5).y;
+            let projected_pos = world_space.xyz + (distance * vec3(0.5, -0.8, 0.5));
+            world_space = vec4(projected_pos, 1.0);
+        }
+        
+        var view_space = global_uniforms.view * world_space;
+        var clip_space = global_uniforms.projection * view_space;
+
+        output.pos = clip_space;
         output.world_space = world_space;
         output.center_pos = input.i_pos_3;
 
-        if (material_uniforms.shader == 2) {
-            output.pos.z += 0.001;
-        }
-
         // DIRECTIONAL LIGHT
-        let world_space_normal = normalize(((i_transform * skin_matrix) * vec4<f32>(input.normal.xyz, 0.0)).xyz);
+        var world_space_normal = normalize(((i_transform * skin_matrix) * vec4<f32>(input.normal.xyz, 0.0)).xyz);
         let diff = max(dot(world_space_normal, -vec3(0.5, -0.8, 0.5)), 0.0);
+
         output.world_normal = world_space_normal;
         output.light = diff;
 
@@ -128,7 +135,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         shadow = calculate_shadow(input);
     }
 
-    if (material_uniforms.shader == 1) {
+    if (material_uniforms.shader >= 1) {
         // apply light
         let ambient_light = 0.2;
         let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
@@ -136,22 +143,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         color = color * min(ambient_light_color + dir_light_color, vec3(1.));
         // obscure depth
         color = color - (color * (depth/depth_limit));
-    } else if (material_uniforms.shader == 2) {
-        color = vec3(0.);
-        alpha = 1.;
     }
-    
-    // Compute the Fresnel factor using a power term.
-    // The exponent (5.0) controls the sharpness of the rim.
-    // let N = input.world_normal;
-    // let vector = global_uniforms.camera_world_space.xyz - input.world_space.xyz;
-    // let len = length(vector) * 0.05;
-    // let V = normalize(vector);
-    // let dotNV = max(dot(N, V), 0.);
-    // let fresnel = pow(1.0 - dotNV, 5.0);
-    // color += vec3(fresnel,0.,0.);
 
-        // Inline Volumetric Lighting Pass
+    // Inline Volumetric Lighting Pass
     // -------------------------------------------
     // Inline Volumetric Lighting with Shadow Sampling
     var volLight = 0.0;
@@ -178,7 +172,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         );
         
         // Sample the shadow map; result is 1.0 if lit, 0.0 if in shadow (with PCF it might be fractional).
-        let shadowVal = textureSampleCompare(shadow_map, shadow_sampler, shadowCoord.xy, shadowCoord.z - 0.002);
+        let shadowVal = textureSampleCompare(shadow_map, shadow_sampler, shadowCoord.xy, shadowCoord.z + 0.002);
         
         // Calculate the medium density at this sample. You can combine this with shadowVal.
         let density = exp(-t * decayFactor);
@@ -191,7 +185,21 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let volumetricIntensity = 0.1;
     // -------------------------------------------
     color += (volumetricIntensity * volLight * vec3(0.8, 0.4, 0.2));
-    color = vec3(min(color.x, 1.), min(color.y, 1.), min(color.z, 1.));
+
+    if (material_uniforms.shader == 2) {
+        color = vec3(0.,0.,0.5);
+        alpha = 1.;
+    }
+    
+    // Compute the Fresnel factor using a power term.
+    // The exponent (5.0) controls the sharpness of the rim.
+    // let N = input.world_normal;
+    // let vector = global_uniforms.camera_world_space.xyz - input.world_space.xyz;
+    // let len = length(vector) * 0.05;
+    // let V = normalize(vector);
+    // let dotNV = max(dot(N, V), 0.);
+    // let fresnel = pow(1.0 - dotNV, 5.0);
+    // color += vec3(fresnel,0.,0.);
 
     return vec4<f32>(color, alpha);
     // todo: normals are not smoothed between triangles in some meshes, causing jank lighting

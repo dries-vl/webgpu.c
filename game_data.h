@@ -1,9 +1,9 @@
 #ifndef GAME_DATA_H_
 #define GAME_DATA_H_
-// todo: avoid this header file, just have it in one of the C files, ideally game.c (it compiles like that, but ide errors annoying) 
 
 extern const int MSAA_ENABLED = 0;
 extern const int SHADOWS_ENABLED = 1;
+extern const int POST_PROCESSING_ENABLED = 1;
 
 #define MAX_PIPELINES             2 // todo: remove, only one pipeline
 #define MAX_MESHES                128
@@ -26,6 +26,7 @@ enum MeshFlags {
 extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height);
 extern int   createGPUPipeline(void *context, const char *shader);
 extern void  create_shadow_pipeline(void *context);
+extern void  create_postprocessing_pipeline(void *context);
 extern int   createGPUMesh(void *context, int material_id, enum MeshFlags flags, void *v, int vc, void *i, int ic, void *ii, int iic);
 extern void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc);
 extern int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
@@ -34,7 +35,7 @@ extern void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset
 extern int   addGPUMaterialUniform(void *context, int material_id, const void* data, int data_size);
 extern void  setGPUMaterialUniformValue(void *context, int material_id, int offset, const void* data, int dataSize);
 extern void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
-extern float drawGPUFrame(void *context, int offset_x, int offset_y, int viewport_width, int viewport_height);
+extern float drawGPUFrame(void *context, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk);
 
 struct Vertex { // 48 bytes
     unsigned int data[4]; // 16 bytes u32 // *info* raw data
