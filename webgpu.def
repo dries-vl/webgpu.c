@@ -4,7 +4,6 @@ EXPORTS
 DllMain
 MSAA_ENABLED
 POST_PROCESSING_ENABLED
-SAVE_TO_DISK
 SHADOWS_ENABLED
 __chkstk
 _dllstart
@@ -13,7 +12,6 @@ _end
 _etext
 addGPUGlobalUniform
 addGPUMaterialUniform
-createAndSaveCubemap
 createGPUContext
 createGPUMesh
 createGPUPipeline
@@ -26,6 +24,7 @@ frmwrk_load_shader_module
 frmwrk_print_adapter_info
 frmwrk_print_global_report
 frmwrk_setup_logging
+load_cube_map
 selectDiscreteGPU
 setGPUGlobalUniformValue
 setGPUInstanceBuffer

@@ -6,6 +6,7 @@
 #include <time.h>
 #include <math.h>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION 1
 #include "stb_image_write.h"
 
 #include "wgpu.h"
@@ -148,11 +149,15 @@ typedef struct {
     // msaa texture
     WGPUTexture     msaa_texture;
     WGPUTextureView msaa_texture_view;
-    // shadow texture
+    // shadow texture // todo: cascading shadow maps + dyn. updating
     WGPURenderPipeline shadow_pipeline;
     WGPUTexture        shadow_texture;
     WGPUTextureView    shadow_texture_view;
     WGPUSampler        shadow_sampler;
+    // reflection cubemap // todo: multiple cubemaps for multiple reflection sources + dyn. updating
+    WGPUTexture        cubemap_texture;
+    WGPUTextureView    cubemap_texture_view;
+    WGPUSampler        cubemap_sampler;
     // global bindgroup
     WGPUBindGroupLayout global_layout;
     WGPUBindGroup       global_bindgroup;
@@ -180,7 +185,6 @@ static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice dev
     else
         fprintf(stderr, "[webgpu.c] RequestDevice failed: %s\n", message);
 }
-// Code to force select dedicated gpu if possible
 WGPUAdapter selectDiscreteGPU(WGPUInstance instance) {
     // First call to get the number of available adapters.
     WGPUInstanceEnumerateAdapterOptions opts = {.backends = WGPUInstanceBackend_All};
@@ -331,7 +335,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     // Create the per-pipeline bind group layout (ex. the dynamic offset buffer for all materials' uniforms, the shadow texture)
     {
-        #define PIPELINE_BINDGROUP_ENTRIES 3
+        #define PIPELINE_BINDGROUP_ENTRIES 5
         WGPUBindGroupLayoutEntry entries[PIPELINE_BINDGROUP_ENTRIES] = {
             // Per-material uniforms (with offset to differentiate materials)
             {
@@ -341,7 +345,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
                 .buffer.minBindingSize = MATERIAL_UNIFORM_CAPACITY,
                 .buffer.hasDynamicOffset = 1,
             },
-            // Shadow map texture view.
+            // Shadow map texture entry
             {
                 .binding = 1,
                 .visibility = WGPUShaderStage_Fragment,
@@ -357,6 +361,24 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
                 .visibility = WGPUShaderStage_Fragment,
                 .sampler = {
                     .type = WGPUSamplerBindingType_Comparison, // Comparison sampler for shadow mapping
+                },
+            },
+            // Cubemap texture entry
+            {
+                .binding = 3,
+                .visibility = WGPUShaderStage_Fragment,
+                .texture = {
+                    .sampleType = WGPUTextureSampleType_Float,
+                    .viewDimension = WGPUTextureViewDimension_Cube,
+                    .multisampled = false,
+                },
+            },
+            // Sampler for cubemap
+            {
+                .binding = 4,
+                .visibility = WGPUShaderStage_Fragment,
+                .sampler = {
+                    .type = WGPUSamplerBindingType_Filtering,
                 },
             },
         };
@@ -521,7 +543,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         create_postprocessing_pipeline(&context);
     }
 
-    // Create global shadow texture + sampler
+    // Create global shadow pipeline + texture + sampler
     {
         WGPUTextureDescriptor shadowTextureDesc = {
             .usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding,
@@ -546,6 +568,8 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .compare = WGPUCompareFunction_LessEqual,
         };
         context.shadow_sampler = wgpuDeviceCreateSampler(context.device, &shadowSamplerDesc);
+
+        create_shadow_pipeline(&context);
     }
 
     context.initialized = true;
@@ -690,7 +714,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
         ubDesc2.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
         pipeline->material_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &ubDesc2);
 
-        #define ENTRY_COUNT 3
+        #define ENTRY_COUNT 5
         WGPUBindGroupEntry entries[ENTRY_COUNT] = {
             {
                 .binding = 0,
@@ -705,6 +729,14 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
             {
                 .binding = 2,
                 .sampler = context->shadow_sampler,
+            },
+            {
+                .binding = 3,
+                .textureView = context->cubemap_texture_view,
+            },
+            {
+                .binding = 4,
+                .sampler = context->cubemap_sampler
             }
         };
 
@@ -794,8 +826,8 @@ void create_postprocessing_pipeline(void *context_ptr) {
     // Create a sampler
     WGPUSamplerDescriptor samplerDesc = {0};
     samplerDesc.minFilter = WGPUFilterMode_Linear;
-    samplerDesc.magFilter = WGPUFilterMode_Nearest;
-    samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Linear;
+    samplerDesc.magFilter = WGPUFilterMode_Linear;
+    samplerDesc.mipmapFilter = WGPUFilterMode_Linear;
     samplerDesc.lodMinClamp = 0;
     samplerDesc.lodMaxClamp = 0;
     samplerDesc.maxAnisotropy = 1;
@@ -836,7 +868,6 @@ void create_postprocessing_pipeline(void *context_ptr) {
     wgpuPipelineLayoutRelease(blitPipelineLayout);
     wgpuBindGroupLayoutRelease(blitBindGroupLayout);
 }
-
 void create_shadow_pipeline(void *context_ptr) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
 
@@ -1170,6 +1201,53 @@ int createGPUTexture(void *context_ptr, int mesh_id, void *data, int w, int h) {
     return slot;
 }
 
+int load_cube_map(void *context_ptr, void *data[6], int face_size) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
+    WGPUTextureDescriptor texDesc = {
+        .usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding,
+        .dimension = WGPUTextureDimension_2D,
+        .size = (WGPUExtent3D){ .width = face_size, .height = face_size, .depthOrArrayLayers = 6 },
+        .mipLevelCount = 1,
+        .sampleCount = 1,
+        .format = WGPUTextureFormat_RGBA8Unorm,
+    };
+    context->cubemap_texture = wgpuDeviceCreateTexture(context->device, &texDesc);
+    for (int face = 0; face < 6; face++) {
+        WGPUImageCopyTexture copyTex = {
+            .texture = context->cubemap_texture,
+            .mipLevel = 0,
+            .origin = (WGPUOrigin3D){ .x = 0, .y = 0, .z = face },
+        };
+        WGPUTextureDataLayout tdl = {0};
+        tdl.bytesPerRow  = 4 * face_size; // 4 bytes per pixel (RGBA)
+        tdl.rowsPerImage = face_size;
+        WGPUExtent3D ext = { .width = (uint32_t)face_size, .height = (uint32_t)face_size, .depthOrArrayLayers = 1 };
+        wgpuQueueWriteTexture(context->queue, &copyTex, data[face], (size_t)(4 * face_size * face_size), &tdl, &ext);
+    }
+    WGPUTextureViewDescriptor viewDesc = {
+        .dimension = WGPUTextureViewDimension_Cube,
+        .baseMipLevel = 0,
+        .mipLevelCount = 1,
+        .baseArrayLayer = 0,
+        .arrayLayerCount = 6,
+    };
+    context->cubemap_texture_view = wgpuTextureCreateView(context->cubemap_texture, &viewDesc);
+    WGPUSamplerDescriptor samplerDesc = {
+        .label = "CubeSampler",
+        .addressModeU = WGPUAddressMode_ClampToEdge,
+        .addressModeV = WGPUAddressMode_ClampToEdge,
+        .addressModeW = WGPUAddressMode_ClampToEdge,
+        .magFilter = WGPUFilterMode_Linear,
+        .minFilter = WGPUFilterMode_Linear,
+        .mipmapFilter = WGPUFilterMode_Linear,
+        .lodMinClamp = 0.0f,
+        .lodMaxClamp = 1000.0f, // a high value to allow all mip levels
+        .maxAnisotropy = 1,
+    };
+    context->cubemap_sampler = wgpuDeviceCreateSampler(context->device, &samplerDesc);
+    
+}
+
 #pragma region UNIFORMS
 int addGPUGlobalUniform(void *context_ptr, int pipeline_id, const void* data, int data_size) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
@@ -1295,7 +1373,7 @@ static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
     }
     *mappingDone = true;
 }
-float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk) {
+float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     // Start the frame.
     wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
@@ -1366,7 +1444,6 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     
     context->currentPass = wgpuCommandEncoderBeginRenderPass(context->currentEncoder, &passDesc);
 
-    /*
     wgpuRenderPassEncoderSetViewport(
         context->currentPass,
         offset_x,   // x
@@ -1381,7 +1458,6 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         (uint32_t)offset_x, (uint32_t)offset_y,
         (uint32_t)viewport_width, (uint32_t)viewport_height
     );
-    */
 
     // Write CPU–side uniform data to GPU
     // todo: condition to only do when updated data
@@ -1428,6 +1504,14 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                             // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
                             if (1) {
                                 wgpuRenderPassEncoderSetBindGroup(shadowPass, 1, mesh->mesh_bindgroup, 0, NULL);
+                            }
+                            // todo: make this based on mesh setting UPDATE_MESH_INSTANCES, then we don't need to do this for static meshes
+                            // todo: this write buffer is duplicated in both render passes
+                            // If the mesh requires instance data updates, update the instance buffer (this is really expensive!)
+                            if (1) {
+                                unsigned long long instanceDataSize = VERTEX_LAYOUT[1].arrayStride * mesh->instance_count;
+                                // write RAM instances to GPU instances
+                                wgpuQueueWriteBuffer(context->queue,mesh->instanceBuffer,0,mesh->instances, instanceDataSize);
                             }
                             // Bind the mesh's vertex and instance buffers.
                             wgpuRenderPassEncoderSetVertexBuffer(shadowPass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
@@ -1565,7 +1649,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         }
 
         // Write out the image using stb_image_write
-        if (stbi_write_png("screenshot.png", viewport_width, viewport_height, 4, image, viewport_width * bytes_per_pixel)) {
+        if (stbi_write_png(filename, viewport_width, viewport_height, 4, image, viewport_width * bytes_per_pixel)) {
             printf("Screenshot saved successfully.\n");
         } else {
             printf("Failed to save screenshot.\n");
@@ -1629,361 +1713,4 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     context->currentSurfaceTexture.texture = NULL;
 
     return ms_waited_on_gpu;
-}
-
-
-// Include stb_image_write (only one source file should define the implementation)
-#define STB_IMAGE_WRITE_IMPLEMENTATION 1
-#include "stb_image_write.h"  // Ensure STB_IMAGE_WRITE_IMPLEMENTATION is defined in one source file
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-//------------------------------------------------------------------------------
-// Helper math functions (column-major matrices)
-//------------------------------------------------------------------------------
-static float dot3(const float *a, const float *b) {
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-}
-
-static void cross3(const float *a, const float *b, float *result) {
-    result[0] = a[1]*b[2] - a[2]*b[1];
-    result[1] = a[2]*b[0] - a[0]*b[2];
-    result[2] = a[0]*b[1] - a[1]*b[0];
-}
-
-static void normalize3(float *v) {
-    float len = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-    if (len > 0.0f) {
-        v[0] /= len;
-        v[1] /= len;
-        v[2] /= len;
-    }
-}
-
-static void computeLookAt(const float *eye, const float *center, const float *up, float *matrix) {
-    float f[3] = { center[0] - eye[0],
-                   center[1] - eye[1],
-                   center[2] - eye[2] };
-    normalize3(f);
-    float s[3];
-    cross3(f, up, s);
-    normalize3(s);
-    float u[3];
-    cross3(s, f, u);
-    // Build a column-major lookAt matrix.
-    matrix[0] = s[0];
-    matrix[1] = u[0];
-    matrix[2] = -f[0];
-    matrix[3] = 0.0f;
-    matrix[4] = s[1];
-    matrix[5] = u[1];
-    matrix[6] = -f[1];
-    matrix[7] = 0.0f;
-    matrix[8] = s[2];
-    matrix[9] = u[2];
-    matrix[10] = -f[2];
-    matrix[11] = 0.0f;
-    matrix[12] = -dot3(s, eye);
-    matrix[13] = -dot3(u, eye);
-    matrix[14] = dot3(f, eye);
-    matrix[15] = 1.0f;
-}
-
-// Custom perspective function matching your normal rendering projection.
-// Assumes the matrix is stored in row–major order.
-static void computeCustomPerspectiveMatrix(float fovDegrees, float aspect, float near, float far, float *matrix) {
-    float f = 1.0f / tan((fovDegrees * (float)M_PI / 180.0f) / 2.0f);
-    // Row–major order:
-    matrix[0] = f / aspect;   matrix[1] = 0.0f;  matrix[2] = 0.0f;                       matrix[3] = 0.0f;
-    matrix[4] = 0.0f;         matrix[5] = f;     matrix[6] = 0.0f;                       matrix[7] = 0.0f;
-    matrix[8] = 0.0f;         matrix[9] = 0.0f;  matrix[10] = far / (far - near);          matrix[11] = 1.0f;
-    matrix[12] = 0.0f;        matrix[13] = 0.0f; matrix[14] = (-near * far) / (far - near);  matrix[15] = 0.0f;
-}
-
-// Computes the view matrix for a given cubemap face (0 to 5)
-static void computeCubemapViewMatrix(int face, float *matrix) {
-    float eye[3] = { 0.0f, 0.0f, 0.0f };
-    float center[3];
-    float up[3];
-    switch(face) {
-        case 0: // +X
-            center[0] = 1.0f; center[1] = 0.0f; center[2] = 0.0f;
-            up[0] = 0.0f; up[1] = -1.0f; up[2] = 0.0f;
-            break;
-        case 1: // -X
-            center[0] = -1.0f; center[1] = 0.0f; center[2] = 0.0f;
-            up[0] = 0.0f; up[1] = -1.0f; up[2] = 0.0f;
-            break;
-        case 2: // +Y
-            center[0] = 0.0f; center[1] = 1.0f; center[2] = 0.0f;
-            up[0] = 0.0f; up[1] = 0.0f; up[2] = 1.0f;
-            break;
-        case 3: // -Y
-            center[0] = 0.0f; center[1] = -1.0f; center[2] = 0.0f;
-            up[0] = 0.0f; up[1] = 0.0f; up[2] = -1.0f;
-            break;
-        case 4: // +Z
-            center[0] = 0.0f; center[1] = 0.0f; center[2] = 1.0f;
-            up[0] = 0.0f; up[1] = -1.0f; up[2] = 0.0f;
-            break;
-        case 5: // -Z
-            center[0] = 0.0f; center[1] = 0.0f; center[2] = -1.0f;
-            up[0] = 0.0f; up[1] = -1.0f; up[2] = 0.0f;
-            break;
-        default:
-            center[0] = 1.0f; center[1] = 0.0f; center[2] = 0.0f;
-            up[0] = 0.0f; up[1] = -1.0f; up[2] = 0.0f;
-            break;
-    }
-    computeLookAt(eye, center, up, matrix);
-}
-
-// Mapping and fence callbacks.
-static void mappingCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
-    bool *done = (bool *)userdata;
-    *done = true;
-}
-
-//------------------------------------------------------------------------------
-// createAndSaveCubemap (adjusted to use uniform helper functions)
-//------------------------------------------------------------------------------
-void createAndSaveCubemap(WebGPUContext *context, int cubemapSize, const char *outputPrefix) {
-    // Create cubemap texture (2D texture array, 6 layers)
-    WGPUTextureDescriptor cubemapDesc = {0};
-    cubemapDesc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
-    cubemapDesc.dimension = WGPUTextureDimension_2D;
-    cubemapDesc.format = context->config.format;
-    cubemapDesc.size.width  = cubemapSize;
-    cubemapDesc.size.height = cubemapSize;
-    cubemapDesc.size.depthOrArrayLayers = 6;
-    cubemapDesc.mipLevelCount = 1;
-    cubemapDesc.sampleCount = 1;
-    WGPUTexture cubemapTexture = wgpuDeviceCreateTexture(context->device, &cubemapDesc);
-
-    for (int face = 0; face < 6; face++) {
-        // Create view for this face.
-        WGPUTextureViewDescriptor viewDesc = {0};
-        viewDesc.format = cubemapDesc.format;
-        viewDesc.dimension = WGPUTextureViewDimension_2D;
-        viewDesc.baseMipLevel = 0;
-        viewDesc.mipLevelCount = 1;
-        viewDesc.baseArrayLayer = face;
-        viewDesc.arrayLayerCount = 1;
-        WGPUTextureView faceView = wgpuTextureCreateView(cubemapTexture, &viewDesc);
-
-        // Create temporary depth texture.
-        WGPUTextureDescriptor depthDesc = {0};
-        depthDesc.usage = WGPUTextureUsage_RenderAttachment;
-        depthDesc.dimension = WGPUTextureDimension_2D;
-        depthDesc.format = WGPUTextureFormat_Depth32Float;
-        depthDesc.size.width = cubemapSize;
-        depthDesc.size.height = cubemapSize;
-        depthDesc.size.depthOrArrayLayers = 1;
-        depthDesc.mipLevelCount = 1;
-        depthDesc.sampleCount = 1;
-        WGPUTexture depthTexture = wgpuDeviceCreateTexture(context->device, &depthDesc);
-        WGPUTextureView depthView = wgpuTextureCreateView(depthTexture, NULL);
-
-        // Compute view and projection matrices.
-        float viewMat[16], projMat[16];
-        computeCubemapViewMatrix(face, viewMat);
-        // Use your custom perspective function (90° FOV, aspect 1, near 0.1, far 100.0)
-        computeCustomPerspectiveMatrix(90.0f, 1.0f, 0.1f, 100.0f, projMat);
-
-        // Update global uniforms.
-        int main_pipeline = 0;
-        int viewOffset = 16;
-        int projectionOffset = 80;
-        int shadowsOffset = 144;
-        setGPUGlobalUniformValue(context, main_pipeline, viewOffset, viewMat, sizeof(viewMat));
-        setGPUGlobalUniformValue(context, main_pipeline, projectionOffset, projMat, sizeof(projMat));
-        {
-            uint32_t shadows = 0; // disable shadows for cubemap rendering
-            setGPUGlobalUniformValue(context, main_pipeline, shadowsOffset, &shadows, sizeof(shadows));
-        }
-
-        // ------ Render Pass Command Buffer ------
-        WGPUCommandEncoderDescriptor encDesc = {0};
-        WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
-
-        // Set up attachments.
-        WGPURenderPassColorAttachment colorAtt = {0};
-        colorAtt.view = faceView;
-        colorAtt.loadOp = WGPULoadOp_Clear;
-        colorAtt.storeOp = WGPUStoreOp_Store;
-        colorAtt.clearValue = (WGPUColor){1.0f, 0.0f, 0.0f, 1.0f};
-
-        WGPURenderPassDepthStencilAttachment depthAtt = {0};
-        depthAtt.view = depthView;
-        depthAtt.depthLoadOp = WGPULoadOp_Clear;
-        depthAtt.depthStoreOp = WGPUStoreOp_Discard;
-        depthAtt.depthClearValue = 1.0f;
-
-        WGPURenderPassDescriptor passDesc = {0};
-        passDesc.colorAttachmentCount = 1;
-        passDesc.colorAttachments = &colorAtt;
-        passDesc.depthStencilAttachment = &depthAtt;
-
-        WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
-        wgpuQueueWriteBuffer(context->queue, context->global_uniform_buffer, 0,
-            context->global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
-            wgpuRenderPassEncoderSetViewport(pass, 0.0f, 0.0f,
-                (float)cubemapSize, (float)cubemapSize,
-                0.0f, 1.0f);
-wgpuRenderPassEncoderSetScissorRect(pass, 0, 0, cubemapSize, cubemapSize);
-
-    // Loop through all pipelines and draw each one
-    for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
-        if (context->pipelines[pipeline_id].used) {
-
-            Pipeline *pipeline = &context->pipelines[pipeline_id];
-            // Set the render pipeline // todo: does it matter where we call this?
-            // todo: is it possible to create the command/renderpass encoders, set the pipeline once at the beginning, and then keep reusing it?
-            wgpuRenderPassEncoderSetPipeline(pass, pipeline->pipeline);
-            wgpuRenderPassEncoderSetBindGroup(pass, 0, context->global_bindgroup, 0, NULL);
-
-            for (int j = 0; j < MAX_MATERIALS && pipeline->material_ids[j] > -1; j++) {
-
-                int material_id = pipeline->material_ids[j];
-                if (!context->materials[material_id].used) {printf("[FATAL WARNING] An unused material was left in the pipeline's list of material ids\n"); continue;}
-                Material *material = &context->materials[material_id];
-
-                unsigned int material_uniform_offset = material_id * MATERIAL_UNIFORM_CAPACITY;
-                // If the material requires uniform data updates, update the material uniform buffer
-                // todo: only write when material setting UPDATE_MATERIAL_UNIFORMS is true
-                // todo: we could even set this to true when we do an actual update, and otherwise never do this
-                // todo: we can also do that for the global uniforms
-                if (1) {
-                    // todo: we can batch this write buffer call into one single call for the pipeline instead
-                    wgpuQueueWriteBuffer(context->queue, pipeline->material_uniform_buffer, material_uniform_offset, material->uniform_data, MATERIAL_UNIFORM_CAPACITY);
-                }
-                // Set the dynamic offset to point to the uniform values for this material
-                // *info* max size of 64kb -> with 1000 meshes we can have at most 64 bytes of uniform data per mesh (!)
-                // Bind per-pipeline bind group (group 0) (global uniforms, material uniforms, shadows), pass offset for the material uniforms
-                wgpuRenderPassEncoderSetBindGroup(pass, 1, pipeline->pipeline_bindgroup, 1, &material_uniform_offset);
-                // Bind per-material bind group (group 1) // todo: we could fit all the textures into the pipeline, up to 1000 bindings in one bindgroup -> avoid this call for every material
-                wgpuRenderPassEncoderSetBindGroup(pass, 2, material->material_bindgroup, 0, NULL);
-
-                for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
-                    
-                    int mesh_id = material->mesh_ids[k];
-                    if (!context->meshes[mesh_id].used) {printf("[FATAL WARNING] An unused mesh (%d) was left in the material's (%d) list of mesh ids\n", mesh_id, material_id); continue;}
-                    Mesh *mesh = &context->meshes[mesh_id];
-                    
-                    // todo: based on mesh setting PLAYING_ANIMATION or something
-                    if (mesh->flags & MESH_ANIMATED) {
-                        updateMeshAnimationFrame(context, mesh_id);
-                        wgpuQueueWriteBuffer(context->queue,mesh->bone_buffer,0,mesh->current_bones, sizeof(context->default_bones));
-                    }
-                    // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
-                    if (1) {
-                        wgpuRenderPassEncoderSetBindGroup(pass, 3, mesh->mesh_bindgroup, 0, NULL);
-                    }
-                    // todo: make this based on mesh setting UPDATE_MESH_INSTANCES, then we don't need to do this for static meshes
-                    // If the mesh requires instance data updates, update the instance buffer (this is really expensive!)
-                    if (1) {
-                        unsigned long long instanceDataSize = VERTEX_LAYOUT[1].arrayStride * mesh->instance_count;
-                        // write RAM instances to GPU instances
-                        wgpuQueueWriteBuffer(context->queue,mesh->instanceBuffer,0,mesh->instances, instanceDataSize);
-                    }
-
-                    // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count
-                    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderSetVertexBuffer(pass, 1, mesh->instanceBuffer, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderSetIndexBuffer(pass, mesh->indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-                    // todo: considering this allows a base vertex, first index and first instance,
-                    // todo: is it then not possible to put all vertex, index and instance buffers together, 
-                    // todo: and loop just over this call instead of calling setVertexBuffer in a loop (?)
-                    wgpuRenderPassEncoderDrawIndexed(pass, mesh->indexCount,mesh->instance_count,0,0,0);
-                    // todo: wgpuRenderPassEncoderDrawIndexedIndirect
-                }
-            }
-        }
-    }
-
-        // End render pass.
-        wgpuRenderPassEncoderEnd(pass);
-        wgpuRenderPassEncoderRelease(pass);
-
-        // Finish render command buffer, submit, and wait.
-        WGPUCommandBufferDescriptor cmdDesc = {0};
-        WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(encoder, &cmdDesc);
-        wgpuCommandEncoderRelease(encoder);
-        wgpuQueueSubmit(context->queue, 1, &cmdBuf);
-        wgpuCommandBufferRelease(cmdBuf);
-
-        volatile bool workDone = false;
-        wgpuQueueOnSubmittedWorkDone(context->queue, fenceCallback, (void *)&workDone);
-        while (!workDone) {
-            wgpuDevicePoll(context->device, false, NULL);
-        }
-
-        // ------ Copy Command Buffer ------
-        uint32_t rowPitch = ((cubemapSize * 4) + 255) & ~255;
-        size_t bufferSize = rowPitch * cubemapSize;
-        WGPUBufferDescriptor bufferDesc = {0};
-        bufferDesc.size = bufferSize;
-        bufferDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead;
-        WGPUBuffer readBuffer = wgpuDeviceCreateBuffer(context->device, &bufferDesc);
-
-        WGPUCommandEncoderDescriptor copyEncDesc = {0};
-        WGPUCommandEncoder copyEncoder = wgpuDeviceCreateCommandEncoder(context->device, &copyEncDesc);
-        WGPUImageCopyTexture src = {0};
-        src.texture = cubemapTexture;
-        src.origin = (WGPUOrigin3D){ .x = 0, .y = 0, .z = face };
-        src.mipLevel = 0;
-        WGPUTextureDataLayout layout = {0};
-        layout.offset = 0;
-        layout.bytesPerRow = rowPitch;
-        layout.rowsPerImage = cubemapSize;
-        WGPUExtent3D extent = { .width = cubemapSize, .height = cubemapSize, .depthOrArrayLayers = 1 };
-        wgpuCommandEncoderCopyTextureToBuffer(copyEncoder, &src,
-            &(WGPUImageCopyBuffer){ .buffer = readBuffer, .layout = layout },
-            &extent);
-        WGPUCommandBufferDescriptor copyCmdDesc = {0};
-        WGPUCommandBuffer copyCmdBuf = wgpuCommandEncoderFinish(copyEncoder, &copyCmdDesc);
-        wgpuCommandEncoderRelease(copyEncoder);
-        wgpuQueueSubmit(context->queue, 1, &copyCmdBuf);
-        wgpuCommandBufferRelease(copyCmdBuf);
-
-        volatile bool copyDone = false;
-        wgpuQueueOnSubmittedWorkDone(context->queue, fenceCallback, (void *)&copyDone);
-        while (!copyDone) {
-            wgpuDevicePoll(context->device, false, NULL);
-        }
-
-        bool mappingDone = false;
-        wgpuBufferMapAsync(readBuffer, WGPUMapMode_Read, 0, bufferSize, mappingCallback, &mappingDone);
-        while (!mappingDone) {
-            wgpuDevicePoll(context->device, false, NULL);
-        }
-        void* mappedData = wgpuBufferGetMappedRange(readBuffer, 0, bufferSize);
-
-        char filename[256];
-        snprintf(filename, sizeof(filename), "%s_face%d.png", outputPrefix, face);
-
-        unsigned char *tightData = malloc(cubemapSize * cubemapSize * 4);
-        for (int y = 0; y < cubemapSize; y++) {
-            memcpy(tightData + y * cubemapSize * 4,
-                (unsigned char*)mappedData + y * rowPitch,
-                cubemapSize * 4);
-        }
-        stbi_write_png(filename, cubemapSize, cubemapSize, 4, tightData, cubemapSize * 4);
-        free(tightData);
-
-        wgpuBufferUnmap(readBuffer);
-        wgpuBufferRelease(readBuffer);
-        wgpuTextureViewRelease(faceView);
-        wgpuTextureRelease(depthTexture);
-        wgpuTextureViewRelease(depthView);
-    }
-
-    wgpuTextureRelease(cubemapTexture);
-    printf("Cubemap saved to disk with prefix: %s\n", outputPrefix);
 }

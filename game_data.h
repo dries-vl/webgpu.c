@@ -27,6 +27,7 @@ extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height
 extern int   createGPUPipeline(void *context, const char *shader);
 extern void  create_shadow_pipeline(void *context);
 extern void  create_postprocessing_pipeline(void *context);
+extern int   load_cube_map(void *context, void *data[6], int face_size);
 extern int   createGPUMesh(void *context, int material_id, enum MeshFlags flags, void *v, int vc, void *i, int ic, void *ii, int iic);
 extern void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc);
 extern int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
@@ -35,7 +36,7 @@ extern void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset
 extern int   addGPUMaterialUniform(void *context, int material_id, const void* data, int data_size);
 extern void  setGPUMaterialUniformValue(void *context, int material_id, int offset, const void* data, int dataSize);
 extern void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
-extern float drawGPUFrame(void *context, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk);
+extern float drawGPUFrame(void *context, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename);
 
 struct Vertex { // 48 bytes
     unsigned int data[4]; // 16 bytes u32 // *info* raw data

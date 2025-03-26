@@ -11,7 +11,7 @@ struct MaterialUniforms {
     shader: u32,
 };
 struct MeshUniforms {
-    bones: array<mat4x4<f32>, 64>, // 64 bones
+    bones: array<mat4x4<f32>, 64>, // 64 bones // todo: shouldn't this be per instance for animations (?)
 };
 
 @group(0) @binding(0) // *group 0 for global* (global uniforms)
@@ -22,6 +22,10 @@ var<uniform> material_uniforms: MaterialUniforms;
 var shadow_map: texture_depth_2d;
 @group(1) @binding(2)
 var shadow_sampler: sampler_comparison;
+@group(1) @binding(3)
+var cubemap: texture_cube<f32>;
+@group(1) @binding(4)
+var cubemap_sampler: sampler;
 @group(2) @binding(0) // *group 2 for per-material* (textures)
 var texture_sampler: sampler;
 @group(2) @binding(1)
@@ -81,7 +85,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
 
         output.world_normal = world_space_normal;
         output.light = diff;
-
+        
         // SHADOW
         if (global_uniforms.shadows == 1) {
             let light_space_pos = global_uniforms.light_view_proj * world_space;
@@ -117,9 +121,26 @@ struct VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let depth_limit = 20.0;
     let depth = (input.pos.z / input.pos.w);
     var tex_color = textureSample(tex_0, texture_sampler, input.uv);
+    if (material_uniforms.shader == 3) {
+        let P = input.world_space.xyz;
+        let probeCenter = vec3<f32>(0.0, 0.0, 0.0);
+        let viewDir = normalize(global_uniforms.camera_world_space.xyz - P);
+        let r = reflect(-viewDir, input.world_normal);
+
+        // Choose a probe radius that fully encloses your reflective objects.
+        let probeRadius: f32 = 10.0;
+        let t = intersectSphere(P, r, probeCenter, probeRadius);
+        // If t is negative, the ray missed the sphere; in a well-set scene this shouldn't happen.
+        let sampleDir = normalize((P + r * t) - probeCenter);
+
+        tex_color = (0.5 * tex_color) + (0.5 * textureSample(cubemap, cubemap_sampler, sampleDir));
+
+        if (t < 0.) {
+            tex_color = vec4(1.,0.,1.,1.);
+        }
+    }
     var color = tex_color.rgb;
     var alpha = tex_color.a;
     if (tex_color.a < 0.49) {
@@ -135,59 +156,66 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         shadow = calculate_shadow(input);
     }
 
-    if (material_uniforms.shader >= 1) {
+    if (material_uniforms.shader == 1) {
         // apply light
         let ambient_light = 0.2;
         let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
         let dir_light_color = vec3(1.,1.,.5) * input.light * shadow;
         color = color * min(ambient_light_color + dir_light_color, vec3(1.));
         // obscure depth
-        color = color - (color * (depth/depth_limit));
+        let depth_limit = 20.0;
+        let depth_cutoff = pow(depth/depth_limit, 4.0);
+        color = color - (color * depth_cutoff);
+        alpha = alpha - (alpha * depth_cutoff);
     }
 
     // Inline Volumetric Lighting Pass
     // -------------------------------------------
     // Inline Volumetric Lighting with Shadow Sampling
-    var volLight = 0.0;
-    let numSteps: u32 = 32u;      // Adjust sample count for quality/performance.
-    let stepSize: f32 = 0.5;      // Distance between samples.
-    let rayOrigin = global_uniforms.camera_world_space.xyz;
-    let rayDir = normalize(input.world_space.xyz - rayOrigin);
-    let tMax = length(input.world_space.xyz - rayOrigin);
-    let decayFactor: f32 = 0.2;   // Adjust for medium density.
+    // var volLight = 0.0;
+    // let numSteps: u32 = 32u;      // Adjust sample count for quality/performance.
+    // let stepSize: f32 = 0.5;      // Distance between samples.
+    // let rayOrigin = global_uniforms.camera_world_space.xyz;
+    // let rayDir = normalize(input.world_space.xyz - rayOrigin);
+    // let tMax = length(input.world_space.xyz - rayOrigin);
+    // let decayFactor: f32 = 0.2;   // Adjust for medium density.
 
-    // Loop along the ray.
-    for (var i: u32 = 0u; i < numSteps; i = i + 1u) {
-        let t = (f32(i) / f32(numSteps)) * tMax;
-        let samplePos = rayOrigin + rayDir * t;
+    // // Loop along the ray.
+    // for (var i: u32 = 0u; i < numSteps; i = i + 1u) {
+    //     let t = (f32(i) / f32(numSteps)) * tMax;
+    //     let samplePos = rayOrigin + rayDir * t;
         
-        // Transform samplePos into light space.
-        let lightSpacePos = global_uniforms.light_view_proj * vec4<f32>(samplePos, 1.0);
-        let lightSpacePosNDC = lightSpacePos / lightSpacePos.w; // Now in NDC (-1, 1)
+    //     // Transform samplePos into light space.
+    //     let lightSpacePos = global_uniforms.light_view_proj * vec4<f32>(samplePos, 1.0);
+    //     let lightSpacePosNDC = lightSpacePos / lightSpacePos.w; // Now in NDC (-1, 1)
         
-        // Convert NDC to texture coordinates.
-        let shadowCoord = vec3<f32>(
-            lightSpacePosNDC.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5),
-            lightSpacePosNDC.z
-        );
+    //     // Convert NDC to texture coordinates.
+    //     let shadowCoord = vec3<f32>(
+    //         lightSpacePosNDC.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5),
+    //         lightSpacePosNDC.z
+    //     );
         
-        // Sample the shadow map; result is 1.0 if lit, 0.0 if in shadow (with PCF it might be fractional).
-        let shadowVal = textureSampleCompare(shadow_map, shadow_sampler, shadowCoord.xy, shadowCoord.z + 0.002);
+    //     // Sample the shadow map; result is 1.0 if lit, 0.0 if in shadow (with PCF it might be fractional).
+    //     let shadowVal = textureSampleCompare(shadow_map, shadow_sampler, shadowCoord.xy, shadowCoord.z + 0.002);
         
-        // Calculate the medium density at this sample. You can combine this with shadowVal.
-        let density = exp(-t * decayFactor);
+    //     // Calculate the medium density at this sample. You can combine this with shadowVal.
+    //     let density = exp(-t * decayFactor);
         
-        // Accumulate: only add scattering from lit parts of the volume.
-        volLight += shadowVal * density * stepSize;
-    }
+    //     // Accumulate: only add scattering from lit parts of the volume.
+    //     volLight += shadowVal * density * stepSize;
+    // }
     
-    // Scale the accumulated light by an intensity factor.
-    let volumetricIntensity = 0.1;
-    // -------------------------------------------
-    color += (volumetricIntensity * volLight * vec3(0.8, 0.4, 0.2));
+    // // Scale the accumulated light by an intensity factor.
+    // let volumetricIntensity = 0.1;
+    // // -------------------------------------------
+    // color += (volumetricIntensity * volLight * vec3(0.8, 0.4, 0.2));
 
     if (material_uniforms.shader == 2) {
-        color = vec3(0.,0.,0.5);
+        color = vec3(0.,0.,0.2);
+        alpha = 1.;
+    }
+    if (material_uniforms.shader == 4) {
+        color = textureSample(cubemap, cubemap_sampler, normalize(input.world_space.xyz)).xyz;
         alpha = 1.;
     }
     
@@ -225,7 +253,7 @@ fn color_based_on_shadow_uv(shadow_uv: vec3<f32>) -> f32 {
 fn calculate_shadow(input: VertexOutput) -> f32 {
     // 3x3 kernel sampling
     // PCF settings.
-    let bias = 0.001;
+    let bias = 0.005;
     let texel_size = vec2<f32>(1. / 1024.0, 1. / 1024.0); // assuming 1024x1024 shadow map resolution
     var shadow_sum: f32 = 0.0;
     let samples: i32 = 1;
@@ -243,4 +271,22 @@ fn calculate_shadow(input: VertexOutput) -> f32 {
 
     shadow_factor = clamp(shadow_factor + distance, 0., 1.);
     return smoothstep(0.75, 1.0, shadow_factor);
+}
+
+// Computes the intersection of a ray (origin, normalized direction)
+// with a sphere centered at 'center' and with radius 'radius'.
+// Returns the distance along the ray (t) to the sphere's surface, or -1.0 if no hit.
+fn intersectSphere(origin: vec3<f32>, dir: vec3<f32>, center: vec3<f32>, radius: f32) -> f32 {
+    let oc = origin - center;
+    // Since dir is normalized, A = 1.
+    let b = dot(oc, dir);
+    let c = dot(oc, oc) - radius * radius;
+    let discriminant = b * b - c;
+    var t: f32;
+    if (discriminant < 0.0) {
+        t = -1.0;
+    } else {
+        t = -b + sqrt(discriminant);
+    }
+    return t;
 }

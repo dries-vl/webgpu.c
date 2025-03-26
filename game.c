@@ -743,3 +743,40 @@ void computeDynamicLightViewProj(float light_view_proj[16], const float playerLo
     // 6. Compute the final light view–projection matrix.
     multiplyMatrices(light_view_proj, ortho, lightView);
 }
+
+// Generates six view matrices (each 16 floats, column-major)
+// for a cubemap centered at 'pos'. The order is:
+// +X, -X, +Y, -Y, +Z, -Z.
+void generateCubemapViews(const float pos[3], float views[6][16]) {
+    // Targets: pos + direction.
+    // todo: these target vectors are inverted, +X looks at -1 instead of +1
+    float targets[6][3] = {
+        { pos[0]-10, pos[1],   pos[2]   }, // +X
+        { pos[0]+10, pos[1],   pos[2]   }, // -X
+        { pos[0],   pos[1]-10, pos[2]   }, // +Y
+        { pos[0],   pos[1]+10, pos[2]   }, // -Y
+        { pos[0],   pos[1],   pos[2]-10 }, // +Z
+        { pos[0],   pos[1],   pos[2]+10 }  // -Z
+    };
+    // Up vectors chosen for proper orientation.
+    float ups[6][3] = {
+        { 0, 1, 0 }, // +X
+        { 0, 1, 0 }, // -X
+        { 0, 0, -1 }, // +Y
+        { 0, 0, -1 }, // -Y
+        { 0, 1, 0 }, // +Z
+        { 0, 1, 0 }  // -Z
+    };
+    for (int i = 0; i < 6; i++)
+        lookAtMatrix(views[i], pos, targets[i], ups[i]);
+}
+
+// Generates a cubemap projection matrix with a 90° FOV (in radians: pi/2),
+// aspect ratio 1, and given near and far clip planes.
+void generateCubemapProjection(float near, float far, float proj[16]) {
+    float f = 1.0f / tan(3.14159265f / 4.0f); // 90° FOV -> half-angle = pi/4.
+    proj[0]  = f;   proj[1]  = 0;   proj[2]  = 0;                 proj[3]  = 0;
+    proj[4]  = 0;   proj[5]  = f;   proj[6]  = 0;                 proj[7]  = 0;
+    proj[8]  = 0;   proj[9]  = 0;   proj[10] = far/(far-near);      proj[11] = 1;
+    proj[12] = 0;   proj[13] = 0;   proj[14] = -near*far/(far-near); proj[15] = 0;
+}
