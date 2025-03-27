@@ -383,7 +383,7 @@ int tick(struct Platform *p, void *context) {
             setGPUGlobalUniformValue(context, main_pipeline, viewOffset, &cubemapViews[i], sizeof(view));
             char filename[64]; char *cube_faces[6] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
             snprintf(filename, sizeof(filename), "data/textures/cube/cube_face_%s.png", cube_faces[i]);    
-            drawGPUFrame(context, 0, 0, 1024, 1024, 1, filename);
+            drawGPUFrame(context, 0, 0, 128, 128, 1, filename);
         }
     }
 
@@ -397,7 +397,7 @@ int tick(struct Platform *p, void *context) {
     char gpu_string[256];
     static float last_60_gpu_times[60] = {0};
     float avg_last_60_frames = 0.0;
-    static index = 0;
+    static int index = 0;
     last_60_gpu_times[index] = gpu_ms;
     index = (index + 1) % 60;
     for (int i = 0; i < 60; i++) {

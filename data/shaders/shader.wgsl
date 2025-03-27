@@ -65,10 +65,12 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
 
         var world_space = i_transform * skin_matrix * vertex_position;
 
+        // projected shadow mesh
         if (material_uniforms.shader == 2) {
             let above = 0.01;
             let distance = -(world_space.y - above) / vec3(0.5, -0.8, 0.5).y;
             let projected_pos = world_space.xyz + (distance * vec3(0.5, -0.8, 0.5));
+            output.shadow_depth = max(1. - (1.5 * length(projected_pos - input.i_pos_3.xyz)), 0.);
             world_space = vec4(projected_pos, 1.0);
         }
         
@@ -78,6 +80,13 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         output.pos = clip_space;
         output.world_space = world_space;
         output.center_pos = input.i_pos_3;
+        
+        // REFLECTIONS
+        // todo: mirrored mesh: fade with depth underwater, distort the mesh/texture itself, transparent water to see (?)
+        // todo: pass simult. with shadowmap pass -> planar reflection
+        // todo: passes simult. with shadowmap pass -> low res (64-128px) cubemaps for distorted environment reflections
+        // todo: dithering (?)
+        // todo: shadow mesh projection -> dither, or use bias (?)
 
         // DIRECTIONAL LIGHT
         var world_space_normal = normalize(((i_transform * skin_matrix) * vec4<f32>(input.normal.xyz, 0.0)).xyz);
@@ -117,6 +126,7 @@ struct VertexOutput {
     @location(4) world_normal: vec3<f32>, // World-space normal for debugging
     @location(5) world_space: vec4<f32>, // World-space normal for debugging
     @location(6) center_pos: vec4<f32>, // World-space normal for debugging
+    @location(7) shadow_depth: f32
 };
 
 @fragment
@@ -211,8 +221,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // color += (volumetricIntensity * volLight * vec3(0.8, 0.4, 0.2));
 
     if (material_uniforms.shader == 2) {
-        color = vec3(0.,0.,0.2);
-        alpha = 1.;
+        color = vec3(input.shadow_depth);
+        if (input.shadow_depth < bayer_dither(vec2<i32>(input.pos.xy) / 8)) { discard; }
     }
     if (material_uniforms.shader == 4) {
         color = textureSample(cubemap, cubemap_sampler, normalize(input.world_space.xyz)).xyz;
@@ -289,4 +299,15 @@ fn intersectSphere(origin: vec3<f32>, dir: vec3<f32>, center: vec3<f32>, radius:
         t = -b + sqrt(discriminant);
     }
     return t;
+}
+
+fn bayer_dither(pos: vec2<i32>) -> f32 {
+    var m: array<f32, 16> = array<f32, 16>(
+        0.0,    0.5,    0.125,  0.625,
+        0.75,   0.25,   0.875,  0.375,
+        0.1875, 0.6875, 0.0625, 0.5625,
+        0.9375, 0.4375, 0.8125, 0.3125
+    );
+    let i = (pos.y & 3) * 4 + (pos.x & 3);
+    return m[i];
 }
