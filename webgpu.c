@@ -289,7 +289,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
         .alphaMode = WGPUCompositeAlphaMode_Auto,
-        .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
+        .presentMode = WGPUPresentMode_Immediate // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(context.surface, &context.config);
 
@@ -673,7 +673,7 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     WGPUColorTargetState colorTarget = {0};
     colorTarget.format = context->config.format;
     colorTarget.writeMask = WGPUColorWriteMask_All;
-    // --- enable alpha blending --- // todo: maybe later if we want water (?)
+    // --- enable alpha blending ---
     {
          colorTarget.blend = (WGPUBlendState[1]) {(WGPUBlendState){
              .color = (WGPUBlendComponent){
@@ -809,7 +809,7 @@ void create_postprocessing_pipeline(void *context_ptr) {
     // Primitive state.
     WGPUPrimitiveState primState = {0};
     primState.topology = WGPUPrimitiveTopology_TriangleList;
-    primState.cullMode = WGPUCullMode_None;
+    primState.cullMode = WGPUCullMode_Back;
     primState.frontFace = WGPUFrontFace_CCW;
     blitPipelineDesc.primitive = primState;
 
@@ -1373,6 +1373,7 @@ static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
     }
     *mappingDone = true;
 }
+
 float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     // Start the frame.
@@ -1391,7 +1392,8 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     WGPUCommandEncoderDescriptor encDesc = {0};
     context->currentEncoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
     WGPURenderPassColorAttachment colorAtt = {0};
-    if (POST_PROCESSING_ENABLED) { colorAtt.view = context->post_processing_texture_view;}
+    if (POST_PROCESSING_ENABLED && MSAA_ENABLED) { colorAtt.view = context->msaa_texture_view; colorAtt.resolveTarget = context->post_processing_texture_view;}
+    else if (POST_PROCESSING_ENABLED) { colorAtt.view = context->post_processing_texture_view;}
     else if (MSAA_ENABLED) { colorAtt.view = context->msaa_texture_view; colorAtt.resolveTarget = context->swapchain_view;}
     else { colorAtt.view = context->swapchain_view;}
     colorAtt.loadOp = WGPULoadOp_Clear;
@@ -1669,8 +1671,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
 
         // Set up a render pass targeting the swap chain.
         WGPURenderPassColorAttachment finalColorAtt = {0};
-        if (MSAA_ENABLED) {finalColorAtt.view = context->msaa_texture_view; colorAtt.resolveTarget = context->swapchain_view;}
-        else {finalColorAtt.view = context->swapchain_view;}
+        finalColorAtt.view = context->swapchain_view;
         finalColorAtt.loadOp = WGPULoadOp_Clear;
         finalColorAtt.storeOp = WGPUStoreOp_Store;
         finalColorAtt.clearValue = (WGPUColor){1.0, 0.0, 1.0, 1.0};

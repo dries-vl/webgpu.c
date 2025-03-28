@@ -9,6 +9,7 @@ struct GlobalUniforms {
 };
 struct MaterialUniforms {
     shader: u32,
+    reflective: f32
 };
 struct MeshUniforms {
     bones: array<mat4x4<f32>, 64>, // 64 bones // todo: shouldn't this be per instance for animations (?)
@@ -85,8 +86,9 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         // todo: mirrored mesh: fade with depth underwater, distort the mesh/texture itself, transparent water to see (?)
         // todo: pass simult. with shadowmap pass -> planar reflection
         // todo: passes simult. with shadowmap pass -> low res (64-128px) cubemaps for distorted environment reflections
-        // todo: dithering (?)
-        // todo: shadow mesh projection -> dither, or use bias (?)
+        // todo: shadow mesh projection -> could use dithering, OR, for normal shadow, draw transparent things last, as supposed
+        // todo: sampler for shadowmap -> depth difference for softness
+        // todo: emscripten (!)
 
         // DIRECTIONAL LIGHT
         var world_space_normal = normalize(((i_transform * skin_matrix) * vec4<f32>(input.normal.xyz, 0.0)).xyz);
@@ -133,6 +135,14 @@ struct VertexOutput {
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let depth = (input.pos.z / input.pos.w);
     var tex_color = textureSample(tex_0, texture_sampler, input.uv);
+    
+    var color = tex_color.rgb;
+    var alpha = tex_color.a;
+    if (tex_color.a < 0.49) {
+        discard;
+    }
+
+    // REFLECTION CUBEMAP
     if (material_uniforms.shader == 3) {
         let P = input.world_space.xyz;
         let probeCenter = vec3<f32>(0.0, 0.0, 0.0);
@@ -145,99 +155,69 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         // If t is negative, the ray missed the sphere; in a well-set scene this shouldn't happen.
         let sampleDir = normalize((P + r * t) - probeCenter);
 
-        tex_color = (0.5 * tex_color) + (0.5 * textureSample(cubemap, cubemap_sampler, sampleDir));
+        color = ((1.0 - material_uniforms.reflective) * color) + (material_uniforms.reflective * textureSample(cubemap, cubemap_sampler, sampleDir).rgb);
 
         if (t < 0.) {
-            tex_color = vec4(1.,0.,1.,1.);
+            color = vec3(1.,0.,1.);
         }
     }
-    var color = tex_color.rgb;
-    var alpha = tex_color.a;
-    if (tex_color.a < 0.49) {
-        discard;
-    }
+
+    // DECAL
     // let decal_uv = vec3(input.shadow_pos.xy * 5. - vec2(2.5,1.4), input.shadow_pos.z);
     // let decal_color = textureSample(tex_1, texture_sampler, decal_uv.xy).rgb;
     // let facing_decal = dot(input.world_normal, -vec3(0.5, -0.8, 0.5)) > 0.0;
     // let hit_by_decal = decal_uv.x >= 0. && decal_uv.x <= 1. && decal_uv.y >= 0. && decal_uv.y <= 1. && decal_uv.z >= 0. && decal_uv.z <= 1.;
     // color = select(tex_color.rgb, decal_color, hit_by_decal && facing_decal);
+    
+    // SHADOWS
     var shadow = 1.;
     if (global_uniforms.shadows == 1 && material_uniforms.shader >= 1) {
-        shadow = calculate_shadow(input);
+        // shadow = calculate_shadow(input);
     }
 
-    if (material_uniforms.shader == 1) {
-        // obscure depth
+    if (material_uniforms.shader == 1 || material_uniforms.shader == 3) {
+        // OBSCURE DEPTH
         let depth_limit = 20.0;
         let depth_cutoff = pow(depth/depth_limit, 4.0);
         color = color - (color * depth_cutoff);
         alpha = alpha - (alpha * depth_cutoff);
-        // apply light
+        // LIGHT
         let ambient_light = 0.2;
         let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
         let dir_light_color = vec3(1.,1.,.5) * input.light * shadow;
         color = color * min(ambient_light_color + dir_light_color, vec3(1.));
     }
 
-    // Inline Volumetric Lighting Pass
-    // -------------------------------------------
-    // Inline Volumetric Lighting with Shadow Sampling
-    // var volLight = 0.0;
-    // let numSteps: u32 = 32u;      // Adjust sample count for quality/performance.
-    // let stepSize: f32 = 0.5;      // Distance between samples.
-    // let rayOrigin = global_uniforms.camera_world_space.xyz;
-    // let rayDir = normalize(input.world_space.xyz - rayOrigin);
-    // let tMax = length(input.world_space.xyz - rayOrigin);
-    // let decayFactor: f32 = 0.2;   // Adjust for medium density.
+    // VOLUMETRIC LIGHT
+    // let vol_light = raymarch_volumetric_light(input);
+    // let volumetric_intensity = 0.1;
+    // color += (volumetric_intensity * vol_light * vec3(0.8, 0.4, 0.2));
 
-    // // Loop along the ray.
-    // for (var i: u32 = 0u; i < numSteps; i = i + 1u) {
-    //     let t = (f32(i) / f32(numSteps)) * tMax;
-    //     let samplePos = rayOrigin + rayDir * t;
-        
-    //     // Transform samplePos into light space.
-    //     let lightSpacePos = global_uniforms.light_view_proj * vec4<f32>(samplePos, 1.0);
-    //     let lightSpacePosNDC = lightSpacePos / lightSpacePos.w; // Now in NDC (-1, 1)
-        
-    //     // Convert NDC to texture coordinates.
-    //     let shadowCoord = vec3<f32>(
-    //         lightSpacePosNDC.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5),
-    //         lightSpacePosNDC.z
-    //     );
-        
-    //     // Sample the shadow map; result is 1.0 if lit, 0.0 if in shadow (with PCF it might be fractional).
-    //     let shadowVal = textureSampleCompare(shadow_map, shadow_sampler, shadowCoord.xy, shadowCoord.z + 0.002);
-        
-    //     // Calculate the medium density at this sample. You can combine this with shadowVal.
-    //     let density = exp(-t * decayFactor);
-        
-    //     // Accumulate: only add scattering from lit parts of the volume.
-    //     volLight += shadowVal * density * stepSize;
-    // }
-    
-    // // Scale the accumulated light by an intensity factor.
-    // let volumetricIntensity = 0.1;
-    // // -------------------------------------------
-    // color += (volumetricIntensity * volLight * vec3(0.8, 0.4, 0.2));
-
+    // SHADOW MESH
     if (material_uniforms.shader == 2) {
-        color = vec3(input.shadow_depth);
+        // color = vec3(input.shadow_depth);
+        color = vec3(0.02,0.02,0.05);
+        // alpha = input.shadow_depth;
         if (input.shadow_depth < bayer_dither(vec2<i32>(input.pos.xy) / 8)) { discard; }
     }
+
+    // ENVIRONMENT CUBE
     if (material_uniforms.shader == 4) {
         color = textureSample(cubemap, cubemap_sampler, normalize(input.world_space.xyz)).xyz;
         alpha = 1.;
     }
     
-    // Compute the Fresnel factor using a power term.
+    // FRESNEL
     // The exponent (5.0) controls the sharpness of the rim.
-    // let N = input.world_normal;
-    // let vector = global_uniforms.camera_world_space.xyz - input.world_space.xyz;
-    // let len = length(vector) * 0.05;
-    // let V = normalize(vector);
-    // let dotNV = max(dot(N, V), 0.);
-    // let fresnel = pow(1.0 - dotNV, 5.0);
-    // color += vec3(fresnel,0.,0.);
+    // if (material_uniforms.shader == 2) {
+    //     let N = input.world_normal;
+    //     let vector = global_uniforms.camera_world_space.xyz - input.world_space.xyz;
+    //     let len = length(vector) * 0.05;
+    //     let V = normalize(vector);
+    //     let dotNV = max(dot(N, V), 0.);
+    //     let fresnel = pow(1.0 - dotNV, 5.0);
+    //     color += vec3(fresnel,0.,0.);
+    // }
 
     return vec4<f32>(color, alpha);
     // todo: normals are not smoothed between triangles in some meshes, causing jank lighting
@@ -263,10 +243,10 @@ fn color_based_on_shadow_uv(shadow_uv: vec3<f32>) -> f32 {
 fn calculate_shadow(input: VertexOutput) -> f32 {
     // 3x3 kernel sampling
     // PCF settings.
-    let bias = 0.005;
+    let bias = 0.0005;
     let texel_size = vec2<f32>(1. / 1024.0, 1. / 1024.0); // assuming 1024x1024 shadow map resolution
     var shadow_sum: f32 = 0.0;
-    let samples: i32 = 1;
+    let samples: i32 = 0;
     for (var x: i32 = -samples; x <= samples; x = x + 1) {
         for (var y: i32 = -samples; y <= samples; y = y + 1) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
@@ -310,4 +290,38 @@ fn bayer_dither(pos: vec2<i32>) -> f32 {
     );
     let i = (pos.y & 3) * 4 + (pos.x & 3);
     return m[i];
+}
+
+// Inline Volumetric Lighting Pass
+// -------------------------------------------
+// Inline Volumetric Lighting with Shadow Sampling
+fn raymarch_volumetric_light(input: VertexOutput) -> f32 {
+    var volLight = 0.0;
+    let numSteps: u32 = 10u;      // Adjust sample count for quality/performance.
+    let rayOrigin = global_uniforms.camera_world_space.xyz;
+    let rayDir = normalize(input.world_space.xyz - rayOrigin);
+    let tMax = length(input.world_space.xyz - rayOrigin);
+
+    // Loop along the ray.
+    for (var i: u32 = numSteps; i > 0; i = i - 1u) {
+        let t = (f32(i) / f32(numSteps)) * tMax;
+        let samplePos = rayOrigin + rayDir * t;
+        
+        // Transform samplePos into light space.
+        let lightSpacePos = global_uniforms.light_view_proj * vec4<f32>(samplePos, 1.0);
+        let lightSpacePosNDC = lightSpacePos / lightSpacePos.w; // Now in NDC (-1, 1)
+        
+        // Convert NDC to texture coordinates.
+        let shadowCoord = vec3<f32>(
+            lightSpacePosNDC.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5),
+            lightSpacePosNDC.z
+        );
+        
+        // Sample the shadow map; result is 1.0 if lit, 0.0 if in shadow (with PCF it might be fractional).
+        let shadowVal = textureSampleCompare(shadow_map, shadow_sampler, shadowCoord.xy, shadowCoord.z + 0.0);
+        
+        // Accumulate: only add scattering from lit parts of the volume.
+        volLight += shadowVal / f32(numSteps);
+    }
+    return volLight;
 }

@@ -205,25 +205,49 @@ int tick(struct Platform *p, void *context) {
     if (!init_done) {
         init_done = 1;
 
+        // {
+        //     void *cube_data[6];
+        //     int w, h = 0;
+        //     cube_data[0] = load_texture(p, "data/textures/bin/cube_face_+X.bin", &w, &h).data;
+        //     cube_data[1] = load_texture(p, "data/textures/bin/cube_face_-X.bin", &w, &h).data;
+        //     cube_data[2] = load_texture(p, "data/textures/bin/cube_face_+Y.bin", &w, &h).data;
+        //     cube_data[3] = load_texture(p, "data/textures/bin/cube_face_-Y.bin", &w, &h).data;
+        //     cube_data[4] = load_texture(p, "data/textures/bin/cube_face_+Z.bin", &w, &h).data;
+        //     cube_data[5] = load_texture(p, "data/textures/bin/cube_face_-Z.bin", &w, &h).data;
+        //     load_cube_map(context, cube_data, w);
+        // }
+        
         {
             void *cube_data[6];
             int w, h = 0;
-            cube_data[0] = load_texture(p, "data/textures/bin/cube_face_+X.bin", &w, &h).data;
-            cube_data[1] = load_texture(p, "data/textures/bin/cube_face_-X.bin", &w, &h).data;
-            cube_data[2] = load_texture(p, "data/textures/bin/cube_face_+Y.bin", &w, &h).data;
-            cube_data[3] = load_texture(p, "data/textures/bin/cube_face_-Y.bin", &w, &h).data;
-            cube_data[4] = load_texture(p, "data/textures/bin/cube_face_+Z.bin", &w, &h).data;
-            cube_data[5] = load_texture(p, "data/textures/bin/cube_face_-Z.bin", &w, &h).data;
+            cube_data[0] = load_texture(p, "data/textures/bin/bluecloud_ft.bin", &w, &h).data;
+            cube_data[1] = load_texture(p, "data/textures/bin/bluecloud_bk.bin", &w, &h).data;
+            cube_data[2] = load_texture(p, "data/textures/bin/bluecloud_up.bin", &w, &h).data;
+            cube_data[3] = load_texture(p, "data/textures/bin/bluecloud_dn.bin", &w, &h).data;
+            cube_data[4] = load_texture(p, "data/textures/bin/bluecloud_rt.bin", &w, &h).data;
+            cube_data[5] = load_texture(p, "data/textures/bin/bluecloud_lf.bin", &w, &h).data;
             load_cube_map(context, cube_data, w);
         }
 
         main_pipeline = createGPUPipeline(context, "data/shaders/shader.wgsl");
-
-        // LOAD MESHES FROM DISK
+         
         int vc, ic; void *v, *i;
         void *bf; int bc, fc;
-        // 813 vertices, 2127 indices
-        // 2127 vertices, 2127 indices
+
+        // ENVIRONMENT CUBE
+        struct MappedMemory env_cube_mm = load_mesh(p, "data/models/blender/bin/env_cube.bin", &v, &vc, &i, &ic);
+        env_cube_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &env_cube, 1);
+        addGPUMaterialUniform(context, env_cube_id, &env_cube_shader, sizeof(base_shader_id));
+        p->unmap_file(&env_cube_mm);
+ 
+        // PREDEFINED MESHES
+        ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
+        addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
+        addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
+        // todo: one shared material       
+ 
+        // LOAD MESHES FROM DISK
         struct MappedMemory character_mm = load_animated_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
         printf("frame count: %d, bone count: %d\n", fc, bc);
         character_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
@@ -235,7 +259,7 @@ int tick(struct Platform *p, void *context) {
         // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
         // todo: fix script for correct UVs etc.
         // p->unmap_file(&character_mm);
-        
+
         // void *bf1; int bc1, fc1;
         // struct MappedMemory char2_mm = load_animated_mesh(p, "data/models/blender/bin/charA2.bin", &v, &vc, &i, &ic, &bf1, &bc1, &fc1);
         // printf("frame count: %d, bone count: %d\n", fc1, bc1);
@@ -249,25 +273,18 @@ int tick(struct Platform *p, void *context) {
         struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
         cube_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &cube, 1);
         addGPUMaterialUniform(context, cube_mesh_id, &reflection_shader_id, sizeof(reflection_shader_id));
+        float cube_reflectiveness = 0.5;
+        addGPUMaterialUniform(context, cube_mesh_id, &cube_reflectiveness, sizeof(cube_reflectiveness));
         p->unmap_file(&cube_mm);
         // p->unmap_file(&char2_mm);
-        
-        struct MappedMemory env_cube_mm = load_mesh(p, "data/models/blender/bin/env_cube.bin", &v, &vc, &i, &ic);
-        env_cube_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &env_cube, 1);
-        addGPUMaterialUniform(context, env_cube_id, &env_cube_shader, sizeof(base_shader_id));
-        p->unmap_file(&env_cube_mm);
-        
+       
         struct MappedMemory sphere_mm = load_mesh(p, "data/models/blender/bin/sphere.bin", &v, &vc, &i, &ic);
         sphere_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &sphere, 1);
         addGPUMaterialUniform(context, sphere_id, &reflection_shader_id, sizeof(reflection_shader_id));
+        float sphere_reflectiveness = 1.0;
+        addGPUMaterialUniform(context, sphere_id, &sphere_reflectiveness, sizeof(sphere_reflectiveness));
         p->unmap_file(&sphere_mm);
 
-        // PREDEFINED MESHES
-        ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
-        addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
-        quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
-        addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
-        // todo: one shared material
 
         // TEXTURE
         int w, h = 0;

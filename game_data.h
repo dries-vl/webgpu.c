@@ -2,8 +2,8 @@
 #define GAME_DATA_H_
 
 extern const int MSAA_ENABLED = 0;
-extern const int SHADOWS_ENABLED = 1;
-extern const int POST_PROCESSING_ENABLED = 1;
+extern const int SHADOWS_ENABLED = 0;
+extern const int POST_PROCESSING_ENABLED = 0;
 
 #define MAX_PIPELINES             2 // todo: remove, only one pipeline
 #define MAX_MESHES                128
