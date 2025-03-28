@@ -13,7 +13,7 @@
 #include "game_data.h"
 
 #pragma region PREDEFINED DATA
-static const WGPUTextureFormat screen_color_format = WGPUTextureFormat_RGBA8UnormSrgb;
+static const WGPUTextureFormat screen_color_format = WGPUTextureFormat_RGBA8Unorm;
 #define MAX_TEXTURES 4
 static const WGPUBindGroupLayoutDescriptor PER_MATERIAL_BINDGROUP_LAYOUT_DESC = {
     .entryCount = 1 + MAX_TEXTURES, // one for the sampler + the textures
@@ -231,13 +231,14 @@ WGPUAdapter selectDiscreteGPU(WGPUInstance instance) {
     free(adapters);
     return selectedAdapter;
 }
-void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
+
+void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int viewport_width, int viewport_height) {
     static WebGPUContext context = {0}; // initialize all fields to zero
 
     // Instance creation (your instance extras, etc.)
     WGPUInstanceExtras extras = {0};
     extras.chain.sType = WGPUSType_InstanceExtras;
-    extras.backends   = WGPUInstanceBackend_GL;
+    extras.backends   = WGPUInstanceBackend_Vulkan;
     extras.flags      = WGPUInstanceFlag_DiscardHalLabels;
     extras.dx12ShaderCompiler = WGPUDx12Compiler_Undefined;
     extras.gles3MinorVersion  = WGPUGles3MinorVersion_Automatic;
@@ -282,6 +283,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
     //     chosenFormat = caps.formats[0];
     // }
 
+    if (!POST_PROCESSING_ENABLED) {viewport_width=width;viewport_height=height;}
     context.config = (WGPUSurfaceConfiguration){
         .device = context.device,
         .format = chosenFormat,
@@ -473,7 +475,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
             .usage = WGPUTextureUsage_RenderAttachment,
             .label = "DEPTH TEXTURE",
             .dimension = WGPUTextureDimension_2D,
-            .size = { .width = width, .height = height, .depthOrArrayLayers = 1 },
+            .size = { .width = viewport_width, .height = viewport_height, .depthOrArrayLayers = 1 },
             .format = WGPUTextureFormat_Depth32Float, // Or Depth32Float if supported
             .mipLevelCount = 1,
             .sampleCount = MSAA_ENABLED ? 4 : 1,
@@ -529,8 +531,8 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
         msaaDesc.usage = WGPUTextureUsage_RenderAttachment;
         msaaDesc.dimension = WGPUTextureDimension_2D;
         msaaDesc.format = context.config.format;
-        msaaDesc.size.width  = width;
-        msaaDesc.size.height = height;
+        msaaDesc.size.width  = viewport_width;
+        msaaDesc.size.height = viewport_height;
         msaaDesc.size.depthOrArrayLayers = 1;
         msaaDesc.mipLevelCount = 1;
         msaaDesc.sampleCount   = 4; // Should match ms.count
@@ -540,7 +542,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height) {
 
     // Create post processing pipeline and bindgroup
     if (POST_PROCESSING_ENABLED) {
-        create_postprocessing_pipeline(&context);
+        create_postprocessing_pipeline(&context, viewport_width, viewport_height);
     }
 
     // Create global shadow pipeline + texture + sampler
@@ -608,6 +610,7 @@ static WGPUShaderModule loadWGSL(WGPUDevice device, const char* filePath) {
     free(wgslSource);
     return module;
 }
+
 // todo: only one pipeline, init in context creation, remove this function (?)
 int createGPUPipeline(void *context_ptr, const char *shader) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
@@ -754,21 +757,21 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     return pipeline_id;
 }
 
-void create_postprocessing_pipeline(void *context_ptr) {
+void create_postprocessing_pipeline(void *context_ptr, int viewport_width, int viewport_height) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     // Create the bind group layout for the blit pass.
     WGPUBindGroupLayoutEntry blitBglEntries[2] = {
         {
             .binding = 0,
             .visibility = WGPUShaderStage_Fragment,
-            .texture = { .sampleType = WGPUTextureSampleType_Float, 
+            .texture = { .sampleType = WGPUTextureSampleType_UnfilterableFloat, 
                         .viewDimension = WGPUTextureViewDimension_2D, 
                         .multisampled = false }
         },
         {
             .binding = 1,
             .visibility = WGPUShaderStage_Fragment,
-            .sampler = { .type = WGPUSamplerBindingType_Filtering }
+            .sampler = { .type = WGPUSamplerBindingType_NonFiltering }
         }
     };
     WGPUBindGroupLayoutDescriptor blitBglDesc = {0};
@@ -840,8 +843,8 @@ void create_postprocessing_pipeline(void *context_ptr) {
     ppTexDesc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc | WGPUTextureUsage_TextureBinding;
     ppTexDesc.dimension = WGPUTextureDimension_2D;
     ppTexDesc.format = context->config.format;
-    ppTexDesc.size.width  = context->config.width;
-    ppTexDesc.size.height = context->config.height;
+    ppTexDesc.size.width  = viewport_width;
+    ppTexDesc.size.height = viewport_height;
     ppTexDesc.size.depthOrArrayLayers = 1;
     ppTexDesc.mipLevelCount = 1;
     ppTexDesc.sampleCount = 1;
@@ -1704,7 +1707,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     }
 
     // Wait on the fence to measure GPU work time // *ONLY USE FOR DEBUG, OTHERWISE DON'T SYNC TO AVOID SLOWDOWN*
-    float ms_waited_on_gpu = fenceAndWait(context);
+    float ms_waited_on_gpu = 0.;//fenceAndWait(context);
 
     // Present the surface.
     wgpuSurfacePresent(context->surface);

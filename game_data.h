@@ -2,7 +2,7 @@
 #define GAME_DATA_H_
 
 extern const int MSAA_ENABLED = 0;
-extern const int SHADOWS_ENABLED = 0;
+extern const int SHADOWS_ENABLED = 1;
 extern const int POST_PROCESSING_ENABLED = 0;
 
 #define MAX_PIPELINES             2 // todo: remove, only one pipeline
@@ -23,10 +23,10 @@ enum MeshFlags {
 // todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
 /* GRAPHICS LAYER API */
 // todo : platform provides these functions to presentation layer via a struct (then they don't need to be compiled together)
-extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height);
+extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int viewport_width, int viewport_height);
 extern int   createGPUPipeline(void *context, const char *shader);
 extern void  create_shadow_pipeline(void *context);
-extern void  create_postprocessing_pipeline(void *context);
+extern void  create_postprocessing_pipeline(void *context, int viewport_width, int viewport_height);
 extern int   load_cube_map(void *context, void *data[6], int face_size);
 extern int   createGPUMesh(void *context, int material_id, enum MeshFlags flags, void *v, int vc, void *i, int ic, void *ii, int iic);
 extern void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc);

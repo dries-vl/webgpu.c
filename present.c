@@ -4,19 +4,20 @@
 
 #pragma region GLOBALS
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
-#define FORCE_RESOLUTION 0
+#define FORCE_RESOLUTION 0 // force the resolution of the screen to the original width/height -> old-style flicker if changed
 #define FULLSCREEN 1
-#define WINDOWED 1
+#define WINDOWED 0
 int SHOW_CURSOR = 0;
-int WINDOW_WIDTH = 1280; // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
-int WINDOW_HEIGHT = 720; // todo: make this global variable that can be modified
-int VIEWPORT_WIDTH = 1280;
-int VIEWPORT_HEIGHT = 720;
+#define ORIGINAL_WIDTH 1280
+#define ORIGINAL_HEIGHT 720
+int WINDOW_WIDTH = ORIGINAL_WIDTH; // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
+int WINDOW_HEIGHT = ORIGINAL_HEIGHT; // todo: make this global variable that can be modified
+int VIEWPORT_WIDTH = ORIGINAL_WIDTH;
+int VIEWPORT_HEIGHT = ORIGINAL_HEIGHT;
 int OFFSET_X = 0; // offset to place smaller-than-window viewport at centre of screen
 int OFFSET_Y = 0;
 float ASPECT_RATIO = 1.77;
 #pragma endregion
-
 #include "game_data.c" // todo: inline this here and remove file
 #include "game.c" // todo: what to expose to game.c? print_on_screen
 
@@ -235,14 +236,14 @@ int tick(struct Platform *p, void *context) {
         void *bf; int bc, fc;
 
         // ENVIRONMENT CUBE
-        struct MappedMemory env_cube_mm = load_mesh(p, "data/models/blender/bin/env_cube.bin", &v, &vc, &i, &ic);
-        env_cube_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &env_cube, 1);
-        addGPUMaterialUniform(context, env_cube_id, &env_cube_shader, sizeof(base_shader_id));
-        p->unmap_file(&env_cube_mm);
+        // struct MappedMemory env_cube_mm = load_mesh(p, "data/models/blender/bin/env_cube.bin", &v, &vc, &i, &ic);
+        // env_cube_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &env_cube, 1);
+        // addGPUMaterialUniform(context, env_cube_id, &env_cube_shader, sizeof(base_shader_id));
+        // p->unmap_file(&env_cube_mm);
  
         // PREDEFINED MESHES
-        ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
-        addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        // ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
+        // addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
         quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
         addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
         // todo: one shared material       
@@ -385,7 +386,7 @@ int tick(struct Platform *p, void *context) {
     // update the instances of the text
     setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
 
-    float gpu_ms = drawGPUFrame(context, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
+    float gpu_ms = drawGPUFrame(context, 0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
 
     // todo: pass postprocessing settings etc. as parameter -> no global, can switch instantly
     // draw cubemap around eye, and save to disk
@@ -422,6 +423,5 @@ int tick(struct Platform *p, void *context) {
     }
     snprintf(gpu_string, sizeof(gpu_string), "GPU time: %4.2fms\n", avg_last_60_frames);
     print_on_screen(gpu_string);
-
     return 0;
 }

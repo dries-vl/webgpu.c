@@ -51,12 +51,18 @@ struct VertexInput {
     @location(15) i_atlas_uv: vec2<f32>,
 };
 
+const HUD_SHADER: u32 = 0;
+const BASE_SHADER: u32 = 1;
+const SHADOW_MESH_SHADER: u32 = 2;
+const REFLECTION_SHADER: u32 = 3;
+const ENV_CUBE_SHADER: u32 = 4;
+
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var output: VertexOutput;
     var i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
     let vertex_position = vec4<f32>(input.position, 1.0);
-    if (material_uniforms.shader >= 1u) {
+    if (material_uniforms.shader >= BASE_SHADER) {
         // BASE SHADER
         let skin_matrix = 
             mesh_uniforms.bones[input.bone_indices[0]] * input.bone_weights[0] +
@@ -67,7 +73,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         var world_space = i_transform * skin_matrix * vertex_position;
 
         // projected shadow mesh
-        if (material_uniforms.shader == 2) {
+        if (material_uniforms.shader == SHADOW_MESH_SHADER) {
             let above = 0.01;
             let distance = -(world_space.y - above) / vec3(0.5, -0.8, 0.5).y;
             let projected_pos = world_space.xyz + (distance * vec3(0.5, -0.8, 0.5));
@@ -85,9 +91,8 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         // REFLECTIONS
         // todo: mirrored mesh: fade with depth underwater, distort the mesh/texture itself, transparent water to see (?)
         // todo: pass simult. with shadowmap pass -> planar reflection
-        // todo: passes simult. with shadowmap pass -> low res (64-128px) cubemaps for distorted environment reflections
+        // todo: passes simult. with shadowmap pass -> low res (64-128px) cubemaps for distorted real-time environment reflections
         // todo: shadow mesh projection -> could use dithering, OR, for normal shadow, draw transparent things last, as supposed
-        // todo: sampler for shadowmap -> depth difference for softness
         // todo: emscripten (!)
 
         // DIRECTIONAL LIGHT
@@ -98,7 +103,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         output.light = diff;
         
         // SHADOW
-        if (global_uniforms.shadows == 1) {
+        if (global_uniforms.shadows == BASE_SHADER) {
             let light_space_pos = global_uniforms.light_view_proj * world_space;
             // Convert XY (-1, 1) to (0, 1), Y is flipped because texture coords are Y-down, Z is already in (0, 1) space
             output.shadow_pos = vec3(light_space_pos.xy * vec2(0.5, -0.5) + vec2(0.5), light_space_pos.z) / light_space_pos.w;
@@ -106,7 +111,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         }
         // UV
         output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
-    } else if (material_uniforms.shader == 0u) {
+    } else if (material_uniforms.shader == HUD_SHADER) {
         // HUD SHADER
         // let i = vertex_index % 3u;
         // output.color = vec3<f32>(select(0.0, 1.0, i == 0u), select(0.0, 1.0, i == 1u), select(0.0, 1.0, i == 2u)); // barycentric coords
@@ -133,6 +138,11 @@ struct VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    // ENVIRONMENT CUBE
+    if (material_uniforms.shader == ENV_CUBE_SHADER) {
+        return textureSample(cubemap, cubemap_sampler, normalize(input.world_space.xyz));
+    }
+
     let depth = (input.pos.z / input.pos.w);
     var tex_color = textureSample(tex_0, texture_sampler, input.uv);
     
@@ -143,7 +153,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // REFLECTION CUBEMAP
-    if (material_uniforms.shader == 3) {
+    if (material_uniforms.shader == REFLECTION_SHADER) {
         let P = input.world_space.xyz;
         let probeCenter = vec3<f32>(0.0, 0.0, 0.0);
         let viewDir = normalize(global_uniforms.camera_world_space.xyz - P);
@@ -171,18 +181,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     
     // SHADOWS
     var shadow = 1.;
-    if (global_uniforms.shadows == 1 && material_uniforms.shader >= 1) {
+    if (global_uniforms.shadows == BASE_SHADER || material_uniforms.shader == REFLECTION_SHADER) {
         // shadow = calculate_shadow(input);
     }
 
-    if (material_uniforms.shader == 1 || material_uniforms.shader == 3) {
+    if (material_uniforms.shader == BASE_SHADER || material_uniforms.shader == REFLECTION_SHADER) {
         // OBSCURE DEPTH
         let depth_limit = 20.0;
         let depth_cutoff = pow(depth/depth_limit, 4.0);
         color = color - (color * depth_cutoff);
         alpha = alpha - (alpha * depth_cutoff);
         // LIGHT
-        let ambient_light = 0.2;
+        let ambient_light = 0.6;
         let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
         let dir_light_color = vec3(1.,1.,.5) * input.light * shadow;
         color = color * min(ambient_light_color + dir_light_color, vec3(1.));
@@ -190,23 +200,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     // VOLUMETRIC LIGHT
     // let vol_light = raymarch_volumetric_light(input);
-    // let volumetric_intensity = 0.1;
+    // let volumetric_intensity = 0.5;
     // color += (volumetric_intensity * vol_light * vec3(0.8, 0.4, 0.2));
 
     // SHADOW MESH
-    if (material_uniforms.shader == 2) {
+    if (material_uniforms.shader == SHADOW_MESH_SHADER) {
         // color = vec3(input.shadow_depth);
         color = vec3(0.02,0.02,0.05);
         // alpha = input.shadow_depth;
         if (input.shadow_depth < bayer_dither(vec2<i32>(input.pos.xy) / 8)) { discard; }
     }
-
-    // ENVIRONMENT CUBE
-    if (material_uniforms.shader == 4) {
-        color = textureSample(cubemap, cubemap_sampler, normalize(input.world_space.xyz)).xyz;
-        alpha = 1.;
-    }
-    
+   
     // FRESNEL
     // The exponent (5.0) controls the sharpness of the rim.
     // if (material_uniforms.shader == 2) {
@@ -266,6 +270,7 @@ fn calculate_shadow(input: VertexOutput) -> f32 {
 // Computes the intersection of a ray (origin, normalized direction)
 // with a sphere centered at 'center' and with radius 'radius'.
 // Returns the distance along the ray (t) to the sphere's surface, or -1.0 if no hit.
+// todo: this did not fix seam, find another way to fix the cubemap seam, ideally also cheaper than this
 fn intersectSphere(origin: vec3<f32>, dir: vec3<f32>, center: vec3<f32>, radius: f32) -> f32 {
     let oc = origin - center;
     // Since dir is normalized, A = 1.
