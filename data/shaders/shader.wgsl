@@ -182,7 +182,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // SHADOWS
     var shadow = 1.;
     if (global_uniforms.shadows == BASE_SHADER || material_uniforms.shader == REFLECTION_SHADER) {
-        // shadow = calculate_shadow(input);
+        shadow = calculate_shadow(input);
     }
 
     if (material_uniforms.shader == BASE_SHADER || material_uniforms.shader == REFLECTION_SHADER) {
@@ -200,7 +200,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     // VOLUMETRIC LIGHT
     // let vol_light = raymarch_volumetric_light(input);
-    // let volumetric_intensity = 0.5;
+    // let volumetric_intensity = 0.25;
     // color += (volumetric_intensity * vol_light * vec3(0.8, 0.4, 0.2));
 
     // SHADOW MESH

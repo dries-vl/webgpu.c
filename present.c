@@ -1,101 +1,30 @@
-#include "game_data.h" // todo: rename to webgpu.h
+#include "platform.h"
+#include "game_data.h" // todo: rename to graphics.h
 
 #include <stdio.h> // REMOVE, for debugging only
 
 #pragma region GLOBALS
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
 #define FORCE_RESOLUTION 0 // force the resolution of the screen to the original width/height -> old-style flicker if changed
+#define FORCE_ASPECT_RATIO 0
 #define FULLSCREEN 1
 #define WINDOWED 0
 int SHOW_CURSOR = 0;
 #define ORIGINAL_WIDTH 1280
 #define ORIGINAL_HEIGHT 720
+#define ORIGINAL_ASPECT_RATIO 1.77
 int WINDOW_WIDTH = ORIGINAL_WIDTH; // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
 int WINDOW_HEIGHT = ORIGINAL_HEIGHT; // todo: make this global variable that can be modified
 int VIEWPORT_WIDTH = ORIGINAL_WIDTH;
 int VIEWPORT_HEIGHT = ORIGINAL_HEIGHT;
 int OFFSET_X = 0; // offset to place smaller-than-window viewport at centre of screen
 int OFFSET_Y = 0;
-float ASPECT_RATIO = 1.77;
+float ASPECT_RATIO = ORIGINAL_ASPECT_RATIO;
 #pragma endregion
 #include "game_data.c" // todo: inline this here and remove file
-#include "game.c" // todo: what to expose to game.c? print_on_screen
+#include "game.c" // todo: put game.c very isolated like graphics, platform. // todo: what to expose to game.c? print_on_screen
 
 #pragma region PLATFORM
-struct MappedMemory {
-    void *data;     // Base pointer to mapped file data
-    void *mapping;  // Opaque handle for the mapping (ex. Windows HANDLE)
-};
-struct Platform {
-    struct MappedMemory (*map_file)(const char *filename);
-    void (*unmap_file)(struct MappedMemory *mm);
-    double (*current_time_ms)();
-};
-/* MEMORY MAPPING MESH */
-typedef struct {
-    unsigned int vertexCount;
-    unsigned int indexCount;
-    unsigned int boneCount;
-    unsigned int frameCount;
-    unsigned int vertexArrayOffset;
-    unsigned int indexArrayOffset;
-    unsigned int boneFramesArrayOffset;
-} MeshHeader;
-struct MappedMemory load_mesh(struct Platform *p, const char *filename, void** v, int *vc, void** i, int *ic) {
-    struct MappedMemory mm = p->map_file(filename);
-    
-    MeshHeader *header = (MeshHeader*)mm.data;
-    // Set pointers into the mapped memory using the header's offsets
-    *vc = header->vertexCount;
-    *v = (unsigned char*)mm.data + header->vertexArrayOffset;
-    *ic  = header->indexCount;
-    *i  = (unsigned int*)((unsigned char*)mm.data + header->indexArrayOffset);
-    
-    return mm;
-}
-struct MappedMemory load_animated_mesh(struct Platform *p, const char *filename,
-                                   void** vertices, int *vertexCount,
-                                   void** indices, int *indexCount,
-                                   void** boneFrames, int *boneCount,
-                                   int *frameCount) {
-    // Map the file into memory.
-    struct MappedMemory mm = p->map_file(filename);
-    if (!mm.data) {
-        printf("Error: could not map file %s\n", filename);
-        return mm;
-    }
-    
-    // The file begins with an AnimatedMeshHeader.
-    MeshHeader *header = (MeshHeader*) mm.data;
-    
-    // Set the vertex pointer and count.
-    *vertexCount = header->vertexCount;
-    *vertices = (unsigned char*) mm.data + header->vertexArrayOffset;
-    
-    // Set the index pointer and count.
-    *indexCount = header->indexCount;
-    *indices = (unsigned int*)((unsigned char*) mm.data + header->indexArrayOffset);
-    
-    // Set the bone frames pointer, bone count, and frame count.
-    *boneCount = header->boneCount;
-    *frameCount = header->frameCount;
-    *boneFrames = (unsigned char*) mm.data + header->boneFramesArrayOffset;
-    
-    return mm;
-}
-/* MEMORY MAPPING TEXTURE */
-typedef struct {
-    int width;
-    int height;
-} ImageHeader;  
-struct MappedMemory load_texture(struct Platform *p, const char *filename, int *out_width, int *out_height) {
-    struct MappedMemory mm = p->map_file(filename);
-
-    ImageHeader *header = (ImageHeader*)mm.data;
-    *out_width  = header->width;
-    *out_height = header->height;
-    return mm;
-}
 #pragma endregion
 
 // todo: we need a much better way to manage meshes etc.
@@ -104,13 +33,20 @@ int tick(struct Platform *p, void *context) {
 
     static int init_done = 0;
 
-    static double ms = 0;
-    static double ms_last_frame = 0;
-    ms_last_frame = init_done ? p->current_time_ms() - ms : 0;
-    ms = p->current_time_ms();
+    // keep track of tick and frame timing
+    static double time_previous_frame = 0;
+    static double delta = 0;
+    double time_now = p->current_time_ms();
+    delta = init_done ? time_now - time_previous_frame : 0;
+    time_previous_frame = time_now;
 
-    // todo: lighting
-    // todo: cubemap sky
+    // wait on the fence to measure GPU work time // *ONLY USE FOR DEBUG, OTHERWISE DON'T SYNC TO AVOID SLOWDOWN*
+    // todo: expose this to call it at beginning of tick, to make sure the current tick's inputs can be immediately drawn
+    // todo: also use this to get matching drawing and frame timings instead of drawing appearing longer than the frame because queued gpu work
+    double gpu_ms = block_on_gpu_queue(context, p);
+
+    double tick_start_ms = p->current_time_ms();
+    
     // todo: use precompiled shader for faster loading
     
     static int main_pipeline;
@@ -236,14 +172,14 @@ int tick(struct Platform *p, void *context) {
         void *bf; int bc, fc;
 
         // ENVIRONMENT CUBE
-        // struct MappedMemory env_cube_mm = load_mesh(p, "data/models/blender/bin/env_cube.bin", &v, &vc, &i, &ic);
-        // env_cube_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &env_cube, 1);
-        // addGPUMaterialUniform(context, env_cube_id, &env_cube_shader, sizeof(base_shader_id));
-        // p->unmap_file(&env_cube_mm);
+        struct MappedMemory env_cube_mm = load_mesh(p, "data/models/blender/bin/env_cube.bin", &v, &vc, &i, &ic);
+        env_cube_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &env_cube, 1);
+        addGPUMaterialUniform(context, env_cube_id, &env_cube_shader, sizeof(base_shader_id));
+        p->unmap_file(&env_cube_mm);
  
         // PREDEFINED MESHES
-        // ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
-        // addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
+        ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
+        addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
         quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
         addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
         // todo: one shared material       
@@ -277,7 +213,6 @@ int tick(struct Platform *p, void *context) {
         float cube_reflectiveness = 0.5;
         addGPUMaterialUniform(context, cube_mesh_id, &cube_reflectiveness, sizeof(cube_reflectiveness));
         p->unmap_file(&cube_mm);
-        // p->unmap_file(&char2_mm);
        
         struct MappedMemory sphere_mm = load_mesh(p, "data/models/blender/bin/sphere.bin", &v, &vc, &i, &ic);
         sphere_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &sphere, 1);
@@ -291,11 +226,11 @@ int tick(struct Platform *p, void *context) {
         int w, h = 0;
         struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
         cube_texture_id = createGPUTexture(context, cube_mesh_id, china_texture_mm.data, w, h);
+        p->unmap_file(&china_texture_mm);
         struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
         cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
         quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
         p->unmap_file(&font_texture_mm);
-        p->unmap_file(&china_texture_mm);
 
         struct MappedMemory ground_texture_mm = load_texture(p, "data/textures/bin/stone.bin", &w, &h);
         ground_texture_id = createGPUTexture(context, ground_mesh_id, ground_texture_mm.data, w, h);
@@ -352,9 +287,9 @@ int tick(struct Platform *p, void *context) {
     // Update uniforms
     timeVal += 0.016f; // pretend 16ms per frame
     //yaw(0.001f * ms_last_frame, camera);
-    playerMovement(movementSpeed, ms_last_frame, &gameState.player);
+    playerMovement(movementSpeed, delta, &gameState.player);
     float playerLocation[3] = {gameState.player.instance->transform[12], gameState.player.instance->transform[13], gameState.player.instance->transform[14]};
-    applyGravity(&gameState.player.velocity, playerLocation, ms_last_frame);
+    applyGravity(&gameState.player.velocity, playerLocation, delta);
     view[12] = gameState.player.instance->transform[12];
     view[13] = gameState.player.instance->transform[13];
     view[14] = gameState.player.instance->transform[14];
@@ -385,8 +320,11 @@ int tick(struct Platform *p, void *context) {
 
     // update the instances of the text
     setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
+    
+    // keep track of how long the tick took to process
+    double tick_ms = p->current_time_ms() - tick_start_ms;
 
-    float gpu_ms = drawGPUFrame(context, 0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
+    struct draw_result result = drawGPUFrame(context, p, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
 
     // todo: pass postprocessing settings etc. as parameter -> no global, can switch instantly
     // draw cubemap around eye, and save to disk
@@ -401,10 +339,12 @@ int tick(struct Platform *p, void *context) {
             setGPUGlobalUniformValue(context, main_pipeline, viewOffset, &cubemapViews[i], sizeof(view));
             char filename[64]; char *cube_faces[6] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
             snprintf(filename, sizeof(filename), "data/textures/cube/cube_face_%s.png", cube_faces[i]);    
-            drawGPUFrame(context, 0, 0, 128, 128, 1, filename);
+            drawGPUFrame(context, p, 0, 0, 128, 128, 1, filename);
         }
     }
 
+    // todo: create a central place for things that need to happen to initialize every frame iteration correctly
+    // reset the debug text on screen
     {
         screen_chars_index = 0;
         current_screen_char = 0; // todo: replace with function that resets instead of spaghetti
@@ -412,16 +352,84 @@ int tick(struct Platform *p, void *context) {
         setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
     }
 
-    char gpu_string[256];
-    static float last_60_gpu_times[60] = {0};
-    float avg_last_60_frames = 0.0;
-    static int index = 0;
-    last_60_gpu_times[index] = gpu_ms;
-    index = (index + 1) % 60;
-    for (int i = 0; i < 60; i++) {
-        avg_last_60_frames += last_60_gpu_times[i] / 60.;
+    double total_tick_time = 0.0;
+    // print the gpu timing on screen
+    {
+        char string[64];
+        static double last_60_times[60] = {0};
+        double avg_last_60_frames = 0.0;
+        static int index = 0;
+        last_60_times[index] = gpu_ms;
+        index = (index + 1) % 60;
+        for (int i = 0; i < 60; i++) {
+            avg_last_60_frames += last_60_times[i] / 60.;
+        }
+        snprintf(string, sizeof(string), "Waiting for GPU to finish: %4.2fms\n", avg_last_60_frames);
+        print_on_screen(string);
+        total_tick_time += avg_last_60_frames;
     }
-    snprintf(gpu_string, sizeof(gpu_string), "GPU time: %4.2fms\n", avg_last_60_frames);
-    print_on_screen(gpu_string);
+
+    // print the cpu tick timing
+    {
+        char string[64];
+        static double last_60_times[60] = {0};
+        double avg_last_60_frames = 0.0;
+        static int index = 0;
+        last_60_times[index] = tick_ms;
+        index = (index + 1) % 60;
+        for (int i = 0; i < 60; i++) {
+            avg_last_60_frames += last_60_times[i] / 60.;
+        }
+        snprintf(string, sizeof(string), "CPU tick time: %4.2fms\n", avg_last_60_frames);
+        print_on_screen(string);
+        total_tick_time += avg_last_60_frames;
+    }
+
+    // print the total cpu time including the draw calls
+    if (result.surface_not_available == 0) {
+        char string[64];
+        static double last_60_times[60] = {0};
+        double avg_last_60_frames = 0.0;
+        static int index = 0;
+        last_60_times[index] = result.cpu_ms;
+        index = (index + 1) % 60;
+        for (int i = 0; i < 60; i++) {
+            avg_last_60_frames += last_60_times[i] / 60.;
+        }
+        snprintf(string, sizeof(string), "CPU draw time: %4.2fms\n", avg_last_60_frames);
+        print_on_screen(string);
+        total_tick_time += avg_last_60_frames;
+    } else {
+        char string[64];
+        snprintf(string, sizeof(string), "[SURFACE NOT AVAILABLE]: %4.2fms\n", result.cpu_ms);
+        print_on_screen(string);
+        total_tick_time += result.cpu_ms;
+    }
+
+    // print the total timing on screen
+    {
+        char string[64];
+        snprintf(string, sizeof(string), "Total tick time sum: %4.2fms\n", total_tick_time);
+        print_on_screen(string);
+    }
+    
+    {
+        char string[64];
+        double timed = p->current_time_ms() - time_now;
+        snprintf(string, sizeof(string), "Timed tick time: %4.2fms\n", timed);
+        print_on_screen(string);
+        // printf("inner tick GPU: %4.2f\n", gpu_ms);
+        // printf("inner tick CPU: %4.2f\n", tick_ms + result.cpu_ms);
+        // printf("inner tick SUM: %4.2f\n", gpu_ms + tick_ms + result.cpu_ms);
+        // printf("inner tick TIMED: %4.2f\n", timed);
+    }
+    // compare the delta with previous frame's timing
+    {
+        static double previous_tick_time = 0.0;
+        char string[64];
+        snprintf(string, sizeof(string), "Tick time VS frame time: %4.2fms\n", previous_tick_time - delta);
+        print_on_screen(string);
+        previous_tick_time = gpu_ms + tick_ms + result.cpu_ms;
+    }
     return 0;
 }

@@ -12,6 +12,7 @@ _end
 _etext
 addGPUGlobalUniform
 addGPUMaterialUniform
+block_on_gpu_queue
 createGPUContext
 createGPUMesh
 createGPUPipeline
@@ -24,7 +25,10 @@ frmwrk_load_shader_module
 frmwrk_print_adapter_info
 frmwrk_print_global_report
 frmwrk_setup_logging
+load_animated_mesh
 load_cube_map
+load_mesh
+load_texture
 selectDiscreteGPU
 setGPUGlobalUniformValue
 setGPUInstanceBuffer

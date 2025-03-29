@@ -1,7 +1,7 @@
 #ifndef GAME_DATA_H_
 #define GAME_DATA_H_
 
-extern const int MSAA_ENABLED = 0;
+extern const int MSAA_ENABLED = 1;
 extern const int SHADOWS_ENABLED = 1;
 extern const int POST_PROCESSING_ENABLED = 0;
 
@@ -17,6 +17,11 @@ extern const int POST_PROCESSING_ENABLED = 0;
 enum MeshFlags {
     MESH_ANIMATED = 1 << 0,
     MESH_CAST_SHADOWS = 1 << 1
+};
+
+struct draw_result {
+    int surface_not_available;
+    double cpu_ms;
 };
 
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
@@ -36,7 +41,8 @@ extern void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset
 extern int   addGPUMaterialUniform(void *context, int material_id, const void* data, int data_size);
 extern void  setGPUMaterialUniformValue(void *context, int material_id, int offset, const void* data, int dataSize);
 extern void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
-extern float drawGPUFrame(void *context, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename);
+extern struct draw_result drawGPUFrame(void *context, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename);
+extern double block_on_gpu_queue(void *context, struct Platform *p);
 
 struct Vertex { // 48 bytes
     unsigned int data[4]; // 16 bytes u32 // *info* raw data

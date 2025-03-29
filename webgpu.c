@@ -10,6 +10,7 @@
 #include "stb_image_write.h"
 
 #include "wgpu.h"
+#include "platform.h"
 #include "game_data.h"
 
 #pragma region PREDEFINED DATA
@@ -128,8 +129,6 @@ typedef struct {
     // current frame objects (global for simplicity)     // todo: make a bunch of these static to avoid global bloat
     WGPUSurfaceTexture    currentSurfaceTexture;
     WGPUTextureView       swapchain_view;
-    WGPUCommandEncoder    currentEncoder;
-    WGPURenderPassEncoder currentPass;
     // optional postprocessing with intermediate texture
     WGPUTexture           post_processing_texture;
     WGPUTextureView       post_processing_texture_view;
@@ -828,9 +827,9 @@ void create_postprocessing_pipeline(void *context_ptr, int viewport_width, int v
     // Create the bind group for the blit pass.
     // Create a sampler
     WGPUSamplerDescriptor samplerDesc = {0};
-    samplerDesc.minFilter = WGPUFilterMode_Linear;
-    samplerDesc.magFilter = WGPUFilterMode_Linear;
-    samplerDesc.mipmapFilter = WGPUFilterMode_Linear;
+    samplerDesc.minFilter = WGPUMipmapFilterMode_Nearest;
+    samplerDesc.magFilter = WGPUMipmapFilterMode_Nearest;
+    samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Nearest;
     samplerDesc.lodMinClamp = 0;
     samplerDesc.lodMaxClamp = 0;
     samplerDesc.maxAnisotropy = 1;
@@ -1352,20 +1351,19 @@ static void fenceCallback(WGPUQueueWorkDoneStatus status, WGPU_NULLABLE void * u
     bool *done = (bool*)userdata;
     *done = true;
 }
-static float fenceAndWait(WebGPUContext *context) {
+double block_on_gpu_queue(void *context_ptr, struct Platform *p) {
+    WebGPUContext *context = (WebGPUContext *)context_ptr;
     volatile bool workDone = false;
+    double time_before_ns = p->current_time_ms();
 
     // Request notification when the GPU work is done.
     wgpuQueueOnSubmittedWorkDone(context->queue, fenceCallback, (void*)&workDone);
 
     // Busy-wait until the flag is set.
-    long long time_before_ns = clock();
     while (!workDone) {
         wgpuDevicePoll(context->device, false, NULL);
     }
-    long long time_after_ns = clock();
-    float ms_waited_on_gpu = (float) (time_after_ns - time_before_ns);
-    return ms_waited_on_gpu;
+    return p->current_time_ms() - time_before_ns;
 }
 static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
     bool *mappingDone = (bool *)userdata;
@@ -1377,11 +1375,18 @@ static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
     *mappingDone = true;
 }
 
-float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename) {
+struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
-    // Start the frame.
+    struct draw_result result = {0};
+    double ms = p->current_time_ms();
+    // acquire the surface texture
     wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
-    if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success) return 0.0f;
+    // if not available, return early and notify that the surface is not yet available to be rendered to
+    if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success) {
+        result.cpu_ms = p->current_time_ms() - ms;
+        result.surface_not_available = 1;
+        return result;
+    }
     WGPUTextureViewDescriptor d = {
         .format = screen_color_format,
         .dimension = WGPUTextureViewDimension_2D,
@@ -1393,7 +1398,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     };
     context->swapchain_view = wgpuTextureCreateView(context->currentSurfaceTexture.texture, &d);
     WGPUCommandEncoderDescriptor encDesc = {0};
-    context->currentEncoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
     WGPURenderPassColorAttachment colorAtt = {0};
     if (POST_PROCESSING_ENABLED && MSAA_ENABLED) { colorAtt.view = context->msaa_texture_view; colorAtt.resolveTarget = context->post_processing_texture_view;}
     else if (POST_PROCESSING_ENABLED) { colorAtt.view = context->post_processing_texture_view;}
@@ -1447,23 +1452,6 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     }
     #pragma endregion
     
-    context->currentPass = wgpuCommandEncoderBeginRenderPass(context->currentEncoder, &passDesc);
-
-    wgpuRenderPassEncoderSetViewport(
-        context->currentPass,
-        offset_x,   // x
-        offset_y,   // y
-        viewport_width,   // width
-        viewport_height,   // height
-        0.0f,      // minDepth
-        1.0f       // maxDepth
-    );
-    wgpuRenderPassEncoderSetScissorRect(
-        context->currentPass,
-        (uint32_t)offset_x, (uint32_t)offset_y,
-        (uint32_t)viewport_width, (uint32_t)viewport_height
-    );
-
     // Write CPU–side uniform data to GPU
     // todo: condition to only do when updated data
     wgpuQueueWriteBuffer(context->queue, context->global_uniform_buffer, 0, context->global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
@@ -1472,24 +1460,19 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     // Reuse the global pipeline uniform data in the shader uniforms // todo: is it possible to reuse the same gpu-buffer and write only once?
     // wgpuQueueWriteBuffer(context->queue, context->shadow_uniform_buffer, 0, context->pipelines[0].global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
     if (SHADOWS_ENABLED) {
-        // 1. Create a command encoder for the shadow pass.
-        WGPUCommandEncoderDescriptor shadowEncDesc = {0};
-        WGPUCommandEncoder shadowEncoder = wgpuDeviceCreateCommandEncoder(context->device, &shadowEncDesc);
-
-        // 2. Set up a render pass descriptor for the shadow pass.
-        //    This render pass uses no color attachment (depth-only).
+        // Set up a render pass descriptor for the shadow pass.
+        // This render pass uses no color attachment (depth-only).
         WGPURenderPassDepthStencilAttachment shadowDepthAttachment = {0};
         shadowDepthAttachment.view = context->shadow_texture_view;
         shadowDepthAttachment.depthLoadOp = WGPULoadOp_Clear;
         shadowDepthAttachment.depthStoreOp = WGPUStoreOp_Store;
         shadowDepthAttachment.depthClearValue = 1.0f;
-        // (Stencil settings can be added if you use them.)
         WGPURenderPassDescriptor shadowPassDesc = {0};
         shadowPassDesc.colorAttachmentCount = 0; // no color attachments
         shadowPassDesc.depthStencilAttachment = &shadowDepthAttachment;   
 
-        // 3. Begin the shadow render pass.
-        WGPURenderPassEncoder shadowPass = wgpuCommandEncoderBeginRenderPass(shadowEncoder, &shadowPassDesc);
+        // Shadow render pass.
+        WGPURenderPassEncoder shadowPass = wgpuCommandEncoderBeginRenderPass(encoder, &shadowPassDesc);
 
         // 4. Bind the shadow pipeline.
         wgpuRenderPassEncoderSetPipeline(shadowPass, context->shadow_pipeline);
@@ -1531,27 +1514,39 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
             }
         }
 
-        // 6. End the shadow render pass and finish encoding.
-        // printf()
+        // 6. End the shadow render pass
         wgpuRenderPassEncoderEnd(shadowPass);
         wgpuRenderPassEncoderRelease(shadowPass);
-        WGPUCommandBufferDescriptor shadowCmdDesc = {0};
-        WGPUCommandBuffer shadowCmdBuf = wgpuCommandEncoderFinish(shadowEncoder, &shadowCmdDesc);
-        wgpuCommandEncoderRelease(shadowEncoder);
-        // Submit the shadow command buffer.
-        wgpuQueueSubmit(context->queue, 1, &shadowCmdBuf);
-        wgpuCommandBufferRelease(shadowCmdBuf);
     }
 
-    // Loop through all pipelines and draw each one
+    // Main rendering pass
+    WGPURenderPassEncoder main_pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
+    
+    // set scissor to render only to the extent of the viewport
+    wgpuRenderPassEncoderSetViewport(
+        main_pass,
+        offset_x,   // x
+        offset_y,   // y
+        viewport_width,   // width
+        viewport_height,   // height
+        0.0f,      // minDepth
+        1.0f       // maxDepth
+    );
+    wgpuRenderPassEncoderSetScissorRect(
+        main_pass,
+        (uint32_t)offset_x, (uint32_t)offset_y,
+        (uint32_t)viewport_width, (uint32_t)viewport_height
+    );
+
+
     for (int pipeline_id = 0; pipeline_id < MAX_PIPELINES; pipeline_id++) {
         if (context->pipelines[pipeline_id].used) {
 
             Pipeline *pipeline = &context->pipelines[pipeline_id];
             // Set the render pipeline // todo: does it matter where we call this?
             // todo: is it possible to create the command/renderpass encoders, set the pipeline once at the beginning, and then keep reusing it?
-            wgpuRenderPassEncoderSetPipeline(context->currentPass, pipeline->pipeline);
-            wgpuRenderPassEncoderSetBindGroup(context->currentPass, 0, context->global_bindgroup, 0, NULL);
+            wgpuRenderPassEncoderSetPipeline(main_pass, pipeline->pipeline);
+            wgpuRenderPassEncoderSetBindGroup(main_pass, 0, context->global_bindgroup, 0, NULL);
 
             for (int j = 0; j < MAX_MATERIALS && pipeline->material_ids[j] > -1; j++) {
 
@@ -1571,9 +1566,9 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                 // Set the dynamic offset to point to the uniform values for this material
                 // *info* max size of 64kb -> with 1000 meshes we can have at most 64 bytes of uniform data per mesh (!)
                 // Bind per-pipeline bind group (group 0) (global uniforms, material uniforms, shadows), pass offset for the material uniforms
-                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 1, pipeline->pipeline_bindgroup, 1, &material_uniform_offset);
+                wgpuRenderPassEncoderSetBindGroup(main_pass, 1, pipeline->pipeline_bindgroup, 1, &material_uniform_offset);
                 // Bind per-material bind group (group 1) // todo: we could fit all the textures into the pipeline, up to 1000 bindings in one bindgroup -> avoid this call for every material
-                wgpuRenderPassEncoderSetBindGroup(context->currentPass, 2, material->material_bindgroup, 0, NULL);
+                wgpuRenderPassEncoderSetBindGroup(main_pass, 2, material->material_bindgroup, 0, NULL);
 
                 for (int k = 0; k < MAX_MESHES && material->mesh_ids[k] > -1; k++) {
                     
@@ -1588,7 +1583,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                     }
                     // todo: make this based on mesh setting USE_BONES (but needs to be reset if previous?)
                     if (1) {
-                        wgpuRenderPassEncoderSetBindGroup(context->currentPass, 3, mesh->mesh_bindgroup, 0, NULL);
+                        wgpuRenderPassEncoderSetBindGroup(main_pass, 3, mesh->mesh_bindgroup, 0, NULL);
                     }
                     // todo: make this based on mesh setting UPDATE_MESH_INSTANCES, then we don't need to do this for static meshes
                     // If the mesh requires instance data updates, update the instance buffer (this is really expensive!)
@@ -1599,13 +1594,13 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
                     }
 
                     // Instanced mesh: bind its vertex + instance buffer (slots 0 and 1) and draw with instance_count
-                    wgpuRenderPassEncoderSetVertexBuffer(context->currentPass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderSetVertexBuffer(context->currentPass, 1, mesh->instanceBuffer, 0, WGPU_WHOLE_SIZE);
-                    wgpuRenderPassEncoderSetIndexBuffer(context->currentPass, mesh->indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderSetVertexBuffer(main_pass, 0, mesh->vertexBuffer, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderSetVertexBuffer(main_pass, 1, mesh->instanceBuffer, 0, WGPU_WHOLE_SIZE);
+                    wgpuRenderPassEncoderSetIndexBuffer(main_pass, mesh->indexBuffer, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                     // todo: considering this allows a base vertex, first index and first instance,
                     // todo: is it then not possible to put all vertex, index and instance buffers together, 
                     // todo: and loop just over this call instead of calling setVertexBuffer in a loop (?)
-                    wgpuRenderPassEncoderDrawIndexed(context->currentPass, mesh->indexCount,mesh->instance_count,0,0,0);
+                    wgpuRenderPassEncoderDrawIndexed(main_pass, mesh->indexCount,mesh->instance_count,0,0,0);
                     // todo: wgpuRenderPassEncoderDrawIndexedIndirect
                 }
             }
@@ -1613,23 +1608,14 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     }
 
     // End the render pass.
-    wgpuRenderPassEncoderEnd(context->currentPass);
-    // Add the copy command to the command encoder to get the data later for saving to disk
-    if (save_to_disk) {
-        wgpuCommandEncoderCopyTextureToBuffer(context->currentEncoder, &src, &dst, &extent);
-    }
-    wgpuRenderPassEncoderRelease(context->currentPass);
-    context->currentPass = NULL;
+    wgpuRenderPassEncoderEnd(main_pass);
+    wgpuRenderPassEncoderRelease(main_pass);
     
-    // Finish command encoding and submit.
-    WGPUCommandBufferDescriptor cmdDesc = {0};
-    WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(context->currentEncoder, &cmdDesc);
-    wgpuCommandEncoderRelease(context->currentEncoder);
-    wgpuQueueSubmit(context->queue, 1, &cmdBuf);
-    wgpuCommandBufferRelease(cmdBuf);
-
     // save to disk
     if (save_to_disk) {
+        // Add the copy command to the command encoder to get the data later for saving to disk
+        wgpuCommandEncoderCopyTextureToBuffer(encoder, &src, &dst, &extent);
+
         // Map the staging buffer to CPU memory.
         void *mappedData = NULL;
         // todo: segfault
@@ -1668,10 +1654,6 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
 
     // Final blit
     if (POST_PROCESSING_ENABLED) {
-        // Create a new command encoder for the final pass.
-        WGPUCommandEncoderDescriptor finalEncDesc = {0};
-        WGPUCommandEncoder finalEncoder = wgpuDeviceCreateCommandEncoder(context->device, &finalEncDesc);
-
         // Set up a render pass targeting the swap chain.
         WGPURenderPassColorAttachment finalColorAtt = {0};
         finalColorAtt.view = context->swapchain_view;
@@ -1684,7 +1666,7 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
         finalPassDesc.colorAttachments = &finalColorAtt;
 
         // Begin the final render pass.
-        WGPURenderPassEncoder finalPass = wgpuCommandEncoderBeginRenderPass(finalEncoder, &finalPassDesc);
+        WGPURenderPassEncoder finalPass = wgpuCommandEncoderBeginRenderPass(encoder, &finalPassDesc);
 
         // Bind your simple post-processing pipeline.
         // This pipeline should use a vertex shader that outputs full-screen positions
@@ -1697,17 +1679,14 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
 
         wgpuRenderPassEncoderEnd(finalPass);
         wgpuRenderPassEncoderRelease(finalPass);
-
-        // Finish the final command buffer and submit.
-        WGPUCommandBufferDescriptor finalCmdDesc = {0};
-        WGPUCommandBuffer finalCmdBuf = wgpuCommandEncoderFinish(finalEncoder, &finalCmdDesc);
-        wgpuCommandEncoderRelease(finalEncoder);
-        wgpuQueueSubmit(context->queue, 1, &finalCmdBuf);
-        wgpuCommandBufferRelease(finalCmdBuf);
     }
 
-    // Wait on the fence to measure GPU work time // *ONLY USE FOR DEBUG, OTHERWISE DON'T SYNC TO AVOID SLOWDOWN*
-    float ms_waited_on_gpu = 0.;//fenceAndWait(context);
+    // Finish command encoding and submit.
+    WGPUCommandBufferDescriptor cmdDesc = {0};
+    WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(encoder, &cmdDesc);
+    wgpuCommandEncoderRelease(encoder);
+    wgpuQueueSubmit(context->queue, 1, &cmdBuf);
+    wgpuCommandBufferRelease(cmdBuf);
 
     // Present the surface.
     wgpuSurfacePresent(context->surface);
@@ -1716,5 +1695,8 @@ float drawGPUFrame(void *context_ptr, int offset_x, int offset_y, int viewport_w
     wgpuTextureRelease(context->currentSurfaceTexture.texture);
     context->currentSurfaceTexture.texture = NULL;
 
-    return ms_waited_on_gpu;
+    // time the draw calls and frame setup on cpu
+    result.cpu_ms = p->current_time_ms() - ms;
+
+    return result;
 }

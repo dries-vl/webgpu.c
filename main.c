@@ -350,20 +350,26 @@ void fullscreen_window(HWND hwnd)
     WINDOW_WIDTH  = targetWidth;
     WINDOW_HEIGHT = targetHeight;
     
-    // Suppose we want to scale up 500x500 to fill as much vertical space as possible.
-    float scaleX = (float)WINDOW_WIDTH  / (float)VIEWPORT_WIDTH;  // e.g. 1920 / 500 = 3.84
-    float scaleY = (float)WINDOW_HEIGHT / (float)VIEWPORT_HEIGHT;  // e.g. 1080 / 500 = 2.16
-    float scale  = (scaleX < scaleY) ? scaleX : scaleY; // pick smaller => 2.16
+    if (FORCE_ASPECT_RATIO) {
+        // Suppose we want to scale up 500x500 to fill as much vertical space as possible.
+        float scaleX = (float)WINDOW_WIDTH  / (float)VIEWPORT_WIDTH;  // e.g. 1920 / 500 = 3.84
+        float scaleY = (float)WINDOW_HEIGHT / (float)VIEWPORT_HEIGHT;  // e.g. 1080 / 500 = 2.16
+        float scale  = (scaleX < scaleY) ? scaleX : scaleY; // pick smaller => 2.16
 
-    // final scaled size
-    VIEWPORT_WIDTH = VIEWPORT_WIDTH * scale; // 500 * 2.16 = 1080
-    VIEWPORT_HEIGHT = VIEWPORT_HEIGHT * scale; // same => 1080
+        // final scaled size
+        VIEWPORT_WIDTH = VIEWPORT_WIDTH * scale; // 500 * 2.16 = 1080
+        VIEWPORT_HEIGHT = VIEWPORT_HEIGHT * scale; // same => 1080
+
+        // center it
+        OFFSET_X = (WINDOW_WIDTH  - VIEWPORT_WIDTH) * 0.5f;  // (1920 - 1080)/2 = 420
+        OFFSET_Y = (WINDOW_HEIGHT - VIEWPORT_HEIGHT) * 0.5f;  // (1080 - 1080)/2 = 0
+    } else {
+        VIEWPORT_WIDTH = WINDOW_WIDTH;
+        VIEWPORT_HEIGHT = WINDOW_HEIGHT;
+    }
+
     ASPECT_RATIO = (float) VIEWPORT_WIDTH / (float) VIEWPORT_HEIGHT;
 
-    // center it
-    OFFSET_X = (WINDOW_WIDTH  - VIEWPORT_WIDTH) * 0.5f;  // (1920 - 1080)/2 = 420
-    OFFSET_Y = (WINDOW_HEIGHT - VIEWPORT_HEIGHT) * 0.5f;  // (1080 - 1080)/2 = 0
-    
     printf("Viewport: %dx%d, offset: %dx%d, aspect ratio: %4.2f\n",
            VIEWPORT_WIDTH, VIEWPORT_HEIGHT, OFFSET_X, OFFSET_Y, ASPECT_RATIO);
 
@@ -388,7 +394,6 @@ struct debug_info {
     float count;
     float slowest;
     float ms_last_frame;
-    float ms_waited_on_gpu;
 };
 static struct debug_info debug_info = {0};
 void init_debug_info() {
@@ -401,7 +406,6 @@ void init_debug_info() {
     debug_info.avg_count = 60; 
     debug_info.count = 0.0;
     debug_info.ms_last_frame = 0.0f;
-    debug_info.ms_waited_on_gpu = 0.0f;
 }
 double current_time_ms() {
     LARGE_INTEGER new_tick_count;
@@ -432,7 +436,7 @@ void draw_debug_info() {
     debug_info.ms_last_frame = ((float) (1000*ticks_elapsed) / (float) debug_info.ticks_per_second);
     int fps = debug_info.ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
     char perf_output_string[256];
-    snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s,  %4.2fgpu-ms/f\n", debug_info.ms_last_frame, fps, debug_info.ms_waited_on_gpu);
+    snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s\n", debug_info.ms_last_frame, fps);
     print_on_screen(perf_output_string);
     debug_info.count += debug_info.ms_last_frame - debug_info.ms_last_60_frames[debug_info.ms_index];
     debug_info.ms_last_60_frames[debug_info.ms_index] = debug_info.ms_last_frame;
@@ -539,16 +543,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         if (!g_Running) break;
 
-        tick(&p, context);
-
-        // Actual frame rendering
-        // *info* without vsync/fifo the cpu can keep pushing new frames without waiting, until the queue is full and backpressure
-        // *info* forces the cpu to wait before pushing another frame, bringing the cpu speed down to the gpu speed
-        // *info* we can force the cpu to wait regardless by using the fence in wgpuEndFrame()
-        debug_info.ms_waited_on_gpu = 0;
+        static double previous_iter_ms = 0.0;
+        double ms_now = current_time_ms();
+        double delta = ms_now - previous_iter_ms;
+        previous_iter_ms = ms_now;
+        // printf("iteration: %4.2f\n", delta);
         
-        // todo: create a central place for things that need to happen to initialize every frame iteration correctly
-        // Set the printed chars to 0 to reset the text in the HUD
+        static double previous_tick_ms = 0.0;
+        // printf("tick time: %4.2f\n", previous_tick_ms);
+        tick(&p, context);
+        previous_tick_ms = current_time_ms() - ms_now;
+
 
         draw_debug_info();
         // if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {
