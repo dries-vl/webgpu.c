@@ -290,7 +290,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
         .height = height,
         .usage = WGPUTextureUsage_RenderAttachment,
         .alphaMode = WGPUCompositeAlphaMode_Auto,
-        .presentMode = WGPUPresentMode_Immediate // *info* use fifo for vsync
+        .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
     };
     wgpuSurfaceConfigure(context.surface, &context.config);
 
@@ -1688,15 +1688,20 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     wgpuQueueSubmit(context->queue, 1, &cmdBuf);
     wgpuCommandBufferRelease(cmdBuf);
 
+    // time the draw calls and frame setup on cpu
+    double current_time = p->current_time_ms();
+    result.cpu_ms = current_time - ms;
+    ms = current_time;
+
     // Present the surface.
     wgpuSurfacePresent(context->surface);
     wgpuTextureViewRelease(context->swapchain_view);
     context->swapchain_view = NULL;
     wgpuTextureRelease(context->currentSurfaceTexture.texture);
     context->currentSurfaceTexture.texture = NULL;
-
-    // time the draw calls and frame setup on cpu
-    result.cpu_ms = p->current_time_ms() - ms;
+    
+    // time spent waiting to present to surface
+    result.surface_wait_time = p->current_time_ms() - ms;
 
     return result;
 }

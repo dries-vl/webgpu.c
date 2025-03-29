@@ -385,7 +385,23 @@ int tick(struct Platform *p, void *context) {
         total_tick_time += avg_last_60_frames;
     }
 
-    // print the total cpu time including the draw calls
+    // print the time spent waiting to get the render surface
+    if (result.surface_not_available == 0) {
+        char string[64];
+        static double last_60_times[60] = {0};
+        double avg_last_60_frames = 0.0;
+        static int index = 0;
+        last_60_times[index] = result.surface_wait_time;
+        index = (index + 1) % 60;
+        for (int i = 0; i < 60; i++) {
+            avg_last_60_frames += last_60_times[i] / 60.;
+        }
+        snprintf(string, sizeof(string), "Waiting for surface: %4.2fms\n", avg_last_60_frames);
+        print_on_screen(string);
+        total_tick_time += avg_last_60_frames;
+    } 
+
+    // print the cpu time for the draw calls etc.
     if (result.surface_not_available == 0) {
         char string[64];
         static double last_60_times[60] = {0};
@@ -406,30 +422,5 @@ int tick(struct Platform *p, void *context) {
         total_tick_time += result.cpu_ms;
     }
 
-    // print the total timing on screen
-    {
-        char string[64];
-        snprintf(string, sizeof(string), "Total tick time sum: %4.2fms\n", total_tick_time);
-        print_on_screen(string);
-    }
-    
-    {
-        char string[64];
-        double timed = p->current_time_ms() - time_now;
-        snprintf(string, sizeof(string), "Timed tick time: %4.2fms\n", timed);
-        print_on_screen(string);
-        // printf("inner tick GPU: %4.2f\n", gpu_ms);
-        // printf("inner tick CPU: %4.2f\n", tick_ms + result.cpu_ms);
-        // printf("inner tick SUM: %4.2f\n", gpu_ms + tick_ms + result.cpu_ms);
-        // printf("inner tick TIMED: %4.2f\n", timed);
-    }
-    // compare the delta with previous frame's timing
-    {
-        static double previous_tick_time = 0.0;
-        char string[64];
-        snprintf(string, sizeof(string), "Tick time VS frame time: %4.2fms\n", previous_tick_time - delta);
-        print_on_screen(string);
-        previous_tick_time = gpu_ms + tick_ms + result.cpu_ms;
-    }
     return 0;
 }

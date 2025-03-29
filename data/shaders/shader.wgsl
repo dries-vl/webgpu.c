@@ -247,7 +247,7 @@ fn color_based_on_shadow_uv(shadow_uv: vec3<f32>) -> f32 {
 fn calculate_shadow(input: VertexOutput) -> f32 {
     // 3x3 kernel sampling
     // PCF settings.
-    let bias = 0.0005;
+    let bias = 0.003;
     let texel_size = vec2<f32>(1. / 1024.0, 1. / 1024.0); // assuming 1024x1024 shadow map resolution
     var shadow_sum: f32 = 0.0;
     let samples: i32 = 0;

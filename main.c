@@ -436,8 +436,8 @@ void draw_debug_info() {
     debug_info.ms_last_frame = ((float) (1000*ticks_elapsed) / (float) debug_info.ticks_per_second);
     int fps = debug_info.ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
     char perf_output_string[256];
-    snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s\n", debug_info.ms_last_frame, fps);
-    print_on_screen(perf_output_string);
+    // snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s\n", debug_info.ms_last_frame, fps);
+    // print_on_screen(perf_output_string);
     debug_info.count += debug_info.ms_last_frame - debug_info.ms_last_60_frames[debug_info.ms_index];
     debug_info.ms_last_60_frames[debug_info.ms_index] = debug_info.ms_last_frame;
     debug_info.ms_index = (debug_info.ms_index + 1) % debug_info.avg_count;
@@ -543,17 +543,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         if (!g_Running) break;
 
-        static double previous_iter_ms = 0.0;
-        double ms_now = current_time_ms();
-        double delta = ms_now - previous_iter_ms;
-        previous_iter_ms = ms_now;
-        // printf("iteration: %4.2f\n", delta);
-        
-        static double previous_tick_ms = 0.0;
-        // printf("tick time: %4.2f\n", previous_tick_ms);
         tick(&p, context);
-        previous_tick_ms = current_time_ms() - ms_now;
-
 
         draw_debug_info();
         // if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {

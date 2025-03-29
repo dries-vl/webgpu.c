@@ -21,6 +21,7 @@ enum MeshFlags {
 
 struct draw_result {
     int surface_not_available;
+    double surface_wait_time;
     double cpu_ms;
 };
 
