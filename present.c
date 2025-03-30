@@ -34,11 +34,21 @@ int tick(struct Platform *p, void *context) {
     static int init_done = 0;
 
     // keep track of tick and frame timing
-    static double time_previous_frame = 0;
-    static double delta = 0;
+    static double time_previous_frame = 0.0;
+    static double delta = 0.0;
     double time_now = p->current_time_ms();
-    delta = init_done ? time_now - time_previous_frame : 0;
+    delta = init_done ? time_now - time_previous_frame : 0.0;
     time_previous_frame = time_now;
+
+    static double time_waited_on_surface = 0.0;
+    static double time_spent_anticipating = 0.0;
+    
+    // sleep the amount of time the last frame waited to acquire the surface (to anticipate blocking time, and allow input events to still arrive for this frame)
+    double time_before_wait = p->current_time_ms();
+    static double time_to_wait = 0.0;
+    if (time_waited_on_surface > 1.0) time_to_wait += 1.0; else time_to_wait -= 1.0;
+    if (time_to_wait >= 1.0) p->sleep_ms(time_to_wait);
+    time_spent_anticipating = p->current_time_ms() - time_before_wait;
 
     // wait on the fence to measure GPU work time // *ONLY USE FOR DEBUG, OTHERWISE DON'T SYNC TO AVOID SLOWDOWN*
     // todo: expose this to call it at beginning of tick, to make sure the current tick's inputs can be immediately drawn
@@ -325,6 +335,8 @@ int tick(struct Platform *p, void *context) {
     double tick_ms = p->current_time_ms() - tick_start_ms;
 
     struct draw_result result = drawGPUFrame(context, p, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
+    time_waited_on_surface = result.surface_wait_time;
+    double cpu_ms = result.cpu_ms;
 
     // todo: pass postprocessing settings etc. as parameter -> no global, can switch instantly
     // draw cubemap around eye, and save to disk
@@ -353,6 +365,22 @@ int tick(struct Platform *p, void *context) {
     }
 
     double total_tick_time = 0.0;
+    // print the time spent sleeping in anticipation of frame acquiring time
+    {
+        char string[64];
+        static double last_60_times[60] = {0};
+        double avg_last_60_frames = 0.0;
+        static int index = 0;
+        last_60_times[index] = time_spent_anticipating;
+        index = (index + 1) % 60;
+        for (int i = 0; i < 60; i++) {
+            avg_last_60_frames += last_60_times[i] / 60.;
+        }
+        snprintf(string, sizeof(string), "Anticipate waiting for frame: %4.2fms\n", avg_last_60_frames);
+        print_on_screen(string);
+        total_tick_time += avg_last_60_frames;
+    }
+
     // print the gpu timing on screen
     {
         char string[64];
@@ -391,7 +419,7 @@ int tick(struct Platform *p, void *context) {
         static double last_60_times[60] = {0};
         double avg_last_60_frames = 0.0;
         static int index = 0;
-        last_60_times[index] = result.surface_wait_time;
+        last_60_times[index] = time_waited_on_surface;
         index = (index + 1) % 60;
         for (int i = 0; i < 60; i++) {
             avg_last_60_frames += last_60_times[i] / 60.;
@@ -407,7 +435,7 @@ int tick(struct Platform *p, void *context) {
         static double last_60_times[60] = {0};
         double avg_last_60_frames = 0.0;
         static int index = 0;
-        last_60_times[index] = result.cpu_ms;
+        last_60_times[index] = cpu_ms;
         index = (index + 1) % 60;
         for (int i = 0; i < 60; i++) {
             avg_last_60_frames += last_60_times[i] / 60.;
@@ -422,5 +450,19 @@ int tick(struct Platform *p, void *context) {
         total_tick_time += result.cpu_ms;
     }
 
+    // print the total time we spent on this tick
+    if (result.surface_not_available == 0) {
+        char string[64];
+        static double last_60_times[60] = {0};
+        double avg_last_60_frames = 0.0;
+        static int index = 0;
+        last_60_times[index] = total_tick_time;
+        index = (index + 1) % 60;
+        for (int i = 0; i < 60; i++) {
+            avg_last_60_frames += last_60_times[i] / 60.;
+        }
+        snprintf(string, sizeof(string), "Total tick time: %4.2fms\n", avg_last_60_frames);
+        print_on_screen(string);
+    }
     return 0;
 }

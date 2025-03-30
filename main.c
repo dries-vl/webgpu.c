@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* PLATFORM LAYER API */
 // todo: pass these by struct to present.c
@@ -67,7 +68,32 @@ void unmap_file(struct MappedMemory *mm) {
 }
 #pragma endregion
 
+typedef UINT (WINAPI *timeBeginPeriod_t)(UINT);
+typedef UINT (WINAPI *timeEndPeriod_t)(UINT);
+timeBeginPeriod_t pTimeBeginPeriod = NULL;
+timeEndPeriod_t   pTimeEndPeriod   = NULL;
+void load_winmm_functions() {
+    HMODULE hWinmm = LoadLibraryA("winmm.dll");
+    if (!hWinmm) {
+        MessageBoxA(0, "Failed to load winmm.dll", "Error", MB_OK);
+        ExitProcess(1);
+    }
 
+    pTimeBeginPeriod = (timeBeginPeriod_t)GetProcAddress(hWinmm, "timeBeginPeriod");
+    pTimeEndPeriod   = (timeEndPeriod_t)GetProcAddress(hWinmm, "timeEndPeriod");
+
+    if (!pTimeBeginPeriod || !pTimeEndPeriod) {
+        MessageBoxA(0, "Failed to get winmm.dll functions", "Error", MB_OK);
+        ExitProcess(1);
+    }
+}
+
+void sleep_ms(double ms) {
+    static int setup = 0;
+    if (!setup) pTimeBeginPeriod(1);
+    unsigned long wait_time = (unsigned long) ms; // wait slightly less, only the integer value, for some margin time
+    Sleep((DWORD) wait_time);
+}
 
 #pragma region CYCLES
 #if defined(_MSC_VER)
@@ -91,11 +117,8 @@ unsigned long long read_cycle_count() { // inline fails with gcc, but works with
 #pragma region RAW INPUT SETUP
 typedef BOOL (WINAPI *RegisterRawInputDevices_t)(PCRAWINPUTDEVICE, UINT, UINT);
 typedef UINT (WINAPI *GetRawInputData_t)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
-
 RegisterRawInputDevices_t pRegisterRawInputDevices = NULL;
 GetRawInputData_t pGetRawInputData = NULL;
-
-// Load required functions dynamically
 void load_raw_input_functions() {
     HMODULE hUser32 = LoadLibrary("user32.dll");
     if (!hUser32) {
@@ -144,6 +167,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
     switch (message) {
         case WM_CREATE:
         {
+            load_winmm_functions(); // load windows dll to be able to call timeBeginPeriod for ms-accuracy sleep
             load_raw_input_functions(); // load windows dll to use raw input
             InitializeRawInput(); // setup for listening to windows raw input
         } break;
@@ -526,7 +550,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     struct Platform p = {
         .current_time_ms = current_time_ms,
         .map_file = map_file,
-        .unmap_file = unmap_file
+        .unmap_file = unmap_file,
+        .sleep_ms = sleep_ms
     };
 
     /* MAIN LOOP */

@@ -265,9 +265,9 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
     WGPURequestAdapterOptions adapter_opts = {0};
     adapter_opts.compatibleSurface = context.surface;
     adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance;
-    //wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
+    wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
     // todo: this might not be possible in Web, so use another way to get the dedicated gpu there
-    context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
+    // context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
     assert(context.adapter);
     wgpuAdapterRequestDevice(context.adapter, NULL, handle_request_device, &context);
     assert(context.device);
@@ -1361,7 +1361,7 @@ double block_on_gpu_queue(void *context_ptr, struct Platform *p) {
 
     // Busy-wait until the flag is set.
     while (!workDone) {
-        wgpuDevicePoll(context->device, false, NULL);
+        wgpuDevicePoll(context->device, true, NULL); // blocks internally with 'true' set, to avoid wasting cpu resources
     }
     return p->current_time_ms() - time_before_ns;
 }

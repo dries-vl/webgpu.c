@@ -9,6 +9,7 @@ struct Platform {
     struct MappedMemory (*map_file)(const char *filename);
     void (*unmap_file)(struct MappedMemory *mm);
     double (*current_time_ms)();
+    void (*sleep_ms)(double ms);
 };
 /* MEMORY MAPPING MESH */
 typedef struct {
