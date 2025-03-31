@@ -568,12 +568,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         if (!g_Running) break;
 
+        // todo: put present.c in a dll so we can reload it here -> also present.h file
+        // todo: put game.c in a dll so we can reload it here -> also a game.h file
+        // todo: put all the binary outputs from /data in a single /bin
+        // todo: put all the stb headers used by scripts in /data in a single /lib folder
+        // todo: put all the /data bat files higher together (maybe in root with run.bat)
+        // todo: create /src folder
         tick(&p, context);
 
         draw_debug_info();
-        // if (fabs(cameraSpeed.x) > 1.0f || fabs(cameraSpeed.y) > 1.0f || fabs(cameraSpeed.z) > 1.0f) {
-        //     printf("Camera speed: %4.2f %4.2f %4.2f\n", cameraSpeed.x, cameraSpeed.y, cameraSpeed.z);
-        // }
     }
     
     return 0;

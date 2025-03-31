@@ -21,7 +21,7 @@ typedef struct {
     unsigned int indexArrayOffset;
     unsigned int boneFramesArrayOffset;
 } MeshHeader;
-struct MappedMemory load_mesh(struct Platform *p, const char *filename, void** v, int *vc, void** i, int *ic) {
+static struct MappedMemory load_mesh(struct Platform *p, const char *filename, void** v, int *vc, void** i, int *ic) {
     struct MappedMemory mm = p->map_file(filename);
     
     MeshHeader *header = (MeshHeader*)mm.data;
@@ -33,7 +33,7 @@ struct MappedMemory load_mesh(struct Platform *p, const char *filename, void** v
     
     return mm;
 }
-struct MappedMemory load_animated_mesh(struct Platform *p, const char *filename,
+static struct MappedMemory load_animated_mesh(struct Platform *p, const char *filename,
                                    void** vertices, int *vertexCount,
                                    void** indices, int *indexCount,
                                    void** boneFrames, int *boneCount,
@@ -68,7 +68,7 @@ typedef struct {
     int width;
     int height;
 } ImageHeader;  
-struct MappedMemory load_texture(struct Platform *p, const char *filename, int *out_width, int *out_height) {
+static struct MappedMemory load_texture(struct Platform *p, const char *filename, int *out_width, int *out_height) {
     struct MappedMemory mm = p->map_file(filename);
 
     ImageHeader *header = (ImageHeader*)mm.data;

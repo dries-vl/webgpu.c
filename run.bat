@@ -1,4 +1,3 @@
 @echo off
 
-tcc webgpu.c -L. -lwgpu_native -shared -rdynamic
-tcc main.c -L. -lwebgpu -run
+tcc main.c webgpu.c -L. -I. -run -lwgpu_native

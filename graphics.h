@@ -1,9 +1,10 @@
 #ifndef GAME_DATA_H_
 #define GAME_DATA_H_
 
-extern const int MSAA_ENABLED = 1;
-extern const int SHADOWS_ENABLED = 1;
-extern const int POST_PROCESSING_ENABLED = 0;
+// todo: either pass as param, or put in webgpu.c as global, but not in header file
+static const int MSAA_ENABLED = 1;
+static const int SHADOWS_ENABLED = 1;
+static const int POST_PROCESSING_ENABLED = 0;
 
 #define MAX_PIPELINES             2 // todo: remove, only one pipeline
 #define MAX_MESHES                128
@@ -29,21 +30,21 @@ struct draw_result {
 // todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
 /* GRAPHICS LAYER API */
 // todo : platform provides these functions to presentation layer via a struct (then they don't need to be compiled together)
-extern void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int viewport_width, int viewport_height);
-extern int   createGPUPipeline(void *context, const char *shader);
-extern void  create_shadow_pipeline(void *context);
-extern void  create_postprocessing_pipeline(void *context, int viewport_width, int viewport_height);
-extern int   load_cube_map(void *context, void *data[6], int face_size);
-extern int   createGPUMesh(void *context, int material_id, enum MeshFlags flags, void *v, int vc, void *i, int ic, void *ii, int iic);
-extern void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc);
-extern int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
-extern int   addGPUGlobalUniform(void *context, int pipeline_id, const void* data, int data_size);
-extern void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset, const void* data, int dataSize);
-extern int   addGPUMaterialUniform(void *context, int material_id, const void* data, int data_size);
-extern void  setGPUMaterialUniformValue(void *context, int material_id, int offset, const void* data, int dataSize);
-extern void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
-extern struct draw_result drawGPUFrame(void *context, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename);
-extern double block_on_gpu_queue(void *context, struct Platform *p);
+void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int viewport_width, int viewport_height);
+int   createGPUPipeline(void *context, const char *shader);
+void  create_shadow_pipeline(void *context);
+void  create_postprocessing_pipeline(void *context, int viewport_width, int viewport_height);
+int   load_cube_map(void *context, void *data[6], int face_size);
+int   createGPUMesh(void *context, int material_id, enum MeshFlags flags, void *v, int vc, void *i, int ic, void *ii, int iic);
+void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc);
+int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
+int   addGPUGlobalUniform(void *context, int pipeline_id, const void* data, int data_size);
+void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset, const void* data, int dataSize);
+int   addGPUMaterialUniform(void *context, int material_id, const void* data, int data_size);
+void  setGPUMaterialUniformValue(void *context, int material_id, int offset, const void* data, int dataSize);
+void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
+struct draw_result drawGPUFrame(void *context, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename);
+double block_on_gpu_queue(void *context, struct Platform *p);
 
 struct Vertex { // 48 bytes
     unsigned int data[4]; // 16 bytes u32 // *info* raw data

@@ -6,12 +6,14 @@
 #include <time.h>
 #include <math.h>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION 1
-#include "stb_image_write.h"
-
-#include "wgpu.h"
+#define __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+#include "web/webgpu.h"
+#else
+#include "wgpu.h" // todo: replace with webgpu.h standard that works with emscripten
+#endif
 #include "platform.h"
-#include "game_data.h"
+#include "graphics.h"
 
 #pragma region PREDEFINED DATA
 static const WGPUTextureFormat screen_color_format = WGPUTextureFormat_RGBA8Unorm;
@@ -1640,11 +1642,12 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
         }
 
         // Write out the image using stb_image_write
-        if (stbi_write_png(filename, viewport_width, viewport_height, 4, image, viewport_width * bytes_per_pixel)) {
-            printf("Screenshot saved successfully.\n");
-        } else {
-            printf("Failed to save screenshot.\n");
-        }
+        // todo: instead use platform to do a save binary file
+        // if (stbi_write_png(filename, viewport_width, viewport_height, 4, image, viewport_width * bytes_per_pixel)) {
+        //     printf("Screenshot saved successfully.\n");
+        // } else {
+        //     printf("Failed to save screenshot.\n");
+        // }
 
         // Clean up
         free(image);
