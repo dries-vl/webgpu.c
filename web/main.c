@@ -28,6 +28,7 @@ void web_blocking_sleep(double ms) {
         ; // repeat if interrupted
 }
 
+#pragma region FILE_MAPPING
 static struct MappedMemory web_map_file(const char *filename) {
     struct MappedMemory mm = {0};
     FILE *f = fopen(filename, "rb");
@@ -67,6 +68,7 @@ static void web_unmap_file(struct MappedMemory *mm) {
     }
     mm->mapping = NULL;
 }
+#pragma endregion
 
 // Global flag to signal when to stop the main loop.
 static bool g_Running = true;
@@ -104,7 +106,7 @@ void init_debug_info(void) {
 void draw_debug_info(void) {
     char resolution_string[256];
     snprintf(resolution_string, sizeof(resolution_string),
-             "Resolution: %dx%d (%.1f)", VIEWPORT_WIDTH, VIEWPORT_HEIGHT, ASPECT_RATIO);
+             "Resolution: %dx%d (%.1f)\n", VIEWPORT_WIDTH, VIEWPORT_HEIGHT, ASPECT_RATIO);
     print_on_screen(resolution_string);
 
     // Compute elapsed time since last call.
@@ -129,45 +131,56 @@ void draw_debug_info(void) {
 
     char perf_output_string[256];
     snprintf(perf_output_string, sizeof(perf_output_string),
-             "Frame time: %.2f ms, %d fps", ms_elapsed, fps);
+             "Frame time: %.2f ms, %d fps\n", ms_elapsed, fps);
     print_on_screen(perf_output_string);
 
     char avg_string[256];
     snprintf(avg_string, sizeof(avg_string),
-             "Average over %d frames: %.2f ms", debug_info.avg_count, debug_info.sum_last_60 / debug_info.avg_count);
+             "Average over %d frames: %.2f ms\n", debug_info.avg_count, debug_info.sum_last_60 / debug_info.avg_count);
     print_on_screen(avg_string);
 
     char slowest_string[256];
     snprintf(slowest_string, sizeof(slowest_string),
-             "Slowest over %d frames: %.2f ms", debug_info.avg_count, debug_info.slowest);
+             "Slowest over %d frames: %.2f ms\n", debug_info.avg_count, debug_info.slowest);
     print_on_screen(slowest_string);
 }
 #pragma endregion
 
-void print_fetched_data() {
-    EM_ASM({
-        function printDirRecursive(path, indent) {
-          var entries = FS.readdir(path);
-          for (var i = 0; i < entries.length; i++) {
-            var entry = entries[i];
-            // Skip current and parent directories.
-            if (entry === "." || entry === "..") continue;
-            var fullPath = path + "/" + entry;
-            console.log(indent + fullPath);
-            try {
-              var info = FS.lookupPath(fullPath, { follow: true });
-              // FS.isDir expects a mode (number); if this node is a directory, print its contents recursively.
-              if (info.node && FS.isDir(info.node.mode)) {
-                printDirRecursive(fullPath, indent + "  ");
-              }
-            } catch (e) {
-              // If lookupPath fails, skip it.
-            }
-          }
-        }
-        printDirRecursive("data", "");
-      });
+#pragma region INPUTS
+EM_BOOL key_callback(int eventType, const EmscriptenKeyboardEvent *e, void *userData) {
+    if (eventType == EMSCRIPTEN_EVENT_KEYDOWN || eventType == EMSCRIPTEN_EVENT_KEYUP) {
+        bool isPressed = (eventType == EMSCRIPTEN_EVENT_KEYDOWN);
+        const char *key = e->key; // e.g. "w", "ArrowUp", "Escape"
+
+        if (strcmp(key, "Escape") == 0) g_Running = false;
+
+        if (strcmp(key, "w") == 0 || strcmp(key, "ArrowUp") == 0) buttonState.forward = isPressed;
+        if (strcmp(key, "s") == 0 || strcmp(key, "ArrowDown") == 0) buttonState.backward = isPressed;
+        if (strcmp(key, "a") == 0 || strcmp(key, "ArrowLeft") == 0) buttonState.left = isPressed;
+        if (strcmp(key, "d") == 0 || strcmp(key, "ArrowRight") == 0) buttonState.right = isPressed;
+        if (strcmp(key, " ") == 0 && isPressed) gameState.player.velocity.y = 0.01f;
+        if (strcmp(key, "Tab") == 0 && isPressed) SHOW_CURSOR ^= 1;
+
+        // prevent default browser behavior like scrolling
+        return 1;
+    }
+    return 0;
 }
+EM_BOOL mouse_move_callback(int eventType, const EmscriptenMouseEvent *e, void *userData) {
+    if (!SHOW_CURSOR) {
+        float dx = e->movementX * 0.002f;
+        float dy = e->movementY * 0.002f;
+        absolute_yaw(dx, view);
+        absolute_pitch(dy, view);
+    }
+    return 1;
+}
+EM_BOOL mouse_button_callback(int eventType, const EmscriptenMouseEvent *e, void *userData) {
+    // Use e->button (0 = left, 1 = middle, 2 = right)
+    // You can track pressed state or trigger immediate actions
+    return 1;
+}
+#pragma endregion
 
 // Wrapper function called repeatedly by the browser's event loop.
 void main_called_by_browser(void) {
@@ -178,8 +191,9 @@ void main_called_by_browser(void) {
     draw_debug_info();
 
     // Optionally, if your tick() sets g_Running to false, cancel the loop.
-    if (!g_Running)
+    if (!g_Running) {
         emscripten_cancel_main_loop();
+    }
 }
 void start_function(void) {
 
@@ -196,7 +210,7 @@ void start_function(void) {
          .unmap_file     = web_unmap_file,
          .sleep_ms       = web_blocking_sleep
     };
- 
+   
     // Now set up the main loop. This loop will repeatedly call main_called_by_browser()
     // which in turn calls your tick() and draw_debug_info() functions (and therefore print_on_screen).
     // todo: figure out, this might or might not run in a separate loop
@@ -209,7 +223,13 @@ int main(void) {
     WINDOW_HEIGHT = 600;
     VIEWPORT_WIDTH = 800;
     VIEWPORT_HEIGHT = 600;
-
+ 
+    emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, key_callback);
+    emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, key_callback);
+    emscripten_set_mousemove_callback("#canvas", 0, 1, mouse_move_callback);
+    emscripten_set_mousedown_callback("#canvas", 0, 1, mouse_button_callback);
+    emscripten_set_mouseup_callback("#canvas", 0, 1, mouse_button_callback);
+ 
     // setup the weggpu context
     g_Context = createGPUContext(start_function, 800, 600, 800, 600);
     return 0;
