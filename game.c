@@ -1,6 +1,4 @@
-#ifndef __wasm__
 #include <math.h>
-#endif
 
 /* GAME STRUCTS */
 struct Vector3 {

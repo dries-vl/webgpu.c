@@ -210,7 +210,7 @@ int tick(struct Platform *p, void *context) {
     // wait on the fence to measure GPU work time // *ONLY USE FOR DEBUG, OTHERWISE DON'T SYNC TO AVOID SLOWDOWN*
     // todo: expose this to call it at beginning of tick, to make sure the current tick's inputs can be immediately drawn
     // todo: also use this to get matching drawing and frame timings instead of drawing appearing longer than the frame because queued gpu work
-    double gpu_ms = block_on_gpu_queue(context, p);
+    double gpu_ms = init_done ? block_on_gpu_queue(context, p) : 0.0;
 
     double tick_start_ms = p->current_time_ms();
     

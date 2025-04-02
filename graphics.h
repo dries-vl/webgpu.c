@@ -2,6 +2,8 @@
 #define GAME_DATA_H_
 
 // todo: either pass as param, or put in webgpu.c as global, but not in header file
+static const int FORCE_GPU_CHOICE = 0;
+static const int DISCRETE_GPU = 0; // 0 for forcing integrated, 1 for forcing discrete
 static const int MSAA_ENABLED = 1;
 static const int SHADOWS_ENABLED = 1;
 static const int POST_PROCESSING_ENABLED = 0;
@@ -29,8 +31,11 @@ struct draw_result {
 // todo: add DX12 which allows for more lightweight setup on windows + VRS for high resolution screens
 // todo: add functions to remove meshes from the scene, and automatically remove pipelines/pipelines that have no meshes anymore (?)
 /* GRAPHICS LAYER API */
-// todo : platform provides these functions to presentation layer via a struct (then they don't need to be compiled together)
+#ifdef __EMSCRIPTEN__
+void *createGPUContext(void (*callback)(), int width, int height, int viewport_width, int viewport_height);
+#else
 void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int viewport_width, int viewport_height);
+#endif
 int   createGPUPipeline(void *context, const char *shader);
 void  create_shadow_pipeline(void *context);
 void  create_postprocessing_pipeline(void *context, int viewport_width, int viewport_height);

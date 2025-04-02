@@ -6,11 +6,12 @@
 #include <time.h>
 #include <math.h>
 
-#define __EMSCRIPTEN__
 #ifdef __EMSCRIPTEN__
 #include "web/webgpu.h"
+#include <emscripten/html5.h>
+void (*setup_callback)();
 #else
-#include "wgpu.h" // todo: replace with webgpu.h standard that works with emscripten
+#include "wgpu.h"
 #endif
 #include "platform.h"
 #include "graphics.h"
@@ -124,6 +125,8 @@ typedef struct {
     WGPUDevice               device;
     WGPUQueue                queue;
     WGPUSurfaceConfiguration config;
+    // setup
+    int width; int height; int viewport_width; int viewport_height;
     // data
     Pipeline              pipelines[MAX_PIPELINES];
     Material              materials[MAX_MATERIALS];
@@ -172,129 +175,28 @@ typedef struct {
 } WebGPUContext;
 #pragma endregion
 
-static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, const char* message, void* userdata) {
-    WebGPUContext *context = (WebGPUContext *)userdata;
-    if (status == WGPURequestAdapterStatus_Success)
-        context->adapter = adapter;
-    else
-        fprintf(stderr, "[webgpu.c] RequestAdapter failed: %s\n", message);
-}
-static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice device, const char* message, void* userdata) {
-    WebGPUContext *context = (WebGPUContext *)userdata;
-    if (status == WGPURequestDeviceStatus_Success)
-        context->device = device;
-    else
-        fprintf(stderr, "[webgpu.c] RequestDevice failed: %s\n", message);
-}
-WGPUAdapter selectDiscreteGPU(WGPUInstance instance) {
-    // First call to get the number of available adapters.
-    WGPUInstanceEnumerateAdapterOptions opts = {.backends = WGPUInstanceBackend_All};
-    size_t adapterCount = wgpuInstanceEnumerateAdapters(instance, &opts, NULL);
-    if (adapterCount == 0) {
-        fprintf(stderr, "No adapters found!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Allocate an array to hold the adapter handles.
-    WGPUAdapter* adapters = malloc(sizeof(WGPUAdapter) * adapterCount);
-    if (!adapters) {
-        fprintf(stderr, "Failed to allocate memory for adapters.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Second call: fill the array with adapter handles.
-    adapterCount = wgpuInstanceEnumerateAdapters(instance, &opts, adapters);
-
-    WGPUAdapter selectedAdapter = NULL;
-    for (size_t i = 0; i < adapterCount; i++) {
-        WGPUAdapterInfo info;
-        memset(&info, 0, sizeof(info));
-        wgpuAdapterGetInfo(adapters[i], &info);
-        printf("Adapter %zu: %s, Type: %d\n", i, info.device, info.adapterType);
-
-        // Use the provided enum: select the adapter if it is a discrete GPU.
-        if (info.adapterType == WGPUAdapterType_DiscreteGPU) {
-            selectedAdapter = adapters[i];
-            printf("Selected discrete GPU: %s\n", info.device);
-            break;
-        }
-    }
-
-    if (!selectedAdapter) {
-        // Fallback: use the first adapter if no discrete GPU is found.
-        selectedAdapter = adapters[0];
-        WGPUAdapterInfo info;
-        memset(&info, 0, sizeof(info));
-        wgpuAdapterGetInfo(selectedAdapter, &info);
-        printf("No discrete GPU found; falling back to adapter: %s\n", info.device);
-    }
-
-    free(adapters);
-    return selectedAdapter;
-}
-
-void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int viewport_width, int viewport_height) {
-    static WebGPUContext context = {0}; // initialize all fields to zero
-
-    // Instance creation (your instance extras, etc.)
-    WGPUInstanceExtras extras = {0};
-    extras.chain.sType = WGPUSType_InstanceExtras;
-    extras.backends   = WGPUInstanceBackend_Vulkan;
-    extras.flags      = WGPUInstanceFlag_DiscardHalLabels;
-    extras.dx12ShaderCompiler = WGPUDx12Compiler_Undefined;
-    extras.gles3MinorVersion  = WGPUGles3MinorVersion_Automatic;
-    extras.dxilPath = NULL;
-    extras.dxcPath  = NULL;
-
-    WGPUInstanceDescriptor instDesc = {0};
-    instDesc.nextInChain = (const WGPUChainedStruct*)&extras;
-    context.instance = wgpuCreateInstance(&instDesc);
-    assert(context.instance);
-
-    /* WINDOWS SPECIFIC */
-    // todo: hide windows specific
-    WGPUSurfaceDescriptorFromWindowsHWND chained_desc = {0};
-    chained_desc.chain.sType = WGPUSType_SurfaceDescriptorFromWindowsHWND;
-    chained_desc.hwnd = hwnd;
-    chained_desc.hinstance = hInstance;
-    /* WINDOWS SPECIFIC */
-
-    WGPUSurfaceDescriptor surface_desc = {0};
-    surface_desc.nextInChain = (const WGPUChainedStruct*)&chained_desc;
-    context.surface = wgpuInstanceCreateSurface(context.instance, &surface_desc);
-    assert(context.surface);
-
-    WGPURequestAdapterOptions adapter_opts = {0};
-    adapter_opts.compatibleSurface = context.surface;
-    adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance;
-    wgpuInstanceRequestAdapter(context.instance, &adapter_opts, handle_request_adapter, &context);
-    // todo: this might not be possible in Web, so use another way to get the dedicated gpu there
-    // context.adapter = selectDiscreteGPU(context.instance); // code to force select dedicated gpu
-    assert(context.adapter);
-    wgpuAdapterRequestDevice(context.adapter, NULL, handle_request_device, &context);
-    assert(context.device);
-    context.queue = wgpuDeviceGetQueue(context.device);
-    assert(context.queue);
+// todo: separate context from device setup; and then allow the context to be freed/recreated while keeping the device stuff
+static void setup_context(WebGPUContext *context) {
+    assert(context->adapter);
+    assert(context->device);
+    context->queue = wgpuDeviceGetQueue(context->device);
+    assert(context->queue);
 
     WGPUSurfaceCapabilities caps = {0};
-    wgpuSurfaceGetCapabilities(context.surface, context.adapter, &caps);
+    wgpuSurfaceGetCapabilities(context->surface, context->adapter, &caps);
     WGPUTextureFormat chosenFormat = screen_color_format;
-    // *Rgba8UnormSrgb seems slightly slower than Rgba8Unorm for some reason*
-    // if (caps.formatCount > 0) { // selects Rgba8UnormSrgb it seems
-    //     chosenFormat = caps.formats[0];
-    // }
 
-    if (!POST_PROCESSING_ENABLED) {viewport_width=width;viewport_height=height;}
-    context.config = (WGPUSurfaceConfiguration){
-        .device = context.device,
+    if (!POST_PROCESSING_ENABLED) {context->viewport_width=context->width;context->viewport_height=context->height;}
+    context->config = (WGPUSurfaceConfiguration){
+        .device = context->device,
         .format = chosenFormat,
-        .width = width,
-        .height = height,
+        .width = context->width,
+        .height = context->height,
         .usage = WGPUTextureUsage_RenderAttachment,
         .alphaMode = WGPUCompositeAlphaMode_Auto,
         .presentMode = WGPUPresentMode_Fifo // *info* use fifo for vsync
     };
-    wgpuSurfaceConfigure(context.surface, &context.config);
+    wgpuSurfaceConfigure(context->surface, &context->config);
 
     // Create the global bindgroup layout + create the bindgroup
     {
@@ -311,28 +213,28 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
         WGPUBindGroupLayoutDescriptor bglDesc = {0};
         bglDesc.entryCount = 1;
         bglDesc.entries = entries;
-        context.global_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
+        context->global_layout = wgpuDeviceCreateBindGroupLayout(context->device, &bglDesc);
         
         {
             WGPUBufferDescriptor ubDesc = {0};
             ubDesc.size = GLOBAL_UNIFORM_CAPACITY;
             ubDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-            context.global_uniform_buffer = wgpuDeviceCreateBuffer(context.device, &ubDesc);
+            context->global_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &ubDesc);
             
             enum { entry_count = 1 };
             WGPUBindGroupEntry entries[entry_count] = {
                 {
                     .binding = 0,
-                    .buffer = context.global_uniform_buffer,
+                    .buffer = context->global_uniform_buffer,
                     .offset = 0,
                     .size = GLOBAL_UNIFORM_CAPACITY,
                 }
             };
             WGPUBindGroupDescriptor uBgDesc = {0};
-            uBgDesc.layout = context.global_layout;
+            uBgDesc.layout = context->global_layout;
             uBgDesc.entryCount = entry_count;
             uBgDesc.entries = entries;
-            context.global_bindgroup = wgpuDeviceCreateBindGroup(context.device, &uBgDesc);
+            context->global_bindgroup = wgpuDeviceCreateBindGroup(context->device, &uBgDesc);
         }
     }
 
@@ -388,12 +290,12 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
         WGPUBindGroupLayoutDescriptor bglDesc = {0};
         bglDesc.entryCount = PIPELINE_BINDGROUP_ENTRIES;
         bglDesc.entries = entries;
-        context.main_pipeline_layout = wgpuDeviceCreateBindGroupLayout(context.device, &bglDesc);
+        context->main_pipeline_layout = wgpuDeviceCreateBindGroupLayout(context->device, &bglDesc);
     }
 
     // Create the per-material bind group layout (ex. the textures)
     {
-        context.per_material_layout = wgpuDeviceCreateBindGroupLayout(context.device, &PER_MATERIAL_BINDGROUP_LAYOUT_DESC);
+        context->per_material_layout = wgpuDeviceCreateBindGroupLayout(context->device, &PER_MATERIAL_BINDGROUP_LAYOUT_DESC);
     }
 
     // Create per-mesh bindgroup layout (ex. the bones)
@@ -403,11 +305,11 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
         boneEntry.binding = 0;
         boneEntry.visibility = WGPUShaderStage_Vertex;
         boneEntry.buffer.type = WGPUBufferBindingType_Uniform;
-        boneEntry.buffer.minBindingSize = sizeof(context.default_bones);
+        boneEntry.buffer.minBindingSize = sizeof(context->default_bones);
         WGPUBindGroupLayoutDescriptor boneBGLDesc = {0};
         boneBGLDesc.entryCount = 1;
         boneBGLDesc.entries = &boneEntry;
-        context.per_mesh_layout = wgpuDeviceCreateBindGroupLayout(context.device, &boneBGLDesc);
+        context->per_mesh_layout = wgpuDeviceCreateBindGroupLayout(context->device, &boneBGLDesc);
     }
 
     // Create default dummy bone data
@@ -415,32 +317,32 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
         // identity matrices
         for (int i = 0; i < MAX_BONES; i++) {
             for (int j = 0; j < 16; j++) {
-                context.default_bones[i][j] = (j % 5 == 0) ? 1.0f : 0.0f;
+                context->default_bones[i][j] = (j % 5 == 0) ? 1.0f : 0.0f;
             }
         }
 
         {
             WGPUBufferDescriptor bufDesc = {0};
-            bufDesc.size = sizeof(context.default_bones);
+            bufDesc.size = sizeof(context->default_bones);
             bufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-            context.defaultBoneBuffer = wgpuDeviceCreateBuffer(context.device, &bufDesc);
+            context->defaultBoneBuffer = wgpuDeviceCreateBuffer(context->device, &bufDesc);
 
             // Upload the identity matrix to the buffer.
-            wgpuQueueWriteBuffer(context.queue, context.defaultBoneBuffer, 0, context.default_bones, sizeof(context.default_bones));
+            wgpuQueueWriteBuffer(context->queue, context->defaultBoneBuffer, 0, context->default_bones, sizeof(context->default_bones));
         }
 
         // Create the default bind group with our minimal bone buffer.
         WGPUBindGroupEntry bgEntry = {0};
         bgEntry.binding = 0;
-        bgEntry.buffer = context.defaultBoneBuffer;
+        bgEntry.buffer = context->defaultBoneBuffer;
         bgEntry.offset = 0;
-        bgEntry.size = sizeof(context.default_bones);
+        bgEntry.size = sizeof(context->default_bones);
 
         WGPUBindGroupDescriptor bgDesc = {0};
-        bgDesc.layout = context.per_mesh_layout;
+        bgDesc.layout = context->per_mesh_layout;
         bgDesc.entryCount = 1;
         bgDesc.entries = &bgEntry;
-        context.defaultBoneBindGroup = wgpuDeviceCreateBindGroup(context.device, &bgDesc);
+        context->defaultBoneBindGroup = wgpuDeviceCreateBindGroup(context->device, &bgDesc);
     }
 
     // Create default value for empty texture slots (1x1 texture)
@@ -455,19 +357,19 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
         td.size.depthOrArrayLayers = 1;
         td.mipLevelCount = 1;
         td.sampleCount   = 1;
-        context.defaultTexture = wgpuDeviceCreateTexture(context.device, &td);
+        context->defaultTexture = wgpuDeviceCreateTexture(context->device, &td);
 
         // Copy data
         WGPUImageCopyTexture ict = {0};
-        ict.texture = context.defaultTexture;
+        ict.texture = context->defaultTexture;
         WGPUTextureDataLayout tdl = {0};
         tdl.bytesPerRow    = 4;
         tdl.rowsPerImage   = 1;
         WGPUExtent3D extent = {1,1,1};
-        wgpuQueueWriteTexture(context.queue, &ict, whitePixel, 4, &tdl, &extent);
+        wgpuQueueWriteTexture(context->queue, &ict, whitePixel, 4, &tdl, &extent);
 
         // Create a view
-        context.defaultTextureView = wgpuTextureCreateView(context.defaultTexture, NULL);
+        context->defaultTextureView = wgpuTextureCreateView(context->defaultTexture, NULL);
     }
 
     // Create the depth texture attachment
@@ -476,13 +378,13 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
             .usage = WGPUTextureUsage_RenderAttachment,
             .label = "DEPTH TEXTURE",
             .dimension = WGPUTextureDimension_2D,
-            .size = { .width = viewport_width, .height = viewport_height, .depthOrArrayLayers = 1 },
+            .size = { .width = context->viewport_width, .height = context->viewport_height, .depthOrArrayLayers = 1 },
             .format = WGPUTextureFormat_Depth32Float, // Or Depth32Float if supported
             .mipLevelCount = 1,
             .sampleCount = MSAA_ENABLED ? 4 : 1,
             .nextInChain = NULL,
         };
-        WGPUTexture depthTexture = wgpuDeviceCreateTexture(context.device, &depthTextureDesc);
+        WGPUTexture depthTexture = wgpuDeviceCreateTexture(context->device, &depthTextureDesc);
         // 2. Create a texture view for the depth texture
         WGPUTextureViewDescriptor depthViewDesc = {
             .label = "DEPTH TEXTURE VIEW",
@@ -503,7 +405,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
             .depthFailOp = WGPUStencilOperation_Keep,
             .passOp = WGPUStencilOperation_Keep,
         };
-        context.depthStencilState = (WGPUDepthStencilState){
+        context->depthStencilState = (WGPUDepthStencilState){
             .format = depthTextureDesc.format,
             .depthWriteEnabled = true,
             .depthCompare = WGPUCompareFunction_LessEqual, // Pass fragments with lesser depth values
@@ -517,7 +419,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
             .depthBiasClamp = 0.0f,
         };
         // 4. depth attachment for render pass
-        context.depthAttachment = (WGPURenderPassDepthStencilAttachment){
+        context->depthAttachment = (WGPURenderPassDepthStencilAttachment){
             .view = depthTextureView,
             .depthLoadOp = WGPULoadOp_Clear,   // Clear depth at start of pass
             .depthStoreOp = WGPUStoreOp_Discard,  // Optionally store depth results
@@ -531,19 +433,19 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
         WGPUTextureDescriptor msaaDesc = {0};
         msaaDesc.usage = WGPUTextureUsage_RenderAttachment;
         msaaDesc.dimension = WGPUTextureDimension_2D;
-        msaaDesc.format = context.config.format;
-        msaaDesc.size.width  = viewport_width;
-        msaaDesc.size.height = viewport_height;
+        msaaDesc.format = context->config.format;
+        msaaDesc.size.width  = context->viewport_width;
+        msaaDesc.size.height = context->viewport_height;
         msaaDesc.size.depthOrArrayLayers = 1;
         msaaDesc.mipLevelCount = 1;
         msaaDesc.sampleCount   = 4; // Should match ms.count
-        context.msaa_texture = wgpuDeviceCreateTexture(context.device, &msaaDesc);
-        context.msaa_texture_view = wgpuTextureCreateView(context.msaa_texture, NULL);
+        context->msaa_texture = wgpuDeviceCreateTexture(context->device, &msaaDesc);
+        context->msaa_texture_view = wgpuTextureCreateView(context->msaa_texture, NULL);
     }
 
     // Create post processing pipeline and bindgroup
     if (POST_PROCESSING_ENABLED) {
-        create_postprocessing_pipeline(&context, viewport_width, viewport_height);
+        create_postprocessing_pipeline(context, context->viewport_width, context->viewport_height);
     }
 
     // Create global shadow pipeline + texture + sampler
@@ -556,8 +458,8 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
             .mipLevelCount = 1,
             .sampleCount = 1,
         };
-        context.shadow_texture = wgpuDeviceCreateTexture(context.device, &shadowTextureDesc);
-        context.shadow_texture_view = wgpuTextureCreateView(context.shadow_texture, NULL);
+        context->shadow_texture = wgpuDeviceCreateTexture(context->device, &shadowTextureDesc);
+        context->shadow_texture_view = wgpuTextureCreateView(context->shadow_texture, NULL);
         
         // Create a comparison sampler for shadow sampling.
         WGPUSamplerDescriptor shadowSamplerDesc = {
@@ -570,18 +472,143 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
             .mipmapFilter = WGPUMipmapFilterMode_Nearest,
             .compare = WGPUCompareFunction_LessEqual,
         };
-        context.shadow_sampler = wgpuDeviceCreateSampler(context.device, &shadowSamplerDesc);
+        context->shadow_sampler = wgpuDeviceCreateSampler(context->device, &shadowSamplerDesc);
 
-        create_shadow_pipeline(&context);
+        create_shadow_pipeline(context);
     }
 
-    context.initialized = true;
+    context->initialized = true;
     printf("[webgpu.c] wgpuInit done.\n");
-    WGPUSupportedLimits limits = {0}; wgpuDeviceGetLimits(context.device, &limits);
+    WGPUSupportedLimits limits = {0}; wgpuDeviceGetLimits(context->device, &limits);
     printf("[webgpu.c] max uniform buffer size: %d\n", limits.limits.maxUniformBufferBindingSize);
     printf("[webgpu.c] max buffer size: %d\n", limits.limits.maxBufferSize);
     printf("[webgpu.c] max nr of textures in array: %d\n", limits.limits.maxTextureArrayLayers);
     printf("[webgpu.c] max texture 2D dimension: %d\n", limits.limits.maxTextureDimension2D);
+    #ifdef __EMSCRIPTEN__
+    setup_callback();
+    #endif
+}
+
+static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice device, const char* message, void* userdata) {
+    WebGPUContext *context = (WebGPUContext *)userdata;
+    if (status == WGPURequestDeviceStatus_Success) {
+        context->device = device;
+        assert(context->device);
+        setup_context(context);
+    } else fprintf(stderr, "[webgpu.c] RequestDevice failed: %s\n", message);
+}
+
+static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, const char* message, void* userdata) {
+    WebGPUContext *context = (WebGPUContext *)userdata;
+    if (status == WGPURequestAdapterStatus_Success) {
+        context->adapter = adapter;
+        assert(context->adapter);
+        wgpuAdapterRequestDevice(context->adapter, NULL, handle_request_device, context);
+    } else fprintf(stderr, "[webgpu.c] RequestAdapter failed: %s\n", message);
+}
+
+static void setup_gpu_device(WebGPUContext *context) {
+    #ifndef __EMSCRIPTEN__
+    if (FORCE_GPU_CHOICE) {
+        WGPUAdapter adapters[16];
+        WGPUInstanceEnumerateAdapterOptions opts = {.backends = WGPUInstanceBackend_All};
+        int adapterCount = wgpuInstanceEnumerateAdapters(context->instance, &opts, adapters);
+        printf("Adapters found: %d\n", adapterCount);
+
+        WGPUAdapter selectedAdapter = NULL;
+        for (size_t i = 0; i < adapterCount; i++) {
+            WGPUAdapterInfo info = {0};
+            wgpuAdapterGetInfo(adapters[i], &info);
+            if (info.adapterType == DISCRETE_GPU ? WGPUAdapterType_DiscreteGPU : WGPUAdapterType_IntegratedGPU) {
+                char *type = info.adapterType == 0 ? "Discrete"
+                    : info.adapterType == 1 ? "Integrated"
+                    : info.adapterType == 2 ? "CPU"
+                    : info.adapterType == 3 ? "Unknown"
+                    : "Undefined";
+                char *backend = info.backendType == 2 ? "WebGPU"
+                    : info.backendType == 3 ? "D3D11"
+                    : info.backendType == 4 ? "D3D12"
+                    : info.backendType == 5 ? "Metal"
+                    : info.backendType == 6 ? "Vulkan"
+                    : info.backendType == 7 ? "OpenGL"
+                    : info.backendType == 8 ? "OpenGLES"
+                    : "Undefined";
+                printf("Selected GPU: %s, type: %s, backend: %s\n", info.device, type, backend);
+                selectedAdapter = adapters[i];
+            }
+        }
+
+        if (!selectedAdapter) {
+            // Fallback: use the first adapter if no discrete GPU is found.
+            selectedAdapter = adapters[0];
+            WGPUAdapterInfo info;
+            memset(&info, 0, sizeof(info));
+            wgpuAdapterGetInfo(selectedAdapter, &info);
+            printf("No discrete GPU found; falling back to adapter: %s\n", info.device);
+        }
+
+        context->adapter = selectedAdapter;
+        wgpuAdapterRequestDevice(context->adapter, NULL, handle_request_device, context);
+        return;
+    }
+    #endif
+    WGPURequestAdapterOptions adapter_opts = {0};
+    adapter_opts.compatibleSurface = context->surface;
+    adapter_opts.powerPreference = WGPUPowerPreference_HighPerformance;
+    wgpuInstanceRequestAdapter(context->instance, &adapter_opts, handle_request_adapter, context);
+}
+
+#ifdef __EMSCRIPTEN__
+void *createGPUContext(void (*callback)(), int width, int height, int viewport_width, int viewport_height) {
+    setup_callback = callback;
+#else
+void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int viewport_width, int viewport_height) {
+#endif
+    static WebGPUContext context = {0};
+
+    #ifdef __EMSCRIPTEN__
+    context.instance = wgpuCreateInstance(NULL);
+    #else
+    WGPUInstanceDescriptor instDesc = {0};
+    WGPUInstanceExtras extras = {0};
+    extras.chain.sType = WGPUSType_InstanceExtras;
+    extras.backends   = WGPUInstanceBackend_GL;
+    extras.flags      = WGPUInstanceFlag_DiscardHalLabels;
+    extras.dx12ShaderCompiler = WGPUDx12Compiler_Undefined;
+    extras.gles3MinorVersion  = WGPUGles3MinorVersion_Automatic;
+    extras.dxilPath = NULL;
+    extras.dxcPath  = NULL;
+    instDesc.nextInChain = (const WGPUChainedStruct*)&extras;
+    context.instance = wgpuCreateInstance(&instDesc);
+    assert(context.instance);
+    #endif
+
+    WGPUSurfaceDescriptor surface_desc = {0};
+    #ifdef __EMSCRIPTEN__
+    // Use a canvas selector to identify the canvas element in the DOM
+    WGPUSurfaceDescriptorFromCanvasHTMLSelector canvasDesc = {0};
+    canvasDesc.chain.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLSelector;
+    canvasDesc.selector = "#canvas";  // Use your canvas's CSS selector
+    surface_desc.nextInChain = (WGPUChainedStruct*)&canvasDesc;
+    #else
+    /* WINDOWS SPECIFIC */
+    WGPUSurfaceDescriptorFromWindowsHWND chained_desc = {0};
+    chained_desc.chain.sType = WGPUSType_SurfaceDescriptorFromWindowsHWND;
+    chained_desc.hwnd = hwnd;
+    chained_desc.hinstance = hInstance;
+    surface_desc.nextInChain = (const WGPUChainedStruct*)&chained_desc;
+    /* WINDOWS SPECIFIC */
+    #endif
+
+    context.surface = wgpuInstanceCreateSurface(context.instance, &surface_desc);
+    assert(context.surface);
+    context.width = width;
+    context.height = height;
+    context.viewport_width = viewport_width;
+    context.viewport_height = viewport_height;
+
+    setup_gpu_device(&context);
+    
     return (void *) &context;
 }
 
@@ -612,7 +639,7 @@ static WGPUShaderModule loadWGSL(WGPUDevice device, const char* filePath) {
     return module;
 }
 
-// todo: only one pipeline, init in context creation, remove this function (?)
+// todo: only one pipeline, init in context creation, replace with function 'create_main_pipeline' (?)
 int createGPUPipeline(void *context_ptr, const char *shader) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     if (!context->initialized) {
@@ -757,7 +784,6 @@ int createGPUPipeline(void *context_ptr, const char *shader) {
     printf("[webgpu.c] Created pipeline %d from shader: %s\n", pipeline_id, shader);
     return pipeline_id;
 }
-
 void create_postprocessing_pipeline(void *context_ptr, int viewport_width, int viewport_height) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     // Create the bind group layout for the blit pass.
@@ -871,6 +897,7 @@ void create_postprocessing_pipeline(void *context_ptr, int viewport_width, int v
     wgpuShaderModuleRelease(blitShaderModule);
     wgpuPipelineLayoutRelease(blitPipelineLayout);
     wgpuBindGroupLayoutRelease(blitBindGroupLayout);
+    printf("[webgpu.c] Created postprocessing pipeline \n");
 }
 void create_shadow_pipeline(void *context_ptr) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
@@ -888,7 +915,6 @@ void create_shadow_pipeline(void *context_ptr) {
     WGPUPipelineLayout shadowPipelineLayout = wgpuDeviceCreatePipelineLayout(context->device, &shadowPLDesc);
     assert(shadowPipelineLayout);
 
-    // 3. Load the shadow shader module.
     WGPUShaderModule shadowShaderModule = loadWGSL(context->device, "data/shaders/shadow.wgsl");
     assert(shadowShaderModule);
 
@@ -1349,7 +1375,7 @@ static void updateMeshAnimationFrame(WebGPUContext *context, int mesh_id) {
     }
 }
 
-static void fenceCallback(WGPUQueueWorkDoneStatus status, WGPU_NULLABLE void * userdata) {
+static void fenceCallback(WGPUQueueWorkDoneStatus status, WGPU_NULLABLE void *userdata) {
     bool *done = (bool*)userdata;
     *done = true;
 }
@@ -1363,10 +1389,15 @@ double block_on_gpu_queue(void *context_ptr, struct Platform *p) {
 
     // Busy-wait until the flag is set.
     while (!workDone) {
+        #ifdef __EMSCRIPTEN__
+        p->sleep_ms(1.0);
+        #else
         wgpuDevicePoll(context->device, true, NULL); // blocks internally with 'true' set, to avoid wasting cpu resources
+        #endif
     }
     return p->current_time_ms() - time_before_ns;
 }
+#ifndef __EMSCRIPTEN__
 static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
     bool *mappingDone = (bool *)userdata;
     if (status == WGPUBufferMapAsyncStatus_Success) {
@@ -1376,6 +1407,7 @@ static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
     }
     *mappingDone = true;
 }
+#endif
 
 struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
@@ -1409,12 +1441,14 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     colorAtt.loadOp = WGPULoadOp_Clear;
     colorAtt.storeOp = WGPUStoreOp_Store;
     colorAtt.clearValue = (WGPUColor){0., 0., 0., 1.0};
+    colorAtt.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
     WGPURenderPassDescriptor passDesc = {0};
     passDesc.colorAttachmentCount = 1;
     passDesc.colorAttachments = &colorAtt;
     passDesc.depthStencilAttachment = &context->depthAttachment;
 
     #pragma region SAVE TO DISK
+    #ifndef __EMSCRIPTEN__
     WGPUBuffer stagingBuffer;
     WGPUImageCopyTexture src;
     WGPUImageCopyBuffer dst;
@@ -1452,6 +1486,7 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
             .depthOrArrayLayers = 1
         };
     }
+    #endif
     #pragma endregion
     
     // Write CPU–side uniform data to GPU
@@ -1614,16 +1649,16 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     wgpuRenderPassEncoderRelease(main_pass);
     
     // save to disk
+    #ifndef __EMSCRIPTEN__
     if (save_to_disk) {
         // Add the copy command to the command encoder to get the data later for saving to disk
         wgpuCommandEncoderCopyTextureToBuffer(encoder, &src, &dst, &extent);
 
         // Map the staging buffer to CPU memory.
         void *mappedData = NULL;
-        // todo: segfault
         int mappingCompleted = 0;
         wgpuBufferMapAsync(stagingBuffer, WGPUMapMode_Read, 0, buffer_size, bufferMapCallback, &mappingCompleted);
-        
+
         // Poll until the mapping is done.
         while (!mappingCompleted) {
             wgpuDevicePoll(context->device, false, NULL);
@@ -1654,6 +1689,7 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
         wgpuBufferUnmap(stagingBuffer);
         wgpuBufferRelease(stagingBuffer);
     }
+    #endif
 
     // Final blit
     if (POST_PROCESSING_ENABLED) {
@@ -1697,7 +1733,9 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     ms = current_time;
 
     // Present the surface.
+    #ifndef __EMSCRIPTEN__
     wgpuSurfacePresent(context->surface);
+    #endif
     wgpuTextureViewRelease(context->swapchain_view);
     context->swapchain_view = NULL;
     wgpuTextureRelease(context->currentSurfaceTexture.texture);

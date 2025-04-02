@@ -272,7 +272,6 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 }
 #pragma endregion
 
-
 #pragma region FULLSCREEN
 static int findClosestMode(DEVMODE *outMode)
 {
@@ -571,6 +570,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         // todo: put present.c in a dll so we can reload it here -> also present.h file
         // todo: put game.c in a dll so we can reload it here -> also a game.h file
         // todo: put all the binary outputs from /data in a single /bin
+        // todo: put all the /bin and /shaders and everything needed to run together
+            // -> then we can fetch it all at once in browser version
+            // -> then we can take all of that and put it into one big executable later
         // todo: put all the stb headers used by scripts in /data in a single /lib folder
         // todo: put all the /data bat files higher together (maybe in root with run.bat)
         // todo: create /src folder
