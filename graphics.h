@@ -24,7 +24,13 @@ enum MeshFlags {
 
 struct draw_result {
     int surface_not_available;
-    double surface_wait_time;
+    double present_wait_ms;
+    double get_surface_ms;
+    double setup_ms;
+    double global_uniforms_ms;
+    double shadowmap_ms;
+    double main_pass_ms;
+    double submit_ms;
     double cpu_ms;
 };
 

@@ -7,6 +7,18 @@
 #include <string.h>
 #include <limits.h>
 
+#define PRINT_MS(label, value, name) do { \
+    static double avg_buf_##name[60] = {0}; \
+    static int avg_i_##name = 0; \
+    avg_buf_##name[avg_i_##name] = (value); \
+    avg_i_##name = (avg_i_##name + 1) % 60; \
+    double avg_##name = 0; \
+    for (int i = 0; i < 60; i++) avg_##name += avg_buf_##name[i] / 60.; \
+    char buf_##name[64]; \
+    snprintf(buf_##name, sizeof(buf_##name), label "%4.2fms\n", avg_##name); \
+    print_on_screen(buf_##name); \
+} while (0)
+
 #pragma region GLOBALS
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
 #define FORCE_RESOLUTION 0 // force the resolution of the screen to the original width/height -> old-style flicker if changed
@@ -495,7 +507,7 @@ int tick(struct Platform *p, void *context) {
     double tick_ms = p->current_time_ms() - tick_start_ms;
 
     struct draw_result result = drawGPUFrame(context, p, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
-    time_waited_on_surface = result.surface_wait_time;
+    time_waited_on_surface = result.present_wait_ms;
     double cpu_ms = result.cpu_ms;
 
     // todo: pass postprocessing settings etc. as parameter -> no global, can switch instantly
@@ -525,104 +537,37 @@ int tick(struct Platform *p, void *context) {
     }
 
     double total_tick_time = 0.0;
+
     // print the time spent sleeping in anticipation of frame acquiring time
-    {
-        char string[64];
-        static double last_60_times[60] = {0};
-        double avg_last_60_frames = 0.0;
-        static int index = 0;
-        last_60_times[index] = time_spent_anticipating;
-        index = (index + 1) % 60;
-        for (int i = 0; i < 60; i++) {
-            avg_last_60_frames += last_60_times[i] / 60.;
-        }
-        snprintf(string, sizeof(string), "Anticipate waiting for frame: %4.2fms\n", avg_last_60_frames);
-        print_on_screen(string);
-        total_tick_time += avg_last_60_frames;
-    }
+    PRINT_MS("Anticipate waiting for frame: ", time_spent_anticipating, anticipate_vsync_time);
+    total_tick_time += time_spent_anticipating;
 
     // print the gpu timing on screen
-    {
-        char string[64];
-        static double last_60_times[60] = {0};
-        double avg_last_60_frames = 0.0;
-        static int index = 0;
-        last_60_times[index] = gpu_ms;
-        index = (index + 1) % 60;
-        for (int i = 0; i < 60; i++) {
-            avg_last_60_frames += last_60_times[i] / 60.;
-        }
-        snprintf(string, sizeof(string), "Waiting for GPU to finish: %4.2fms\n", avg_last_60_frames);
-        print_on_screen(string);
-        total_tick_time += avg_last_60_frames;
-    }
+    PRINT_MS("Waiting for GPU to finish: ", gpu_ms, gpu_wait_time);
+    total_tick_time += gpu_ms;
 
     // print the cpu tick timing
-    {
-        char string[64];
-        static double last_60_times[60] = {0};
-        double avg_last_60_frames = 0.0;
-        static int index = 0;
-        last_60_times[index] = tick_ms;
-        index = (index + 1) % 60;
-        for (int i = 0; i < 60; i++) {
-            avg_last_60_frames += last_60_times[i] / 60.;
-        }
-        snprintf(string, sizeof(string), "CPU tick time: %4.2fms\n", avg_last_60_frames);
-        print_on_screen(string);
-        total_tick_time += avg_last_60_frames;
-    }
+    PRINT_MS("CPU tick time: ", tick_ms, tick_cpu_time);
+    total_tick_time += tick_ms;
 
-    // print the time spent waiting to get the render surface
-    if (result.surface_not_available == 0) {
-        char string[64];
-        static double last_60_times[60] = {0};
-        double avg_last_60_frames = 0.0;
-        static int index = 0;
-        last_60_times[index] = time_waited_on_surface;
-        index = (index + 1) % 60;
-        for (int i = 0; i < 60; i++) {
-            avg_last_60_frames += last_60_times[i] / 60.;
-        }
-        snprintf(string, sizeof(string), "Waiting for surface: %4.2fms\n", avg_last_60_frames);
-        print_on_screen(string);
-        total_tick_time += avg_last_60_frames;
-    } 
+    // print the total cpu draw call timing
+    PRINT_MS("CPU draw time: ", result.cpu_ms, cpu_draw_call_time);
+    total_tick_time += result.cpu_ms;
 
-    // print the cpu time for the draw calls etc.
-    if (result.surface_not_available == 0) {
-        char string[64];
-        static double last_60_times[60] = {0};
-        double avg_last_60_frames = 0.0;
-        static int index = 0;
-        last_60_times[index] = cpu_ms;
-        index = (index + 1) % 60;
-        for (int i = 0; i < 60; i++) {
-            avg_last_60_frames += last_60_times[i] / 60.;
-        }
-        snprintf(string, sizeof(string), "CPU draw time: %4.2fms\n", avg_last_60_frames);
-        print_on_screen(string);
-        total_tick_time += avg_last_60_frames;
-    } else {
-        char string[64];
-        snprintf(string, sizeof(string), "[SURFACE NOT AVAILABLE]: %4.2fms\n", result.cpu_ms);
-        print_on_screen(string);
-        total_tick_time += result.cpu_ms;
-    }
+    PRINT_MS("-> acquire surface time: ", result.get_surface_ms, surface_time);
+    PRINT_MS("-> setup time: ", result.setup_ms, setup_time);
+    PRINT_MS("-> global uniforms time: ", result.global_uniforms_ms, uniform_time);
+    PRINT_MS("-> shadowmap time: ", result.shadowmap_ms, shadowmap_time);
+    PRINT_MS("-> main pass time: ", result.main_pass_ms, mainpass_time);
+    PRINT_MS("-> submit time: ", result.submit_ms, submit_time);
+
+    // print the time spent waiting to be able to present last frame
+    // todo: on the web this is not what causes the vsync delay, so we need another way there
+    PRINT_MS("Wait for present time: ", time_waited_on_surface, present_time);
+    total_tick_time += time_waited_on_surface;
 
     // print the total time we spent on this tick
-    if (result.surface_not_available == 0) {
-        char string[64];
-        static double last_60_times[60] = {0};
-        double avg_last_60_frames = 0.0;
-        static int index = 0;
-        last_60_times[index] = total_tick_time;
-        index = (index + 1) % 60;
-        for (int i = 0; i < 60; i++) {
-            avg_last_60_frames += last_60_times[i] / 60.;
-        }
-        snprintf(string, sizeof(string), "Total tick time: %4.2fms\n", avg_last_60_frames);
-        print_on_screen(string);
-    }
+    PRINT_MS("Total tick time: ", total_tick_time, total_tick_time);
+
     return 0;
 }

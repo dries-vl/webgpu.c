@@ -1412,15 +1412,17 @@ static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
 struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     struct draw_result result = {0};
-    double ms = p->current_time_ms();
+    double start_ms = p->current_time_ms();
+    double mut_ms = p->current_time_ms();
     // acquire the surface texture
     wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
     // if not available, return early and notify that the surface is not yet available to be rendered to
     if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success) {
-        result.cpu_ms = p->current_time_ms() - ms;
+        result.cpu_ms = p->current_time_ms() - start_ms;
         result.surface_not_available = 1;
         return result;
     }
+    result.get_surface_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
     WGPUTextureViewDescriptor d = {
         .format = screen_color_format,
         .dimension = WGPUTextureViewDimension_2D,
@@ -1446,6 +1448,7 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     passDesc.colorAttachmentCount = 1;
     passDesc.colorAttachments = &colorAtt;
     passDesc.depthStencilAttachment = &context->depthAttachment;
+    result.setup_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
 
     #pragma region SAVE TO DISK
     #ifndef __EMSCRIPTEN__
@@ -1492,6 +1495,7 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     // Write CPU–side uniform data to GPU
     // todo: condition to only do when updated data
     wgpuQueueWriteBuffer(context->queue, context->global_uniform_buffer, 0, context->global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
+    result.global_uniforms_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
 
     // SHADOW PASS
     // Reuse the global pipeline uniform data in the shader uniforms // todo: is it possible to reuse the same gpu-buffer and write only once?
@@ -1555,6 +1559,7 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
         wgpuRenderPassEncoderEnd(shadowPass);
         wgpuRenderPassEncoderRelease(shadowPass);
     }
+    result.shadowmap_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
 
     // Main rendering pass
     WGPURenderPassEncoder main_pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
@@ -1648,6 +1653,8 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     wgpuRenderPassEncoderEnd(main_pass);
     wgpuRenderPassEncoderRelease(main_pass);
     
+    result.main_pass_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
+
     // save to disk
     #ifndef __EMSCRIPTEN__
     if (save_to_disk) {
@@ -1726,11 +1733,12 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     wgpuCommandEncoderRelease(encoder);
     wgpuQueueSubmit(context->queue, 1, &cmdBuf);
     wgpuCommandBufferRelease(cmdBuf);
+    result.submit_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
 
-    // time the draw calls and frame setup on cpu
+    // time the draw calls and frame setup on cpu (full time from start to finish)
     double current_time = p->current_time_ms();
-    result.cpu_ms = current_time - ms;
-    ms = current_time;
+    result.cpu_ms = current_time - start_ms;
+    mut_ms = current_time;
 
     // Present the surface.
     #ifndef __EMSCRIPTEN__
@@ -1742,7 +1750,7 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     context->currentSurfaceTexture.texture = NULL;
     
     // time spent waiting to present to surface
-    result.surface_wait_time = p->current_time_ms() - ms;
+    result.present_wait_ms = p->current_time_ms() - mut_ms;
 
     return result;
 }
