@@ -2,8 +2,8 @@
 #define GAME_DATA_H_
 
 // todo: either pass as param, or put in webgpu.c as global, but not in header file
-static const int FORCE_GPU_CHOICE = 0;
-static const int DISCRETE_GPU = 0; // 0 for forcing integrated, 1 for forcing discrete
+static const int FORCE_GPU_CHOICE = 1;
+static const int DISCRETE_GPU = 1; // 0 for forcing integrated, 1 for forcing discrete
 static const int MSAA_ENABLED = 1;
 static const int SHADOWS_ENABLED = 1;
 static const int POST_PROCESSING_ENABLED = 0;

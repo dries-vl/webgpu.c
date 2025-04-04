@@ -10,6 +10,7 @@ struct Platform {
     void (*unmap_file)(struct MappedMemory *mm);
     double (*current_time_ms)();
     void (*sleep_ms)(double ms);
+    void (*poll_inputs)();
 };
 /* MEMORY MAPPING MESH */
 typedef struct {

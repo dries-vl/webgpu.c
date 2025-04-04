@@ -68,10 +68,17 @@ void unmap_file(struct MappedMemory *mm) {
 }
 #pragma endregion
 
+#pragma region SETUP_TIME_PERIOD
 typedef UINT (WINAPI *timeBeginPeriod_t)(UINT);
 typedef UINT (WINAPI *timeEndPeriod_t)(UINT);
+typedef UINT (WINAPI *timeGetDevCaps_t)(void *ptc, UINT cbtc);
 timeBeginPeriod_t pTimeBeginPeriod = NULL;
 timeEndPeriod_t   pTimeEndPeriod   = NULL;
+timeGetDevCaps_t  pTimeGetDevCaps  = NULL;
+typedef struct {
+    UINT wPeriodMin;
+    UINT wPeriodMax;
+} TIMECAPS;
 void load_winmm_functions() {
     HMODULE hWinmm = LoadLibraryA("winmm.dll");
     if (!hWinmm) {
@@ -81,19 +88,14 @@ void load_winmm_functions() {
 
     pTimeBeginPeriod = (timeBeginPeriod_t)GetProcAddress(hWinmm, "timeBeginPeriod");
     pTimeEndPeriod   = (timeEndPeriod_t)GetProcAddress(hWinmm, "timeEndPeriod");
+    pTimeGetDevCaps   = (timeGetDevCaps_t)GetProcAddress(hWinmm, "timeGetDevCaps");
 
-    if (!pTimeBeginPeriod || !pTimeEndPeriod) {
+    if (!pTimeBeginPeriod || !pTimeEndPeriod || !pTimeGetDevCaps) {
         MessageBoxA(0, "Failed to get winmm.dll functions", "Error", MB_OK);
         ExitProcess(1);
     }
 }
-
-void sleep_ms(double ms) {
-    static int setup = 0;
-    if (!setup) pTimeBeginPeriod(1);
-    unsigned long wait_time = (unsigned long) ms; // wait slightly less, only the integer value, for some margin time
-    Sleep((DWORD) wait_time);
-}
+#pragma endregion
 
 #pragma region CYCLES
 #if defined(_MSC_VER)
@@ -405,101 +407,39 @@ void fullscreen_window(HWND hwnd)
 }
 #pragma endregion
 
-#pragma region DEBUG PRINT
-struct debug_info {
-    LARGE_INTEGER query_perf_result;
-	long ticks_per_second;
-    LARGE_INTEGER current_tick_count;
-    long current_cycle_count;
-    float ms_last_60_frames[60]; 
-    int ms_index; 
-    int avg_count; 
-    float count;
-    float slowest;
-    float ms_last_frame;
-};
-static struct debug_info debug_info = {0};
-void init_debug_info() {
-	QueryPerformanceFrequency(&debug_info.query_perf_result);
-	debug_info.ticks_per_second = debug_info.query_perf_result.QuadPart;
-    QueryPerformanceCounter(&debug_info.current_tick_count);
-    debug_info.current_cycle_count = read_cycle_count();
-    memset(debug_info.ms_last_60_frames, 0, sizeof(debug_info.ms_last_60_frames));
-    debug_info.ms_index = 0;
-    debug_info.avg_count = 60; 
-    debug_info.count = 0.0;
-    debug_info.ms_last_frame = 0.0f;
-}
 double current_time_ms() {
+    static LARGE_INTEGER query_perf_result;
+    static long long ticks_per_second = 0;
+    if (!ticks_per_second) { QueryPerformanceFrequency(&query_perf_result); ticks_per_second = query_perf_result.QuadPart; }
     LARGE_INTEGER new_tick_count;
     QueryPerformanceCounter(&new_tick_count);
-    double s = ((double) (new_tick_count.QuadPart) / (double) debug_info.ticks_per_second);
+    double s = ((double) (new_tick_count.QuadPart) / (double) ticks_per_second);
     return s * 1000.0;
 }
-void draw_debug_info() {
-    char resolution_string[256];
-    snprintf(resolution_string, sizeof(resolution_string), "Resolution: %dx%d (%0.1f)\n", VIEWPORT_WIDTH, VIEWPORT_HEIGHT, ASPECT_RATIO);
-    print_on_screen(resolution_string);
-    // todo: way to not have any of the debug HUD and fps and timing code at all when not in debug mode
-    // todo: create a function that we can use as oneliner measuring timing here
-    // todo: -> game loop time -> cpu to gpu commands time -> gpu time -> total time (and see if those three add up to total or not)
-    // todo: isolate out the exact time we spend inside the loop iteration itself to see the actual CPU time
-    // todo: use this cpu time to measure how much time we lose waiting on the GPU (?) ~eg. know if the GPU is the bottleneck or not
-    // todo: isolate out the exact time from StartFrame to EndFrame to know how much CPU time gets spent on setting up gpu commands; draw calls etc.
-    LARGE_INTEGER new_tick_count;
-    QueryPerformanceCounter(&new_tick_count);
-    long ticks_elapsed = new_tick_count.QuadPart - debug_info.current_tick_count.QuadPart;
-    debug_info.current_tick_count = new_tick_count;
 
-    long new_cycle_count = read_cycle_count();
-    long cycles_elapsed = new_cycle_count - debug_info.current_cycle_count;
-    int cycles_last_frame = (int) cycles_elapsed / 1000000; // million cycles per frame
-    debug_info.current_cycle_count = new_cycle_count;
+void sleep_ms(double ms) {
+    static int setup = 0;
+    if (!setup) pTimeBeginPeriod(1);
+    unsigned long wait_time = (unsigned long) max(ms - 2.0, 1.0); // windows Sleep() sleeps about between 0 and 1.5ms longer than input, so to be sure sleep 2ms less than input
+    Sleep((DWORD) wait_time);
+}
 
-    debug_info.ms_last_frame = ((float) (1000*ticks_elapsed) / (float) debug_info.ticks_per_second);
-    int fps = debug_info.ticks_per_second / ticks_elapsed; // calculate how many times we could do this amount of ticks (=1frame) in one second
-    char perf_output_string[256];
-    // snprintf(perf_output_string, sizeof(perf_output_string), "%4.2fms/f,  %df/s\n", debug_info.ms_last_frame, fps);
-    // print_on_screen(perf_output_string);
-    debug_info.count += debug_info.ms_last_frame - debug_info.ms_last_60_frames[debug_info.ms_index];
-    debug_info.ms_last_60_frames[debug_info.ms_index] = debug_info.ms_last_frame;
-    debug_info.ms_index = (debug_info.ms_index + 1) % debug_info.avg_count;
-    debug_info.slowest = 0.0;
-    for (int i = 0; i < 60; i++) {
-        if (debug_info.ms_last_60_frames[i] > debug_info.slowest) debug_info.slowest = debug_info.ms_last_60_frames[i];
+void poll_inputs() {
+    MSG msg;
+    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+        if (msg.message == WM_QUIT) {
+            g_Running = false;
+            break;
+        }
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
     }
-    char perf_avg_string[256];
-    snprintf(perf_avg_string, sizeof(perf_avg_string), "Average frame timing last %d frames: %4.2fms\n", debug_info.avg_count, debug_info.count / (float) debug_info.avg_count);
-    print_on_screen(perf_avg_string);
-    snprintf(perf_avg_string, sizeof(perf_avg_string), "Slowest frame timing last %d frames: %4.2fms\n", debug_info.avg_count, debug_info.slowest);
-    print_on_screen(perf_avg_string);
 }
-static long ticks_per_second;
-static LARGE_INTEGER tick_count_at_startup;
-void print_time_since_startup(char *str) {
-    LARGE_INTEGER new_tick_count;
-    QueryPerformanceCounter(&new_tick_count);
-    long ticks_elapsed = new_tick_count.QuadPart - tick_count_at_startup.QuadPart;
-    tick_count_at_startup = new_tick_count;
-    float ms_since_startup = ((float) (1000*ticks_elapsed) / (float) ticks_per_second);
-    printf(str);
-    printf("\nStartup time: -----------------------------------------------------------------------------------------> %4.2fms\n", ms_since_startup);
-}
-#pragma endregion
 
-typedef HRESULT (WINAPI *SetProcessDpiAwareness_t)(int);
-#define PROCESS_PER_MONITOR_DPI_AWARE 2
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     #pragma region WINDOWS-SPECIFIC SETUP
     (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
-
-    // ----- TO CHECK STARTUP SPEED -----
-    LARGE_INTEGER query_perf_result;
-	QueryPerformanceFrequency(&query_perf_result);
-	ticks_per_second = query_perf_result.QuadPart;
-    QueryPerformanceCounter(&tick_count_at_startup);
-    // ----------------------------------------
 
     WNDCLASSEX wc = {0};
     wc.cbSize = sizeof(WNDCLASSEX);
@@ -523,13 +463,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             // *info* set aware of DPI to force using actual screen resolution size
             HMODULE shcore = LoadLibrary("Shcore.dll"); // import explicitly because tcc doesn't know these headers
             if (shcore) {
-                SetProcessDpiAwareness_t SetProcessDpiAwareness = 
-                    (SetProcessDpiAwareness_t) GetProcAddress(shcore, "SetProcessDpiAwareness");
-
+                typedef HRESULT (WINAPI *SetProcessDpiAwareness_t)(int);
+                SetProcessDpiAwareness_t SetProcessDpiAwareness = (SetProcessDpiAwareness_t) GetProcAddress(shcore, "SetProcessDpiAwareness");
                 if (SetProcessDpiAwareness) {
+                    #define PROCESS_PER_MONITOR_DPI_AWARE 2
                     SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
                 }
-
                 FreeLibrary(shcore);
             }
         }
@@ -541,7 +480,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int y = (screen.bottom - WINDOW_HEIGHT) / 2;
     SetWindowPos(hwnd, NULL, x, y, WINDOW_WIDTH, WINDOW_HEIGHT, SWP_NOZORDER | SWP_SHOWWINDOW); // put window in middle of screen
     ShowCursor(FALSE); // hide the cursor
-    /* WINDOWS-ONLY SPECIFIC SETTINGS */
     #pragma endregion
 
     void *context = createGPUContext(hInstance, hwnd, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -550,36 +488,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         .current_time_ms = current_time_ms,
         .map_file = map_file,
         .unmap_file = unmap_file,
-        .sleep_ms = sleep_ms
+        .sleep_ms = sleep_ms,
+        .poll_inputs = poll_inputs
     };
 
     /* MAIN LOOP */
-    init_debug_info();
-    while (g_Running) {
-        MSG msg;
-        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) {
-                g_Running = false;
-                break;
-            }
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
-        if (!g_Running) break;
-
-        // todo: put present.c in a dll so we can reload it here -> also present.h file
-        // todo: put game.c in a dll so we can reload it here -> also a game.h file
-        // todo: put all the binary outputs from /data in a single /bin
-        // todo: put all the /bin and /shaders and everything needed to run together
-            // -> then we can fetch it all at once in browser version
-            // -> then we can take all of that and put it into one big executable later
-        // todo: put all the stb headers used by scripts in /data in a single /lib folder
-        // todo: put all the /data bat files higher together (maybe in root with run.bat)
-        // todo: create /src folder
-        tick(&p, context);
-
-        draw_debug_info();
-    }
+    // todo: put present.c in a dll so we can reload it here -> also present.h file
+    // todo: put game.c in a dll so we can reload it here -> also a game.h file
+    // todo: put all the binary outputs from /data in a single /bin
+    // todo: put all the /bin and /shaders and everything needed to run together
+        // -> then we can fetch it all at once in browser version
+        // -> then we can take all of that and put it into one big executable later
+    // todo: put all the stb headers used by scripts in /data in a single /lib folder
+    // todo: put all the /data bat files higher together (maybe in root with run.bat)
+    // todo: create /src folder
+    while (g_Running) tick(&p, context);
     
     return 0;
 }

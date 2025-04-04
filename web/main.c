@@ -79,73 +79,6 @@ static bool g_Running = true;
 void *g_Context = NULL;
 struct Platform g_Platform = {0};
 
-#pragma region debug_draw
-struct debug_info {
-    double last_time_ms;           // Time of last frame (ms)
-    double ms_last_60_frames[60];   // Last 60 frame times
-    int ms_index;                   // Current index into frame array
-    int avg_count;                  // Number of frames over which to average (60)
-    double sum_last_60;             // Sum of the last 60 frame times
-    double slowest;                 // Slowest frame in the last 60 frames
-    double ms_last_frame;           // Duration of the last frame (ms)
-};
-
-static struct debug_info debug_info = {0};
-
-void init_debug_info(void) {
-    double now = emscripten_get_now();
-    debug_info.last_time_ms = now;
-    memset(debug_info.ms_last_60_frames, 0, sizeof(debug_info.ms_last_60_frames));
-    debug_info.ms_index = 0;
-    debug_info.avg_count = 60;
-    debug_info.sum_last_60 = 0.0;
-    debug_info.slowest = 0.0;
-    debug_info.ms_last_frame = 0.0;
-}
-
-void draw_debug_info(void) {
-    char resolution_string[256];
-    snprintf(resolution_string, sizeof(resolution_string),
-             "Resolution: %dx%d (%.1f)\n", VIEWPORT_WIDTH, VIEWPORT_HEIGHT, ASPECT_RATIO);
-    print_on_screen(resolution_string);
-
-    // Compute elapsed time since last call.
-    double now = emscripten_get_now();
-    double ms_elapsed = now - debug_info.last_time_ms;
-    debug_info.last_time_ms = now;
-    debug_info.ms_last_frame = ms_elapsed;
-    int fps = (ms_elapsed > 0) ? (int)(1000.0 / ms_elapsed) : 0;
-
-    // Update our rolling window of the last 60 frame times.
-    debug_info.sum_last_60 -= debug_info.ms_last_60_frames[debug_info.ms_index];
-    debug_info.ms_last_60_frames[debug_info.ms_index] = ms_elapsed;
-    debug_info.sum_last_60 += ms_elapsed;
-    debug_info.ms_index = (debug_info.ms_index + 1) % debug_info.avg_count;
-
-    // Find slowest frame in our last 60 frames.
-    debug_info.slowest = 0.0;
-    for (int i = 0; i < debug_info.avg_count; i++) {
-        if (debug_info.ms_last_60_frames[i] > debug_info.slowest)
-            debug_info.slowest = debug_info.ms_last_60_frames[i];
-    }
-
-    char perf_output_string[256];
-    snprintf(perf_output_string, sizeof(perf_output_string),
-             "Frame time: %.2f ms, %d fps\n", ms_elapsed, fps);
-    print_on_screen(perf_output_string);
-
-    char avg_string[256];
-    snprintf(avg_string, sizeof(avg_string),
-             "Average over %d frames: %.2f ms\n", debug_info.avg_count, debug_info.sum_last_60 / debug_info.avg_count);
-    print_on_screen(avg_string);
-
-    char slowest_string[256];
-    snprintf(slowest_string, sizeof(slowest_string),
-             "Slowest over %d frames: %.2f ms\n", debug_info.avg_count, debug_info.slowest);
-    print_on_screen(slowest_string);
-}
-#pragma endregion
-
 #pragma region INPUTS
 EM_BOOL key_callback(int eventType, const EmscriptenKeyboardEvent *e, void *userData) {
     if (eventType == EMSCRIPTEN_EVENT_KEYDOWN || eventType == EMSCRIPTEN_EVENT_KEYUP) {
@@ -180,35 +113,33 @@ EM_BOOL mouse_button_callback(int eventType, const EmscriptenMouseEvent *e, void
     // You can track pressed state or trigger immediate actions
     return 1;
 }
+// In web version we can't control the inputs like in native, we can only provide the browser with callbacks
+void poll_inputs_web() {
+    return;
+}
 #pragma endregion
 
 // Wrapper function called repeatedly by the browser's event loop.
 void main_called_by_browser(void) {
-    // In Windows code you processed Windows messages here.
-    // In the browser, input events are handled via callbacks registered with emscripten.
-    
-    tick(&g_Platform, g_Context);         // or pass your Platform pointer if needed
-    draw_debug_info();
-
-    // Optionally, if your tick() sets g_Running to false, cancel the loop.
+    tick(&g_Platform, g_Context);
     if (!g_Running) {
         emscripten_cancel_main_loop();
     }
 }
+// Function we pass to the webgpu setup to start when the setup is done (only for emscripten, not in native)
 void start_function(void) {
 
     if (!g_Context) {
         fprintf(stderr, "Failed to create GPU context!\n");
     }
     
-    init_debug_info();
-
     // Set up the Platform struct with our web implementations.
     g_Platform = (struct Platform) {
          .current_time_ms = current_time_ms_web,
          .map_file       = web_map_file,
          .unmap_file     = web_unmap_file,
-         .sleep_ms       = web_blocking_sleep
+         .sleep_ms       = web_blocking_sleep,
+         .poll_inputs    = poll_inputs_web
     };
    
     // Now set up the main loop. This loop will repeatedly call main_called_by_browser()

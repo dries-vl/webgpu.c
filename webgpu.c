@@ -533,8 +533,10 @@ static void setup_gpu_device(WebGPUContext *context) {
                     : info.backendType == 7 ? "OpenGL"
                     : info.backendType == 8 ? "OpenGLES"
                     : "Undefined";
-                printf("Selected GPU: %s, type: %s, backend: %s\n", info.device, type, backend);
-                selectedAdapter = adapters[i];
+                if (!selectedAdapter) {
+                    printf("Selected GPU: %s, type: %s, backend: %s\n", info.device, type, backend);
+                    selectedAdapter = adapters[i];
+                } else printf("Available GPU: %s, type: %s, backend: %s\n", info.device, type, backend);
             }
         }
 
@@ -572,7 +574,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
     WGPUInstanceDescriptor instDesc = {0};
     WGPUInstanceExtras extras = {0};
     extras.chain.sType = WGPUSType_InstanceExtras;
-    extras.backends   = WGPUInstanceBackend_GL;
+    extras.backends   = WGPUInstanceBackend_Primary;
     extras.flags      = WGPUInstanceFlag_DiscardHalLabels;
     extras.dx12ShaderCompiler = WGPUDx12Compiler_Undefined;
     extras.gles3MinorVersion  = WGPUGles3MinorVersion_Automatic;
@@ -1380,6 +1382,9 @@ static void fenceCallback(WGPUQueueWorkDoneStatus status, WGPU_NULLABLE void *us
     *done = true;
 }
 double block_on_gpu_queue(void *context_ptr, struct Platform *p) {
+    #ifdef __EMSCRIPTEN__ 
+    return 0.0; 
+    #else
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     volatile bool workDone = false;
     double time_before_ns = p->current_time_ms();
@@ -1389,13 +1394,10 @@ double block_on_gpu_queue(void *context_ptr, struct Platform *p) {
 
     // Busy-wait until the flag is set.
     while (!workDone) {
-        #ifdef __EMSCRIPTEN__
-        p->sleep_ms(1.0);
-        #else
         wgpuDevicePoll(context->device, true, NULL); // blocks internally with 'true' set, to avoid wasting cpu resources
-        #endif
     }
     return p->current_time_ms() - time_before_ns;
+    #endif
 }
 #ifndef __EMSCRIPTEN__
 static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
@@ -1412,17 +1414,20 @@ static void bufferMapCallback(WGPUBufferMapAsyncStatus status, void *userdata) {
 struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     struct draw_result result = {0};
-    double start_ms = p->current_time_ms();
     double mut_ms = p->current_time_ms();
+
     // acquire the surface texture
     wgpuSurfaceGetCurrentTexture(context->surface, &context->currentSurfaceTexture);
     // if not available, return early and notify that the surface is not yet available to be rendered to
     if (context->currentSurfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success) {
-        result.cpu_ms = p->current_time_ms() - start_ms;
+        result.cpu_ms = p->current_time_ms() - mut_ms;
         result.surface_not_available = 1;
         return result;
     }
     result.get_surface_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
+
+    double start_ms = p->current_time_ms();
+
     WGPUTextureViewDescriptor d = {
         .format = screen_color_format,
         .dimension = WGPUTextureViewDimension_2D,

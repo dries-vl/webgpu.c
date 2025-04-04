@@ -7,21 +7,9 @@
 #include <string.h>
 #include <limits.h>
 
-#define PRINT_MS(label, value, name) do { \
-    static double avg_buf_##name[60] = {0}; \
-    static int avg_i_##name = 0; \
-    avg_buf_##name[avg_i_##name] = (value); \
-    avg_i_##name = (avg_i_##name + 1) % 60; \
-    double avg_##name = 0; \
-    for (int i = 0; i < 60; i++) avg_##name += avg_buf_##name[i] / 60.; \
-    char buf_##name[64]; \
-    snprintf(buf_##name, sizeof(buf_##name), label "%4.2fms\n", avg_##name); \
-    print_on_screen(buf_##name); \
-} while (0)
-
 #pragma region GLOBALS
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
-#define FORCE_RESOLUTION 0 // force the resolution of the screen to the original width/height -> old-style flicker if changed
+#define FORCE_RESOLUTION 1 // force the resolution of the screen to the original width/height -> old-style flicker if changed
 #define FORCE_ASPECT_RATIO 0
 #define FULLSCREEN 1
 #define WINDOWED 0
@@ -30,13 +18,27 @@ int SHOW_CURSOR = 0;
 #define ORIGINAL_HEIGHT 720
 #define ORIGINAL_ASPECT_RATIO 1.77
 int WINDOW_WIDTH = ORIGINAL_WIDTH; // todo: fps degrades massively when at higher resolution, even with barely any fragment shader logic
-int WINDOW_HEIGHT = ORIGINAL_HEIGHT; // todo: make this global variable that can be modified
+int WINDOW_HEIGHT = ORIGINAL_HEIGHT; // todo: make this global variable that can be modified at runtime
 int VIEWPORT_WIDTH = ORIGINAL_WIDTH;
 int VIEWPORT_HEIGHT = ORIGINAL_HEIGHT;
 int OFFSET_X = 0; // offset to place smaller-than-window viewport at centre of screen
 int OFFSET_Y = 0;
 float ASPECT_RATIO = ORIGINAL_ASPECT_RATIO;
 #pragma endregion
+
+#define PRINT_MS(label, value, name) do { \
+    static double avg_buf_##name[60] = {0}; \
+    static int avg_i_##name = 0; \
+    avg_buf_##name[avg_i_##name] = (value); \
+    avg_i_##name = (avg_i_##name + 1) % 60; \
+    double avg_##name = 0; \
+    for (int i = 0; i < 60; i++) avg_##name += avg_buf_##name[i] / 60.; \
+    double slowest = 0.0; \
+    for (int i = 0; i < 60; i++) if (avg_buf_##name[i] > slowest) slowest = avg_buf_##name[i]; \
+    char buf_##name[64]; \
+    snprintf(buf_##name, sizeof(buf_##name), label "%4.2fms (%4.2f)\n", avg_##name, slowest); \
+    print_on_screen(buf_##name); \
+} while (0)
 
 #pragma region GAME_DATA
 // Helper macro to convert a float UV (assumed to be in the range [-1,1] or [0,1])
@@ -189,7 +191,7 @@ void print_on_screen(const char *str) {
 }
 #pragma endregion
 
-#include "game.c" // todo: put game.c very isolated like graphics, platform. // Q: what to expose to game.c? print_on_screen
+#include "game.c" // todo: put game.c very isolated like graphics, platform. // Q: what to expose to game.c? print_on_screen?
 
 #pragma region PLATFORM
 #pragma endregion
@@ -206,31 +208,29 @@ int tick(struct Platform *p, void *context) {
     delta = init_done ? time_now - time_previous_frame : 0.0;
     time_previous_frame = time_now;
 
-    static double time_waited_on_surface = 0.0;
-    static double time_spent_anticipating = 0.0;
+    static double vsync_delay = 0.0;
+    static double time_spent_anticipating_vsync = 0.0;
     
-    // sleep the amount of time the last frame waited to acquire the surface (to anticipate blocking time, and allow input events to still arrive for this frame)
+    // sleep the amount of time the last frame waited for vsync (to anticipate blocking time, and allow input events to still arrive for this frame)
     double time_before_wait = p->current_time_ms();
     static double time_to_wait = 0.0;
-    if (time_waited_on_surface > 1.0) time_to_wait += 1.0; else time_to_wait -= 1.0;
-    // todo: figure out the 0.7ms wait time on vulkan that causes nonstop increase
+    if (vsync_delay > 1.0 && time_to_wait < 16.0) time_to_wait += 1.0;
+    if (vsync_delay < 1.0 || time_to_wait > 16.0) time_to_wait -= 1.0;
     // todo: way to avoid tearing without exclusive fullscreen / branch here on that setting
-    // todo: select integrated gpu + vulkan for lowest possible energy usage
+    // printf("time to wait: %4.2f\n", time_to_wait);
     if (time_to_wait >= 1.0) p->sleep_ms(time_to_wait);
-    time_spent_anticipating = p->current_time_ms() - time_before_wait;
+    time_spent_anticipating_vsync = p->current_time_ms() - time_before_wait;
+    // if(time_spent_anticipating_vsync > 16.0) printf("time waited: %4.2f\n", time_spent_anticipating_vsync);
 
     // wait on the fence to measure GPU work time // *ONLY USE FOR DEBUG, OTHERWISE DON'T SYNC TO AVOID SLOWDOWN*
     // todo: do we still need this if we wait for vsync already (?)
-    #ifdef __EMSCRIPTEN__
-    double gpu_ms = 0.0;
-    #else
     double gpu_ms = block_on_gpu_queue(context, p);
-    #endif
 
     double tick_start_ms = p->current_time_ms();
     
     // todo: use precompiled shader for faster loading
     
+    #pragma region statics
     static int main_pipeline;
     
     static int character_mesh_id;
@@ -320,7 +320,9 @@ int tick(struct Platform *p, void *context) {
             0, 2, 0, 1
         },
     };
+    #pragma endregion
 
+    #pragma region init
     if (!init_done) {
         init_done = 1;
 
@@ -465,6 +467,10 @@ int tick(struct Platform *p, void *context) {
             addGameObject(&gameState, &pineo[j]);
         }
     }
+    #pragma endregion
+
+    // poll input events as late as possible (after sleeping for vsync and gpu waiting)
+    p->poll_inputs();
 
     // Update uniforms
     timeVal += 0.016f; // pretend 16ms per frame
@@ -498,7 +504,6 @@ int tick(struct Platform *p, void *context) {
         if (light_proj_offset == -1) light_proj_offset = addGPUGlobalUniform(context, 0, light_view_proj, sizeof(light_view_proj));
         setGPUGlobalUniformValue(context, main_pipeline, light_proj_offset, light_view_proj, sizeof(light_view_proj));
     }
-    // END SHADOWS
 
     // update the instances of the text
     setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
@@ -507,7 +512,6 @@ int tick(struct Platform *p, void *context) {
     double tick_ms = p->current_time_ms() - tick_start_ms;
 
     struct draw_result result = drawGPUFrame(context, p, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
-    time_waited_on_surface = result.present_wait_ms;
     double cpu_ms = result.cpu_ms;
 
     // todo: pass postprocessing settings etc. as parameter -> no global, can switch instantly
@@ -539,8 +543,8 @@ int tick(struct Platform *p, void *context) {
     double total_tick_time = 0.0;
 
     // print the time spent sleeping in anticipation of frame acquiring time
-    PRINT_MS("Anticipate waiting for frame: ", time_spent_anticipating, anticipate_vsync_time);
-    total_tick_time += time_spent_anticipating;
+    PRINT_MS("Anticipate waiting for frame: ", time_spent_anticipating_vsync, anticipate_vsync_time);
+    total_tick_time += time_spent_anticipating_vsync;
 
     // print the gpu timing on screen
     PRINT_MS("Waiting for GPU to finish: ", gpu_ms, gpu_wait_time);
@@ -550,11 +554,14 @@ int tick(struct Platform *p, void *context) {
     PRINT_MS("CPU tick time: ", tick_ms, tick_cpu_time);
     total_tick_time += tick_ms;
 
+    // print the time we waited to get access to the surface
+    PRINT_MS("Acquire surface time: ", result.get_surface_ms, surface_time);
+    total_tick_time += result.get_surface_ms;
+
     // print the total cpu draw call timing
     PRINT_MS("CPU draw time: ", result.cpu_ms, cpu_draw_call_time);
     total_tick_time += result.cpu_ms;
 
-    PRINT_MS("-> acquire surface time: ", result.get_surface_ms, surface_time);
     PRINT_MS("-> setup time: ", result.setup_ms, setup_time);
     PRINT_MS("-> global uniforms time: ", result.global_uniforms_ms, uniform_time);
     PRINT_MS("-> shadowmap time: ", result.shadowmap_ms, shadowmap_time);
@@ -562,12 +569,14 @@ int tick(struct Platform *p, void *context) {
     PRINT_MS("-> submit time: ", result.submit_ms, submit_time);
 
     // print the time spent waiting to be able to present last frame
-    // todo: on the web this is not what causes the vsync delay, so we need another way there
-    PRINT_MS("Wait for present time: ", time_waited_on_surface, present_time);
-    total_tick_time += time_waited_on_surface;
+    PRINT_MS("Wait for present time: ", result.present_wait_ms, present_time);
+    total_tick_time += result.present_wait_ms;
 
     // print the total time we spent on this tick
-    PRINT_MS("Total tick time: ", total_tick_time, total_tick_time);
+    PRINT_MS("Total tick time: ", total_tick_time, tick_time);
+    PRINT_MS("Delta time: ", delta, delta_time);
+
+    vsync_delay = result.present_wait_ms + result.get_surface_ms;
 
     return 0;
 }
