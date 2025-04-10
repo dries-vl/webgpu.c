@@ -7,18 +7,26 @@ struct GlobalUniforms {
     camera_world_space: vec4<f32>,
     light_view_proj: mat4x4<f32>,
 };
+const MAX_MATERIALS: u32 = 4096; // hardcoded: 65536 / 16 (size of MaterialUniforms)
 struct MaterialUniforms {
     shader: u32,
-    reflective: f32
+    reflective: f32,
+    padding: u32,
+    padding: u32
 };
+const MAX_MESHES: u32 = 1024;
 struct MeshUniforms {
     bones: array<mat4x4<f32>, 64>, // 64 bones // todo: shouldn't this be per instance for animations (?)
 };
 
 @group(0) @binding(0) // *group 0 for global* (global uniforms)
 var<uniform> global_uniforms: GlobalUniforms;
+@group(0) @binding(1)
+var animation_sampler: sampler;
+@group(0) @binding(2)
+var animation_texture: texture_2d<f32>;
 @group(1) @binding(0) // *group 1 for pipeline* (material uniforms, shadows)
-var<uniform> material_uniforms: MaterialUniforms;
+var<uniform> material_uniform_array: array<MaterialUniforms, MAX_MATERIALS>;
 @group(1) @binding(1)
 var shadow_map: texture_depth_2d;
 @group(1) @binding(2)
@@ -27,22 +35,16 @@ var shadow_sampler: sampler_comparison;
 var cubemap: texture_cube<f32>;
 @group(1) @binding(4)
 var cubemap_sampler: sampler;
-@group(2) @binding(0) // *group 2 for per-material* (textures)
-var texture_sampler: sampler;
-@group(2) @binding(1)
-var tex_0: texture_2d<f32>;
-@group(2) @binding(2)
-var tex_1: texture_2d<f32>;
-@group(3) @binding(0) // *group 3 for per-mesh* (bones)
-var<uniform> mesh_uniforms: MeshUniforms;
 
 struct VertexInput {
+    // Vertex
     @location(1) position: vec3<f32>,
     @location(2) normal: vec4<f32>,
     @location(3) tangent: vec4<f32>,
     @location(4) uv: vec2<f32>,
     @location(5) bone_weights: vec4<f32>, // weights (assumed normalized)
     @location(6) bone_indices: vec4<u32>,  // indices into bone_uniforms.bones
+    // Instance
     @location(7) i_pos_0: vec4<f32>,  // instance transform row 0
     @location(8) i_pos_1: vec4<f32>,  // instance transform row 1
     @location(9) i_pos_2: vec4<f32>,  // instance transform row 2
@@ -62,15 +64,17 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     var output: VertexOutput;
     var i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
     let vertex_position = vec4<f32>(input.position, 1.0);
+    let material_uniforms = material_uniform_array[1];
     if (material_uniforms.shader >= BASE_SHADER) {
         // BASE SHADER
-        let skin_matrix = 
-            mesh_uniforms.bones[input.bone_indices[0]] * input.bone_weights[0] +
-            mesh_uniforms.bones[input.bone_indices[1]] * input.bone_weights[1] +
-            mesh_uniforms.bones[input.bone_indices[2]] * input.bone_weights[2] +
-            mesh_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
+        // var bones = mesh_uniforms.bones; // var makes a local copy though
+        // let skin_matrix = 
+        //     bones[input.bone_indices[0]] * input.bone_weights[0] +
+        //     bones[input.bone_indices[1]] * input.bone_weights[1] +
+        //     bones[input.bone_indices[2]] * input.bone_weights[2] +
+        //     bones[input.bone_indices[3]] * input.bone_weights[3];
 
-        var world_space = i_transform * skin_matrix * vertex_position;
+        var world_space = i_transform /* skin_matrix*/ * vertex_position;
 
         // projected shadow mesh
         if (material_uniforms.shader == SHADOW_MESH_SHADER) {
@@ -96,7 +100,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         // todo: emscripten (!)
 
         // DIRECTIONAL LIGHT
-        var world_space_normal = normalize(((i_transform * skin_matrix) * vec4<f32>(input.normal.xyz, 0.0)).xyz);
+        var world_space_normal = normalize(((i_transform/* * skin_matrix*/) * vec4<f32>(input.normal.xyz, 0.0)).xyz);
         let diff = max(dot(world_space_normal, -vec3(0.5, -0.8, 0.5)), 0.0);
 
         output.world_normal = world_space_normal;
@@ -138,13 +142,14 @@ struct VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let material_uniforms = material_uniform_array[1];
     // ENVIRONMENT CUBE
     if (material_uniforms.shader == ENV_CUBE_SHADER) {
         return textureSample(cubemap, cubemap_sampler, normalize(input.world_space.xyz));
     }
 
     let depth = (input.pos.z / input.pos.w);
-    var tex_color = textureSample(tex_0, texture_sampler, input.uv);
+    var tex_color = vec4(1.,0.,1.,1.);//textureSample(tex_0, texture_sampler, input.uv);
     
     var color = tex_color.rgb;
     var alpha = tex_color.a;
@@ -160,7 +165,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let r = reflect(-viewDir, input.world_normal);
 
         // Choose a probe radius that fully encloses your reflective objects.
-        let probeRadius: f32 = 10.0;
+        let probeRadius: f32 = 100.0;
         let t = intersectSphere(P, r, probeCenter, probeRadius);
         // If t is negative, the ray missed the sphere; in a well-set scene this shouldn't happen.
         let sampleDir = normalize((P + r * t) - probeCenter);

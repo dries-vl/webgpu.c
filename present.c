@@ -6,10 +6,11 @@
 #include <stdint.h>
 #include <string.h>
 #include <limits.h>
+#include <stdlib.h>
 
 #pragma region GLOBALS
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
-#define FORCE_RESOLUTION 1 // force the resolution of the screen to the original width/height -> old-style flicker if changed
+#define FORCE_RESOLUTION 0 // force the resolution of the screen to the original width/height -> old-style flicker if changed
 #define FORCE_ASPECT_RATIO 0
 #define FULLSCREEN 1
 #define WINDOWED 0
@@ -45,11 +46,7 @@ float ASPECT_RATIO = ORIGINAL_ASPECT_RATIO;
 // to an unsigned short (mapping -1 => 0 and 1 => 65535).
 #define FLOAT_TO_U16(x) ((uint16_t) x * 65535.0f)
 
-//---------------------------------------------------------------------
-// Predefined Mesh Data
-//---------------------------------------------------------------------
-// Ground instance (for the entire ground mesh)
-// Here we use an identity transform (no translation, rotation or scale change)
+
 static struct Instance ground_instance = {
     .transform = {
          100, 0, 0, 0,
@@ -79,6 +76,7 @@ struct Instance pine = {
 };
 struct Instance pines[10];
 #pragma endregion
+
 #pragma region PRINT_ON_SCREEN
 // HUD quad (2D UI element)
 static struct Vertex quad_vertices[4] = {
@@ -191,10 +189,10 @@ void print_on_screen(const char *str) {
 }
 #pragma endregion
 
-#include "game.c" // todo: put game.c very isolated like graphics, platform. // Q: what to expose to game.c? print_on_screen?
-
 #pragma region PLATFORM
 #pragma endregion
+
+#include "game.c" // todo: put game.c very isolated like graphics, platform. // Q: what to expose to game.c? print_on_screen?
 
 // todo: we need a much better way to manage meshes etc.
 int tick(struct Platform *p, void *context) {
@@ -295,7 +293,7 @@ int tick(struct Platform *p, void *context) {
         },
         .atlas_uv = {0, 0}
     };
-    static struct Instance cube = {
+    static struct Instance cube_i = {
         .transform = {
             1, 0, 0, 0,
             0, 1, 0, 0,
@@ -304,6 +302,7 @@ int tick(struct Platform *p, void *context) {
         },
         .data = {7, 0, 0},
     };
+    static struct Instance cube[1000] = {0};
     static struct Instance env_cube = {
         .transform = {
             100, 0, 0, 0,
@@ -366,7 +365,6 @@ int tick(struct Platform *p, void *context) {
         addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
         quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
         addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
-        // todo: one shared material       
  
         // LOAD MESHES FROM DISK
         struct MappedMemory character_mm = load_animated_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
@@ -392,10 +390,18 @@ int tick(struct Platform *p, void *context) {
         // p->unmap_file(&char2_mm);
         
         struct MappedMemory cube_mm = load_mesh(p, "data/models/bin/cube.bin", &v, &vc, &i, &ic);
-        cube_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &cube, 1);
-        addGPUMaterialUniform(context, cube_mesh_id, &reflection_shader_id, sizeof(reflection_shader_id));
-        float cube_reflectiveness = 0.5;
-        addGPUMaterialUniform(context, cube_mesh_id, &cube_reflectiveness, sizeof(cube_reflectiveness));
+        for (int c = 0;c<1;c++) {
+            for (int j = 0; j < 1; j++) {
+                cube[c] = cube_i;
+                cube[c].transform[12] = (rand() % 50) - 25; // X
+                cube[c].transform[13] = (rand() % 25); // Y
+                cube[c].transform[14] = (rand() % 50) - 25; // Z
+            }
+            cube_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &cube[c], 1);
+            addGPUMaterialUniform(context, cube_mesh_id, &reflection_shader_id, sizeof(reflection_shader_id));
+            float cube_reflectiveness = 0.5;
+            addGPUMaterialUniform(context, cube_mesh_id, &cube_reflectiveness, sizeof(cube_reflectiveness));
+        }
         p->unmap_file(&cube_mm);
        
         struct MappedMemory sphere_mm = load_mesh(p, "data/models/blender/bin/sphere.bin", &v, &vc, &i, &ic);
@@ -407,23 +413,23 @@ int tick(struct Platform *p, void *context) {
 
 
         // TEXTURE
-        int w, h = 0;
-        struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
-        cube_texture_id = createGPUTexture(context, cube_mesh_id, china_texture_mm.data, w, h);
-        p->unmap_file(&china_texture_mm);
-        struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
-        cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
-        quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
-        p->unmap_file(&font_texture_mm);
+        // int w, h = 0;
+        // struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
+        // cube_texture_id = createGPUTexture(context, cube_mesh_id, china_texture_mm.data, w, h);
+        // p->unmap_file(&china_texture_mm);
+        // struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
+        // cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
+        // quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
+        // p->unmap_file(&font_texture_mm);
 
-        struct MappedMemory ground_texture_mm = load_texture(p, "data/textures/bin/stone.bin", &w, &h);
-        ground_texture_id = createGPUTexture(context, ground_mesh_id, ground_texture_mm.data, w, h);
-        p->unmap_file(&ground_texture_mm);
+        // struct MappedMemory ground_texture_mm = load_texture(p, "data/textures/bin/stone.bin", &w, &h);
+        // ground_texture_id = createGPUTexture(context, ground_mesh_id, ground_texture_mm.data, w, h);
+        // p->unmap_file(&ground_texture_mm);
 
-        struct MappedMemory colormap_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
-        colormap_texture_id = createGPUTexture(context, character_mesh_id, colormap_mm.data, w, h);
-        colormap_texture_id = createGPUTexture(context, char2_mesh_id, colormap_mm.data, w, h);
-        p->unmap_file(&colormap_mm);
+        // struct MappedMemory colormap_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
+        // colormap_texture_id = createGPUTexture(context, character_mesh_id, colormap_mm.data, w, h);
+        // colormap_texture_id = createGPUTexture(context, char2_mesh_id, colormap_mm.data, w, h);
+        // p->unmap_file(&colormap_mm);
 
         // UNIFORMS
         brightnessOffset = addGPUGlobalUniform(context, main_pipeline, &brightness, sizeof(float));
@@ -452,10 +458,10 @@ int tick(struct Platform *p, void *context) {
             pine_mesh_id[j] = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &pines[j], 1);
             p->unmap_file(&pine_mm);
             // texture
-            struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap_2.bin", &w, &h);
-            pine_texture_id[j] = createGPUTexture(context, pine_mesh_id[j], green_texture_mm.data, w, h);
+            // struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap_2.bin", &w, &h);
+            // pine_texture_id[j] = createGPUTexture(context, pine_mesh_id[j], green_texture_mm.data, w, h);
             addGPUMaterialUniform(context, pine_mesh_id[j], &base_shader_id, sizeof(base_shader_id));
-            p->unmap_file(&green_texture_mm);
+            // p->unmap_file(&green_texture_mm);
             pineo[j] = (struct GameObject){
                 .collisionBox = {0},
                 .instance = &pines[j],
@@ -506,7 +512,7 @@ int tick(struct Platform *p, void *context) {
     }
 
     // update the instances of the text
-    setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, screen_chars_index);
+    setGPUInstanceBuffer(context, quad_mesh_id, &char_instances, MAX_CHAR_ON_SCREEN);
     
     // keep track of how long the tick took to process
     double tick_ms = p->current_time_ms() - tick_start_ms;
@@ -563,7 +569,7 @@ int tick(struct Platform *p, void *context) {
     total_tick_time += result.cpu_ms;
 
     PRINT_MS("-> setup time: ", result.setup_ms, setup_time);
-    PRINT_MS("-> global uniforms time: ", result.global_uniforms_ms, uniform_time);
+    PRINT_MS("-> write buffers time: ", result.write_buffer_ms, buffer_write_time);
     PRINT_MS("-> shadowmap time: ", result.shadowmap_ms, shadowmap_time);
     PRINT_MS("-> main pass time: ", result.main_pass_ms, mainpass_time);
     PRINT_MS("-> submit time: ", result.submit_ms, submit_time);

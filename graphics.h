@@ -8,14 +8,22 @@ static const int MSAA_ENABLED = 1;
 static const int SHADOWS_ENABLED = 1;
 static const int POST_PROCESSING_ENABLED = 0;
 
-#define MAX_PIPELINES             2 // todo: remove, only one pipeline
-#define MAX_MESHES                128
-#define MAX_MATERIALS          256 // todo: MAX_MATERIALS that matches with the 256 bytes x 256 materials limit -> can reuse material for different mesh by using atlas for textures + instance atlas uv
-#define MATERIAL_UNIFORM_CAPACITY     256  // bytes per mesh in mesh uniform buffer (dynamic offset blocks in uniform buffer cannot be smaller than 256 bytes)
-#define GLOBAL_UNIFORM_CAPACITY   1024  // bytes per pipeline uniform buffer
-#define MATERIALS_UNIFORM_BUFFER_TOTAL_SIZE (MAX_MATERIALS * MATERIAL_UNIFORM_CAPACITY) // this cannot be bigger than 65536 bytes
-#define MAX_BONES 64
-#define BONE_FRAME_SIZE (MAX_BONES * 16)
+#define GLOBAL_UNIFORM_CAPACITY 1024  // bytes per pipeline uniform buffer
+#define UNIFORM_BUFFER_MAX_SIZE 65536 // this cannot be bigger than 65536 bytes
+#define MAX_PIPELINES 2 // todo: remove, only one pipeline
+#define MAX_MESHES 1024
+#define MAX_MATERIALS (UNIFORM_BUFFER_MAX_SIZE / sizeof(struct MaterialUniforms)) // 256 bytes x 256 materials limit -> reuse material for different mesh by using atlas for textures + instance atlas uv
+#define MAX_BONES 32
+#define MAX_FRAMES 32
+#define SKELETON_SIZE (MAX_BONES * 16) // 512 bytes (128 pixels)
+#define ANIMATION_SIZE (SKELETON_SIZE * MAX_FRAMES) // 16384 bytes (4096 pixels)
+
+struct MaterialUniforms { // 16 bytes (must be aligned to 16)
+    unsigned int shader; // 4 bytes
+    float reflective; // 4 bytes
+    float padding; // 4 bytes
+    float padding; // 4 bytes
+};
 
 enum MeshFlags {
     MESH_ANIMATED = 1 << 0,
@@ -26,8 +34,8 @@ struct draw_result {
     int surface_not_available;
     double present_wait_ms;
     double get_surface_ms;
+    double write_buffer_ms;
     double setup_ms;
-    double global_uniforms_ms;
     double shadowmap_ms;
     double main_pass_ms;
     double submit_ms;

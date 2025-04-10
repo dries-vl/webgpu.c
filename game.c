@@ -1,4 +1,6 @@
 #include <math.h>
+#include <string.h>
+#include <stdio.h> // REMOVE, for debugging only
 
 /* GAME STRUCTS */
 struct Vector3 {
