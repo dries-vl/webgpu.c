@@ -240,11 +240,13 @@ int tick(struct Platform *p, void *context) {
 
     // todo: separate material from mesh -> set material when creating mesh, and set shader once in material
     // todo: RGB 3x8bit textures, no alpha
-    static int hud_shader_id = 0;
-    static int base_shader_id = 1;
-    static int shadow_shader_id = 2;
-    static int reflection_shader_id = 3;
-    static int env_cube_shader = 4;
+    enum SHADERS {
+        BASE_SHADER = 0,
+        HUD_SHADER = 1,
+        SHADOW_SHADER = 2,
+        REFLECTION_SHADER = 3,
+        ENV_CUBE_SHADER = 4,
+    };
 
     static int ground_mesh_id;
     static int quad_mesh_id;
@@ -266,12 +268,6 @@ int tick(struct Platform *p, void *context) {
         0.0f,             0.0f, (-nearClip * farClip) / (farClip - nearClip), 0.0f
     };
     
-    static int brightnessOffset;
-    static int timeOffset;
-    static int viewOffset; 
-    static int projectionOffset;
-    static int shadowsOffset;
-    static float camera_world_space_offset;
     static float camera_world_space[4] = {0};
 
     // instance data cannot go out of scope!
@@ -346,10 +342,10 @@ int tick(struct Platform *p, void *context) {
             cube_data[3] = load_texture(p, "data/textures/bin/bluecloud_dn.bin", &w, &h).data;
             cube_data[4] = load_texture(p, "data/textures/bin/bluecloud_rt.bin", &w, &h).data;
             cube_data[5] = load_texture(p, "data/textures/bin/bluecloud_lf.bin", &w, &h).data;
-            load_cube_map(context, cube_data, w);
+            set_env_cube(context, cube_data, ENV_TEXTURE_SIZE); // size of the image has to be 1024
         }
 
-        main_pipeline = createGPUPipeline(context, "data/shaders/shader.wgsl");
+        main_pipeline = create_main_pipeline(context, "data/shaders/shader.wgsl");
          
         int vc, ic; void *v, *i;
         void *bf; int bc, fc;
@@ -357,22 +353,20 @@ int tick(struct Platform *p, void *context) {
         // ENVIRONMENT CUBE
         struct MappedMemory env_cube_mm = load_mesh(p, "data/models/blender/bin/env_cube.bin", &v, &vc, &i, &ic);
         env_cube_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &env_cube, 1);
-        addGPUMaterialUniform(context, env_cube_id, &env_cube_shader, sizeof(base_shader_id));
+        material_uniform_data[env_cube_id].shader = ENV_CUBE_SHADER;
         p->unmap_file(&env_cube_mm);
  
         // PREDEFINED MESHES
         ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
-        addGPUMaterialUniform(context, ground_mesh_id, &base_shader_id, sizeof(base_shader_id));
         quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
-        addGPUMaterialUniform(context, quad_mesh_id, &hud_shader_id, sizeof(hud_shader_id));
+        material_uniform_data[quad_mesh_id].shader = HUD_SHADER;
  
         // LOAD MESHES FROM DISK
         struct MappedMemory character_mm = load_animated_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
         printf("frame count: %d, bone count: %d\n", fc, bc);
         character_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
         character_shadow_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
-        addGPUMaterialUniform(context, character_mesh_id, &base_shader_id, sizeof(int));
-        addGPUMaterialUniform(context, character_shadow_id, &shadow_shader_id, sizeof(int));
+        material_uniform_data[character_shadow_id].shader = SHADOW_SHADER;
         setGPUMeshBoneData(context, character_mesh_id, bf, bc, fc);
         setGPUMeshBoneData(context, character_shadow_id, bf, bc, fc);
         // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
@@ -398,46 +392,44 @@ int tick(struct Platform *p, void *context) {
                 cube[c].transform[14] = (rand() % 50) - 25; // Z
             }
             cube_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &cube[c], 1);
-            addGPUMaterialUniform(context, cube_mesh_id, &reflection_shader_id, sizeof(reflection_shader_id));
-            float cube_reflectiveness = 0.5;
-            addGPUMaterialUniform(context, cube_mesh_id, &cube_reflectiveness, sizeof(cube_reflectiveness));
+            material_uniform_data[cube_mesh_id].shader = REFLECTION_SHADER;
+            material_uniform_data[cube_mesh_id].reflective = 0.5;
         }
         p->unmap_file(&cube_mm);
        
         struct MappedMemory sphere_mm = load_mesh(p, "data/models/blender/bin/sphere.bin", &v, &vc, &i, &ic);
         sphere_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &sphere, 1);
-        addGPUMaterialUniform(context, sphere_id, &reflection_shader_id, sizeof(reflection_shader_id));
-        float sphere_reflectiveness = 1.0;
-        addGPUMaterialUniform(context, sphere_id, &sphere_reflectiveness, sizeof(sphere_reflectiveness));
+        material_uniform_data[sphere_id].shader = REFLECTION_SHADER;
+        material_uniform_data[sphere_id].reflective = 1.0;
         p->unmap_file(&sphere_mm);
 
 
         // TEXTURE
-        // int w, h = 0;
-        // struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
-        // cube_texture_id = createGPUTexture(context, cube_mesh_id, china_texture_mm.data, w, h);
-        // p->unmap_file(&china_texture_mm);
-        // struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
-        // cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
-        // quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
-        // p->unmap_file(&font_texture_mm);
+        int w, h = 0;
+        struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
+        cube_texture_id = createGPUTexture(context, cube_mesh_id, china_texture_mm.data, w, h);
+        p->unmap_file(&china_texture_mm);
+        struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
+        cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
+        quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
+        p->unmap_file(&font_texture_mm);
 
-        // struct MappedMemory ground_texture_mm = load_texture(p, "data/textures/bin/stone.bin", &w, &h);
-        // ground_texture_id = createGPUTexture(context, ground_mesh_id, ground_texture_mm.data, w, h);
-        // p->unmap_file(&ground_texture_mm);
+        struct MappedMemory ground_texture_mm = load_texture(p, "data/textures/bin/stone.bin", &w, &h);
+        ground_texture_id = createGPUTexture(context, ground_mesh_id, ground_texture_mm.data, w, h);
+        p->unmap_file(&ground_texture_mm);
 
-        // struct MappedMemory colormap_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
-        // colormap_texture_id = createGPUTexture(context, character_mesh_id, colormap_mm.data, w, h);
-        // colormap_texture_id = createGPUTexture(context, char2_mesh_id, colormap_mm.data, w, h);
-        // p->unmap_file(&colormap_mm);
+        struct MappedMemory colormap_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
+        colormap_texture_id = createGPUTexture(context, character_mesh_id, colormap_mm.data, w, h);
+        colormap_texture_id = createGPUTexture(context, char2_mesh_id, colormap_mm.data, w, h);
+        p->unmap_file(&colormap_mm);
 
         // UNIFORMS
-        brightnessOffset = addGPUGlobalUniform(context, main_pipeline, &brightness, sizeof(float));
-        timeOffset = addGPUGlobalUniform(context, main_pipeline, &timeVal, sizeof(float));
-        viewOffset = addGPUGlobalUniform(context, main_pipeline, view, sizeof(view));
-        projectionOffset = addGPUGlobalUniform(context, main_pipeline, projection, sizeof(projection));
-        shadowsOffset = addGPUGlobalUniform(context, main_pipeline, &SHADOWS_ENABLED, sizeof(SHADOWS_ENABLED));
-        camera_world_space_offset = addGPUGlobalUniform(context, main_pipeline, &camera_world_space, sizeof(camera_world_space));
+        global_uniform_data.brightness = brightness;
+        global_uniform_data.time = timeVal;
+        global_uniform_data.shadows = SHADOWS_ENABLED;
+        memcpy(global_uniform_data.view, view, sizeof(view));
+        memcpy(global_uniform_data.projection, projection, sizeof(projection));
+        memcpy(global_uniform_data.camera_world_space, camera_world_space, sizeof(camera_world_space));
 
         // gamestate shit
         initGamestate(&gameState);
@@ -460,7 +452,7 @@ int tick(struct Platform *p, void *context) {
             // texture
             // struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap_2.bin", &w, &h);
             // pine_texture_id[j] = createGPUTexture(context, pine_mesh_id[j], green_texture_mm.data, w, h);
-            addGPUMaterialUniform(context, pine_mesh_id[j], &base_shader_id, sizeof(base_shader_id));
+            material_uniform_data[pine_mesh_id[j]].shader = BASE_SHADER;
             // p->unmap_file(&green_texture_mm);
             pineo[j] = (struct GameObject){
                 .collisionBox = {0},
@@ -494,21 +486,19 @@ int tick(struct Platform *p, void *context) {
     //view[13] = cameraLocation[1];
     float inv[16];
     inverseViewMatrix(view, inv);
-    setGPUGlobalUniformValue(context, main_pipeline, timeOffset, &timeVal, sizeof(float));
-    setGPUGlobalUniformValue(context, main_pipeline, viewOffset, &inv, sizeof(view));
-    setGPUGlobalUniformValue(context, main_pipeline, projectionOffset, &projection, sizeof(projection));
+    memcpy(global_uniform_data.view, inv, sizeof(inv));
+    memcpy(global_uniform_data.projection, projection, sizeof(projection));
+    global_uniform_data.time = timeVal;
 
     float new_[4] = {view[12], view[13], view[14], 1.0};
     memcpy(camera_world_space, &new_, sizeof(camera_world_space));
-    setGPUGlobalUniformValue(context, main_pipeline, camera_world_space_offset, &camera_world_space, sizeof(camera_world_space));
+    memcpy(global_uniform_data.camera_world_space, camera_world_space, sizeof(camera_world_space));
 
     // SET SHADOWS
     if (SHADOWS_ENABLED) {
-        static int light_proj_offset = -1;
         float light_view_proj[16]; // Q: should we pass view and proj separately instead for simplicity and flexibility?
         computeDynamicLightViewProj(light_view_proj, playerLocation);
-        if (light_proj_offset == -1) light_proj_offset = addGPUGlobalUniform(context, 0, light_view_proj, sizeof(light_view_proj));
-        setGPUGlobalUniformValue(context, main_pipeline, light_proj_offset, light_view_proj, sizeof(light_view_proj));
+        memcpy(global_uniform_data.light_view_proj, light_view_proj, sizeof(light_view_proj));
     }
 
     // update the instances of the text
@@ -520,7 +510,7 @@ int tick(struct Platform *p, void *context) {
     struct draw_result result = drawGPUFrame(context, p, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
     double cpu_ms = result.cpu_ms;
 
-    // todo: pass postprocessing settings etc. as parameter -> no global, can switch instantly
+    // todo: pass postprocessing settings etc. as parameter -> no global, to that we can switch instantly at runtime
     // draw cubemap around eye, and save to disk
     if (0) {
         float eye[3] = {0.,1.,0.};
@@ -528,9 +518,9 @@ int tick(struct Platform *p, void *context) {
         float cubemapProj[16];
         generateCubemapViews(eye, cubemapViews);
         generateCubemapProjection(0.01f, 2000.0f, cubemapProj);
-        setGPUGlobalUniformValue(context, main_pipeline, projectionOffset, &cubemapProj, sizeof(projection));
+        memcpy(global_uniform_data.projection, cubemapProj, sizeof(projection));
         for (int i = 0; i < 6; i++) {
-            setGPUGlobalUniformValue(context, main_pipeline, viewOffset, &cubemapViews[i], sizeof(view));
+            memcpy(global_uniform_data.view, cubemapViews[i], sizeof(view));
             char filename[64]; char *cube_faces[6] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
             snprintf(filename, sizeof(filename), "data/textures/cube/cube_face_%s.png", cube_faces[i]);    
             drawGPUFrame(context, p, 0, 0, 128, 128, 1, filename);

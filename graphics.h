@@ -2,12 +2,14 @@
 #define GAME_DATA_H_
 
 // todo: either pass as param, or put in webgpu.c as global, but not in header file
-static const int FORCE_GPU_CHOICE = 1;
+static const int FORCE_GPU_CHOICE = 0;
 static const int DISCRETE_GPU = 1; // 0 for forcing integrated, 1 for forcing discrete
 static const int MSAA_ENABLED = 1;
 static const int SHADOWS_ENABLED = 1;
 static const int POST_PROCESSING_ENABLED = 0;
 
+#define TEXTURE_SIZE 512
+#define ENV_TEXTURE_SIZE 1024
 #define GLOBAL_UNIFORM_CAPACITY 1024  // bytes per pipeline uniform buffer
 #define UNIFORM_BUFFER_MAX_SIZE 65536 // this cannot be bigger than 65536 bytes
 #define MAX_PIPELINES 2 // todo: remove, only one pipeline
@@ -18,12 +20,28 @@ static const int POST_PROCESSING_ENABLED = 0;
 #define SKELETON_SIZE (MAX_BONES * 16) // 512 bytes (128 pixels)
 #define ANIMATION_SIZE (SKELETON_SIZE * MAX_FRAMES) // 16384 bytes (4096 pixels)
 
-struct MaterialUniforms { // 16 bytes (must be aligned to 16)
-    unsigned int shader; // 4 bytes
-    float reflective; // 4 bytes
-    float padding; // 4 bytes
-    float padding; // 4 bytes
+struct MaterialUniforms { // 256 bytes (minimum enforced by graphics api)
+    // 16+ byte elements must align to 16 byte offsets (!) 
+    unsigned int shader; // 0-4
+    float reflective; // 4-8
+    unsigned char padding[248]; // 8-256
 };
+struct GlobalUniforms { // 1024 bytes
+    // 16+ byte elements must align to 16 byte offsets (!)
+    float brightness; // 0-4
+    float time; // 0-8
+    unsigned int shadows; // 8-12
+    float pad_camera_world; // 12-16
+    float camera_world_space[4]; // 16-32
+    float view[16]; // 32-96
+    float projection[16]; // 96-160
+    float light_view_proj[16]; // 160-224
+    unsigned char padding[800]; // 224-1024
+};
+
+// Global uniform data (needs to be accessible from outside)
+struct GlobalUniforms global_uniform_data; // global uniform data in RAM
+struct MaterialUniforms material_uniform_data[MAX_MATERIALS]; // material uniforms data in RAM
 
 enum MeshFlags {
     MESH_ANIMATED = 1 << 0,
@@ -50,17 +68,13 @@ void *createGPUContext(void (*callback)(), int width, int height, int viewport_w
 #else
 void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int viewport_width, int viewport_height);
 #endif
-int   createGPUPipeline(void *context, const char *shader);
+int   create_main_pipeline(void *context, const char *shader);
 void  create_shadow_pipeline(void *context);
 void  create_postprocessing_pipeline(void *context, int viewport_width, int viewport_height);
-int   load_cube_map(void *context, void *data[6], int face_size);
+int   set_env_cube(void *context_ptr, void *data[6], int face_size);
 int   createGPUMesh(void *context, int material_id, enum MeshFlags flags, void *v, int vc, void *i, int ic, void *ii, int iic);
 void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc);
 int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
-int   addGPUGlobalUniform(void *context, int pipeline_id, const void* data, int data_size);
-void  setGPUGlobalUniformValue(void *context, int pipeline_id, int offset, const void* data, int dataSize);
-int   addGPUMaterialUniform(void *context, int material_id, const void* data, int data_size);
-void  setGPUMaterialUniformValue(void *context, int material_id, int offset, const void* data, int dataSize);
 void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
 struct draw_result drawGPUFrame(void *context, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename);
 double block_on_gpu_queue(void *context, struct Platform *p);
@@ -134,10 +148,5 @@ struct Instance { // 96 bytes
 // todo: much more high level text files with mesh + textures + instances + scene
 // todo: pipelines are still in C for now
 // todo; script that converts those text files to binary data that we load in at runtime
-struct LoadMesh { // todo: isn't it wasteful to put this in static memory when it's only used for loading in?
-    struct Material *material;
-    const char* model;
-    const char** textures; // 0 as last string to stop the loop
-};
 
 #endif

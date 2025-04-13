@@ -1,23 +1,28 @@
-// Global uniform block containing the light view-projection matrix,
-// among other parameters (brightness, time, etc.)
-// todo: we should use a struct in the C-code to avoid ordering issues and spaggheti mess
+// todo: duplicated from main shader
 struct GlobalUniforms {
-    brightness: f32,
+    shadows: u32,
     time: f32,
-    view: mat4x4<f32>,         // unused in shadow pass
-    projection: mat4x4<f32>,   // unused in shadow pass
-    shadows: u32,              // unused in shadow pass
+    brightness: f32,
     camera_world_space: vec4<f32>,
+    view: mat4x4<f32>,  // View matrix
+    projection: mat4x4<f32>,    // Projection matrix
     light_view_proj: mat4x4<f32>,
 };
-struct MeshUniforms {
-    bones: array<mat4x4<f32>, 64>, // 64 bones
+struct MaterialUniforms {
+    shader: u32,
+    reflective: f32,
+    padding_1: u32,
+    padding_2: u32,
 };
 
 @group(0) @binding(0)
 var<uniform> g_uniforms: GlobalUniforms;
-@group(1) @binding(0) // *group 2 for per-mesh* (bones)
-var<uniform> m_uniforms: MeshUniforms;
+@group(0) @binding(1)
+var animation_sampler: sampler;
+@group(0) @binding(2)
+var animation_texture: texture_2d<f32>;
+@group(0) @binding(3)
+var<uniform> material_uniform_array: array<MaterialUniforms, 256>; // hardcoded: 65536 / 256 (size of MaterialUniforms)
 
 // Vertex input includes the vertex position and the per-instance transform.
 struct VertexInput {
@@ -44,11 +49,11 @@ fn vs_main(input: VertexInput) -> @builtin(position) vec4f {
     var output: VertexOutput;
     let i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
     let vertex_position = vec4<f32>(input.position, 1.0);
-    let skin_matrix = 
-        m_uniforms.bones[input.bone_indices[0]] * input.bone_weights[0] +
-        m_uniforms.bones[input.bone_indices[1]] * input.bone_weights[1] +
-        m_uniforms.bones[input.bone_indices[2]] * input.bone_weights[2] +
-        m_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
+    // let skin_matrix = 
+    //     m_uniforms.bones[input.bone_indices[0]] * input.bone_weights[0] +
+    //     m_uniforms.bones[input.bone_indices[1]] * input.bone_weights[1] +
+    //     m_uniforms.bones[input.bone_indices[2]] * input.bone_weights[2] +
+    //     m_uniforms.bones[input.bone_indices[3]] * input.bone_weights[3];
 
-    return g_uniforms.light_view_proj * i_transform * skin_matrix * vertex_position;
+    return g_uniforms.light_view_proj * i_transform/* * skin_matrix*/ * vertex_position;
 }

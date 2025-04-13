@@ -1,39 +1,38 @@
 struct GlobalUniforms {
-    brightness: f32,
+    shadows: u32,
     time: f32,
+    brightness: f32,
+    camera_world_space: vec4<f32>,
     view: mat4x4<f32>,  // View matrix
     projection: mat4x4<f32>,    // Projection matrix
-    shadows: u32,
-    camera_world_space: vec4<f32>,
     light_view_proj: mat4x4<f32>,
 };
-const MAX_MATERIALS: u32 = 4096; // hardcoded: 65536 / 16 (size of MaterialUniforms)
 struct MaterialUniforms {
     shader: u32,
     reflective: f32,
-    padding: u32,
-    padding: u32
-};
-const MAX_MESHES: u32 = 1024;
-struct MeshUniforms {
-    bones: array<mat4x4<f32>, 64>, // 64 bones // todo: shouldn't this be per instance for animations (?)
+    padding_1: u32,
+    padding_2: u32,
 };
 
-@group(0) @binding(0) // *group 0 for global* (global uniforms)
+@group(0) @binding(0)
 var<uniform> global_uniforms: GlobalUniforms;
 @group(0) @binding(1)
 var animation_sampler: sampler;
 @group(0) @binding(2)
 var animation_texture: texture_2d<f32>;
-@group(1) @binding(0) // *group 1 for pipeline* (material uniforms, shadows)
-var<uniform> material_uniform_array: array<MaterialUniforms, MAX_MATERIALS>;
-@group(1) @binding(1)
+@group(0) @binding(3)
+var texture_sampler: sampler;
+@group(0) @binding(4)
+var textures: texture_2d_array<f32>;
+@group(0) @binding(5)
+var<uniform> material_uniform_array: array<MaterialUniforms, 256>; // hardcoded: 65536 / 256 (size of MaterialUniforms)
+@group(0) @binding(6)
 var shadow_map: texture_depth_2d;
-@group(1) @binding(2)
+@group(0) @binding(7)
 var shadow_sampler: sampler_comparison;
-@group(1) @binding(3)
+@group(0) @binding(8)
 var cubemap: texture_cube<f32>;
-@group(1) @binding(4)
+@group(0) @binding(9)
 var cubemap_sampler: sampler;
 
 struct VertexInput {
@@ -53,8 +52,8 @@ struct VertexInput {
     @location(15) i_atlas_uv: vec2<f32>,
 };
 
-const HUD_SHADER: u32 = 0;
-const BASE_SHADER: u32 = 1;
+const BASE_SHADER: u32 = 0;
+const HUD_SHADER: u32 = 1;
 const SHADOW_MESH_SHADER: u32 = 2;
 const REFLECTION_SHADER: u32 = 3;
 const ENV_CUBE_SHADER: u32 = 4;
@@ -65,7 +64,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     var i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
     let vertex_position = vec4<f32>(input.position, 1.0);
     let material_uniforms = material_uniform_array[1];
-    if (material_uniforms.shader >= BASE_SHADER) {
+    if (input.i_atlas_uv.x == 0.0) {
         // BASE SHADER
         // var bones = mesh_uniforms.bones; // var makes a local copy though
         // let skin_matrix = 
@@ -115,7 +114,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         }
         // UV
         output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
-    } else if (material_uniforms.shader == HUD_SHADER) {
+    } else if (input.i_atlas_uv.x != 0.0) {
         // HUD SHADER
         // let i = vertex_index % 3u;
         // output.color = vec3<f32>(select(0.0, 1.0, i == 0u), select(0.0, 1.0, i == 1u), select(0.0, 1.0, i == 2u)); // barycentric coords
@@ -149,7 +148,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let depth = (input.pos.z / input.pos.w);
-    var tex_color = vec4(1.,0.,1.,1.);//textureSample(tex_0, texture_sampler, input.uv);
+    var tex_color = textureSample(textures, texture_sampler, input.uv, 0);
     
     var color = tex_color.rgb;
     var alpha = tex_color.a;
