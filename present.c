@@ -9,6 +9,8 @@
 #include <stdlib.h>
 
 #pragma region GLOBALS
+struct GlobalUniforms global_uniforms; // global uniform data in RAM
+struct MaterialUniforms material_uniforms[MAX_MATERIALS]; // material uniforms data in RAM
 // todo: this needs to be passed to platform, graphics AND presentation layer somehow
 #define FORCE_RESOLUTION 0 // force the resolution of the screen to the original width/height -> old-style flicker if changed
 #define FORCE_ASPECT_RATIO 0
@@ -25,6 +27,15 @@ int VIEWPORT_HEIGHT = ORIGINAL_HEIGHT;
 int OFFSET_X = 0; // offset to place smaller-than-window viewport at centre of screen
 int OFFSET_Y = 0;
 float ASPECT_RATIO = ORIGINAL_ASPECT_RATIO;
+// todo: separate material from mesh -> set material when creating mesh, and set shader once in material
+// todo: RGB 3x8bit textures, no alpha
+enum SHADERS {
+    BASE_SHADER = 0,
+    HUD_SHADER = 1,
+    SHADOW_SHADER = 2,
+    REFLECTION_SHADER = 3,
+    ENV_CUBE_SHADER = 4,
+};
 #pragma endregion
 
 #define PRINT_MS(label, value, name) do { \
@@ -44,8 +55,8 @@ float ASPECT_RATIO = ORIGINAL_ASPECT_RATIO;
 #pragma region GAME_DATA
 // Helper macro to convert a float UV (assumed to be in the range [-1,1] or [0,1])
 // to an unsigned short (mapping -1 => 0 and 1 => 65535).
-#define FLOAT_TO_U16(x) ((uint16_t) x * 65535.0f)
-
+#define FLOAT_TO_U16(x) ((uint16_t) (x * 65535.0f))
+#define FLOAT_TO_U8(x) ((uint8_t) (x * 0xff))
 
 static struct Instance ground_instance = {
     .transform = {
@@ -54,8 +65,8 @@ static struct Instance ground_instance = {
          0, 100, 0, 0,
          0, 0, 0, 1
     },
-    .data = {20, 0, 0},
-    .norms = {0},
+    .data = {2, BASE_SHADER, 0},
+    .norms = {FLOAT_TO_U16(0.975), 0, 0, 0},
     .animation = 0,
     .animation_phase = 0.0f,
     .atlas_uv = {0}
@@ -68,7 +79,7 @@ struct Instance pine = {
         0.0f, 0.0f, 5.0f, 0.0f,
         0.0f, 0.0f, 10.0f, 1.0f
     },
-    .data = {0},
+    .data = {4, BASE_SHADER, 0},
     .norms = {0},
     .animation = 0,
     .animation_phase = 0.0f,
@@ -182,6 +193,7 @@ void print_on_screen(const char *str) {
         inst->atlas_uv[1] = ((uint16_t) atlas_row) * 8192;
         
         // (Other fields like data, norms, animation, etc. remain zero for now)
+        inst->data[0] = 1;
 
         screen_chars_index++;
         current_screen_char++;
@@ -238,15 +250,6 @@ int tick(struct Platform *p, void *context) {
     static int sphere_id;
     static int env_cube_id;
 
-    // todo: separate material from mesh -> set material when creating mesh, and set shader once in material
-    // todo: RGB 3x8bit textures, no alpha
-    enum SHADERS {
-        BASE_SHADER = 0,
-        HUD_SHADER = 1,
-        SHADOW_SHADER = 2,
-        REFLECTION_SHADER = 3,
-        ENV_CUBE_SHADER = 4,
-    };
 
     static int ground_mesh_id;
     static int quad_mesh_id;
@@ -278,6 +281,7 @@ int tick(struct Platform *p, void *context) {
             0, 0, 1., 0,
             0, 0.5, -8, 1
         },
+        .data = {3, BASE_SHADER, 3},
         .atlas_uv = {0, 0}
     };
     static struct Instance character2 = {
@@ -287,6 +291,7 @@ int tick(struct Platform *p, void *context) {
             0, 0, 1., 0,
             0, 0, 4, 1
         },
+        .data = {3, BASE_SHADER, 0},
         .atlas_uv = {0, 0}
     };
     static struct Instance cube_i = {
@@ -296,7 +301,8 @@ int tick(struct Platform *p, void *context) {
             0, 0, 1, 0,
             0, 0, 2, 1
         },
-        .data = {7, 0, 0},
+        .data = {0, REFLECTION_SHADER, 1},
+        .norms = {FLOAT_TO_U16(0.75), 0, 0, 0},
     };
     static struct Instance cube[1000] = {0};
     static struct Instance env_cube = {
@@ -306,6 +312,7 @@ int tick(struct Platform *p, void *context) {
             0, 0, 100, 0,
             0, 0, 0, 1
         },
+        .data = {0, ENV_CUBE_SHADER, 0}
     };
     static struct Instance sphere = {
         .transform = {
@@ -314,6 +321,7 @@ int tick(struct Platform *p, void *context) {
             0, 0, 1, 0,
             0, 2, 0, 1
         },
+        .data = {0,REFLECTION_SHADER,2}
     };
     #pragma endregion
 
@@ -353,20 +361,21 @@ int tick(struct Platform *p, void *context) {
         // ENVIRONMENT CUBE
         struct MappedMemory env_cube_mm = load_mesh(p, "data/models/blender/bin/env_cube.bin", &v, &vc, &i, &ic);
         env_cube_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &env_cube, 1);
-        material_uniform_data[env_cube_id].shader = ENV_CUBE_SHADER;
+        material_uniforms[env_cube_id].shader = ENV_CUBE_SHADER;
         p->unmap_file(&env_cube_mm);
  
         // PREDEFINED MESHES
         ground_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &ground_instance, 1);
         quad_mesh_id = createGPUMesh(context, main_pipeline, 0, &quad_vertices, 4, &quad_indices, 6, &char_instances, MAX_CHAR_ON_SCREEN);
-        material_uniform_data[quad_mesh_id].shader = HUD_SHADER;
+        material_uniforms[quad_mesh_id].shader = HUD_SHADER;
  
         // LOAD MESHES FROM DISK
         struct MappedMemory character_mm = load_animated_mesh(p, "data/models/blender/bin/charA.bin", &v, &vc, &i, &ic, &bf, &bc, &fc);
         printf("frame count: %d, bone count: %d\n", fc, bc);
         character_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
         character_shadow_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
-        material_uniform_data[character_shadow_id].shader = SHADOW_SHADER;
+        material_uniforms[3].animated = 1;
+        material_uniforms[character_shadow_id].shader = SHADOW_SHADER;
         setGPUMeshBoneData(context, character_mesh_id, bf, bc, fc);
         setGPUMeshBoneData(context, character_shadow_id, bf, bc, fc);
         // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
@@ -392,25 +401,23 @@ int tick(struct Platform *p, void *context) {
                 cube[c].transform[14] = (rand() % 50) - 25; // Z
             }
             cube_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &cube[c], 1);
-            material_uniform_data[cube_mesh_id].shader = REFLECTION_SHADER;
-            material_uniform_data[cube_mesh_id].reflective = 0.5;
+            material_uniforms[1].shader = REFLECTION_SHADER;
+            material_uniforms[1].reflective = 0.5;
         }
         p->unmap_file(&cube_mm);
        
         struct MappedMemory sphere_mm = load_mesh(p, "data/models/blender/bin/sphere.bin", &v, &vc, &i, &ic);
         sphere_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &sphere, 1);
-        material_uniform_data[sphere_id].shader = REFLECTION_SHADER;
-        material_uniform_data[sphere_id].reflective = 1.0;
+        material_uniforms[2].shader = REFLECTION_SHADER;
+        material_uniforms[2].reflective = 1.0;
         p->unmap_file(&sphere_mm);
-
 
         // TEXTURE
         int w, h = 0;
         struct MappedMemory china_texture_mm = load_texture(p, "data/textures/bin/china.bin", &w, &h);
         cube_texture_id = createGPUTexture(context, cube_mesh_id, china_texture_mm.data, w, h);
         p->unmap_file(&china_texture_mm);
-        struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_small.bin", &w, &h);
-        cube_texture_id = createGPUTexture(context, cube_mesh_id, font_texture_mm.data, w, h);
+        struct MappedMemory font_texture_mm = load_texture(p, "data/textures/bin/font_atlas_sq.bin", &w, &h);
         quad_texture_id = createGPUTexture(context, quad_mesh_id, font_texture_mm.data, w, h);
         p->unmap_file(&font_texture_mm);
 
@@ -420,16 +427,15 @@ int tick(struct Platform *p, void *context) {
 
         struct MappedMemory colormap_mm = load_texture(p, "data/textures/bin/colormap.bin", &w, &h);
         colormap_texture_id = createGPUTexture(context, character_mesh_id, colormap_mm.data, w, h);
-        colormap_texture_id = createGPUTexture(context, char2_mesh_id, colormap_mm.data, w, h);
         p->unmap_file(&colormap_mm);
 
         // UNIFORMS
-        global_uniform_data.brightness = brightness;
-        global_uniform_data.time = timeVal;
-        global_uniform_data.shadows = SHADOWS_ENABLED;
-        memcpy(global_uniform_data.view, view, sizeof(view));
-        memcpy(global_uniform_data.projection, projection, sizeof(projection));
-        memcpy(global_uniform_data.camera_world_space, camera_world_space, sizeof(camera_world_space));
+        global_uniforms.brightness = brightness;
+        global_uniforms.time = timeVal;
+        global_uniforms.shadows = SHADOWS_ENABLED;
+        memcpy(global_uniforms.view, view, sizeof(view));
+        memcpy(global_uniforms.projection, projection, sizeof(projection));
+        memcpy(global_uniforms.camera_world_space, camera_world_space, sizeof(camera_world_space));
 
         // gamestate shit
         initGamestate(&gameState);
@@ -440,20 +446,12 @@ int tick(struct Platform *p, void *context) {
         };
         addGameObject(&gameState, &cube);
         gameState.player.instance = &character;
-        for (int j = 0; j < 10; j++) {
+        #define NR_OF_PINES 10
+        for (int j = 0; j < NR_OF_PINES; j++) {
             // instance data
             memcpy(&pines[j], &pine, sizeof(struct Instance));
             pines[j].transform[12] = 10.0 * cos(j * 0.314 * 2);
             pines[j].transform[14] = 10.0 * sin(j * 0.314 * 2);
-            // mesh
-            struct MappedMemory pine_mm = load_mesh(p, "data/models/bin/pine.bin", &v, &vc, &i, &ic);
-            pine_mesh_id[j] = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &pines[j], 1);
-            p->unmap_file(&pine_mm);
-            // texture
-            // struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap_2.bin", &w, &h);
-            // pine_texture_id[j] = createGPUTexture(context, pine_mesh_id[j], green_texture_mm.data, w, h);
-            material_uniform_data[pine_mesh_id[j]].shader = BASE_SHADER;
-            // p->unmap_file(&green_texture_mm);
             pineo[j] = (struct GameObject){
                 .collisionBox = {0},
                 .instance = &pines[j],
@@ -464,10 +462,20 @@ int tick(struct Platform *p, void *context) {
             pineo[j].collisionBox.position.z = pines[j].transform[14];
             addGameObject(&gameState, &pineo[j]);
         }
+        struct MappedMemory pine_mm = load_mesh(p, "data/models/bin/pine.bin", &v, &vc, &i, &ic);
+        struct MappedMemory green_texture_mm = load_texture(p, "data/textures/bin/colormap_2.bin", &w, &h);
+        // mesh
+        int pine_mesh_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &pines, NR_OF_PINES);
+        material_uniforms[pine_mesh_id].shader = BASE_SHADER;
+        // texture
+        int pine_texture_id = createGPUTexture(context, pine_mesh_id, green_texture_mm.data, w, h);
+        p->unmap_file(&green_texture_mm);
+        p->unmap_file(&pine_mm);
     }
     #pragma endregion
 
     // poll input events as late as possible (after sleeping for vsync and gpu waiting)
+    // this takes an additional 0.2ms to do though
     p->poll_inputs();
 
     // Update uniforms
@@ -486,19 +494,19 @@ int tick(struct Platform *p, void *context) {
     //view[13] = cameraLocation[1];
     float inv[16];
     inverseViewMatrix(view, inv);
-    memcpy(global_uniform_data.view, inv, sizeof(inv));
-    memcpy(global_uniform_data.projection, projection, sizeof(projection));
-    global_uniform_data.time = timeVal;
+    memcpy(global_uniforms.view, inv, sizeof(inv));
+    memcpy(global_uniforms.projection, projection, sizeof(projection));
+    global_uniforms.time = timeVal;
 
     float new_[4] = {view[12], view[13], view[14], 1.0};
     memcpy(camera_world_space, &new_, sizeof(camera_world_space));
-    memcpy(global_uniform_data.camera_world_space, camera_world_space, sizeof(camera_world_space));
+    memcpy(global_uniforms.camera_world_space, camera_world_space, sizeof(camera_world_space));
 
     // SET SHADOWS
     if (SHADOWS_ENABLED) {
         float light_view_proj[16]; // Q: should we pass view and proj separately instead for simplicity and flexibility?
         computeDynamicLightViewProj(light_view_proj, playerLocation);
-        memcpy(global_uniform_data.light_view_proj, light_view_proj, sizeof(light_view_proj));
+        memcpy(global_uniforms.light_view_proj, light_view_proj, sizeof(light_view_proj));
     }
 
     // update the instances of the text
@@ -507,7 +515,7 @@ int tick(struct Platform *p, void *context) {
     // keep track of how long the tick took to process
     double tick_ms = p->current_time_ms() - tick_start_ms;
 
-    struct draw_result result = drawGPUFrame(context, p, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0);
+    struct draw_result result = drawGPUFrame(context, p, OFFSET_X, OFFSET_Y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 0, 0, &global_uniforms, material_uniforms);
     double cpu_ms = result.cpu_ms;
 
     // todo: pass postprocessing settings etc. as parameter -> no global, to that we can switch instantly at runtime
@@ -518,12 +526,12 @@ int tick(struct Platform *p, void *context) {
         float cubemapProj[16];
         generateCubemapViews(eye, cubemapViews);
         generateCubemapProjection(0.01f, 2000.0f, cubemapProj);
-        memcpy(global_uniform_data.projection, cubemapProj, sizeof(projection));
+        memcpy(global_uniforms.projection, cubemapProj, sizeof(projection));
         for (int i = 0; i < 6; i++) {
-            memcpy(global_uniform_data.view, cubemapViews[i], sizeof(view));
+            memcpy(global_uniforms.view, cubemapViews[i], sizeof(view));
             char filename[64]; char *cube_faces[6] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
             snprintf(filename, sizeof(filename), "data/textures/cube/cube_face_%s.png", cube_faces[i]);    
-            drawGPUFrame(context, p, 0, 0, 128, 128, 1, filename);
+            drawGPUFrame(context, p, 0, 0, 128, 128, 1, filename, &global_uniforms, material_uniforms);
         }
     }
 

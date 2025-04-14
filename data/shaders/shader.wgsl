@@ -1,7 +1,7 @@
 struct GlobalUniforms {
-    shadows: u32,
     time: f32,
     brightness: f32,
+    shadows: u32,
     camera_world_space: vec4<f32>,
     view: mat4x4<f32>,  // View matrix
     projection: mat4x4<f32>,    // Projection matrix
@@ -10,30 +10,26 @@ struct GlobalUniforms {
 struct MaterialUniforms {
     shader: u32,
     reflective: f32,
-    padding_1: u32,
+    animated: u32,
     padding_2: u32,
+    padding_3: mat4x4<f32>, // 64 bytes
+    padding_3: mat4x4<f32>, // 64 bytes
+    padding_3: mat4x4<f32>, // 64 bytes
+    padding_4: vec4<f32>,
+    padding_4: vec4<f32>,
+    padding_4: vec4<f32>,
 };
 
-@group(0) @binding(0)
-var<uniform> global_uniforms: GlobalUniforms;
-@group(0) @binding(1)
-var animation_sampler: sampler;
-@group(0) @binding(2)
-var animation_texture: texture_2d<f32>;
-@group(0) @binding(3)
-var texture_sampler: sampler;
-@group(0) @binding(4)
-var textures: texture_2d_array<f32>;
-@group(0) @binding(5)
-var<uniform> material_uniform_array: array<MaterialUniforms, 256>; // hardcoded: 65536 / 256 (size of MaterialUniforms)
-@group(0) @binding(6)
-var shadow_map: texture_depth_2d;
-@group(0) @binding(7)
-var shadow_sampler: sampler_comparison;
-@group(0) @binding(8)
-var cubemap: texture_cube<f32>;
-@group(0) @binding(9)
-var cubemap_sampler: sampler;
+@group(0) @binding(0) var<uniform> global_uniforms: GlobalUniforms;
+@group(0) @binding(1) var animation_sampler: sampler;
+@group(0) @binding(2) var animation_texture: texture_2d<f32>;
+@group(0) @binding(3) var texture_sampler: sampler;
+@group(0) @binding(4) var textures: texture_2d_array<f32>;
+@group(0) @binding(5) var<uniform> material_uniform_array: array<MaterialUniforms, 256>; // hardcoded: 65536 / 256 (size of MaterialUniforms)
+@group(0) @binding(6) var shadow_map: texture_depth_2d;
+@group(0) @binding(7) var shadow_sampler: sampler_comparison;
+@group(0) @binding(8) var cubemap: texture_cube<f32>;
+@group(0) @binding(9) var cubemap_sampler: sampler;
 
 struct VertexInput {
     // Vertex
@@ -49,6 +45,9 @@ struct VertexInput {
     @location(9) i_pos_2: vec4<f32>,  // instance transform row 2
     @location(10) i_pos_3: vec4<f32>, // instance transform row 3
     @location(11) i_data: vec3<u32>,
+    @location(12) i_norms: vec4<f32>,
+    @location(13) i_animation: u32,
+    @location(14) i_frame: f32,
     @location(15) i_atlas_uv: vec2<f32>,
 };
 
@@ -58,25 +57,49 @@ const SHADOW_MESH_SHADER: u32 = 2;
 const REFLECTION_SHADER: u32 = 3;
 const ENV_CUBE_SHADER: u32 = 4;
 
+const animation_size: u32 = 4096; // nr of pixels per animation (is also the width of the texture -> 1 height per animation)
+const frame_size: u32 = 32 * 4; // pixels (1 pixel is one vec4 in the bone, 32 bones in a frame/skeleton)
+
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var output: VertexOutput;
     var i_transform = mat4x4<f32>(input.i_pos_0, input.i_pos_1,input.i_pos_2,input.i_pos_3);
-    let vertex_position = vec4<f32>(input.position, 1.0);
-    let material_uniforms = material_uniform_array[1];
+    var vertex_position = vec4<f32>(input.position, 1.0);
+    let shader = input.i_data[1]; // todo: put shader id in material instead
+    let material = material_uniform_array[input.i_data[2]];
+    var skin_matrix = mat4x4<f32>(    
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0, 
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
     if (input.i_atlas_uv.x == 0.0) {
-        // BASE SHADER
-        // var bones = mesh_uniforms.bones; // var makes a local copy though
-        // let skin_matrix = 
-        //     bones[input.bone_indices[0]] * input.bone_weights[0] +
-        //     bones[input.bone_indices[1]] * input.bone_weights[1] +
-        //     bones[input.bone_indices[2]] * input.bone_weights[2] +
-        //     bones[input.bone_indices[3]] * input.bone_weights[3];
+        if (material.animated == 1) {
+            // todo: 4 bones with weight instead of just one
+            // todo: save bone data in 1byte instead of 4bytes
+            // todo: limit each animation to 32 frames
+            // todo: limit each frame to 32 bones
+            let frame = u32(input.i_frame); // [32 x [32 x [p1,p2,p3,p4] ] ] == 4096 pixels
+            let frame_start = frame * frame_size;
+            let bone_start = frame_start + input.bone_indices[0];
+            let bone_1 = textureLoad(animation_texture, vec2<u32>(bone_start, input.i_animation), 0);
+            let bone_2 = textureLoad(animation_texture, vec2<u32>(bone_start + 4, input.i_animation), 0);
+            let bone_3 = textureLoad(animation_texture, vec2<u32>(bone_start + 8, input.i_animation), 0);
+            let bone_4 = textureLoad(animation_texture, vec2<u32>(bone_start + 12, input.i_animation), 0);
+            // BASE SHADER
+            // var bones = mesh_uniforms.bones; // var makes a local copy though
+            // let skin_matrix = 
+            //     bones[input.bone_indices[0]] * input.bone_weights[0] +
+            //     bones[input.bone_indices[1]] * input.bone_weights[1] +
+            //     bones[input.bone_indices[2]] * input.bone_weights[2] +
+            //     bones[input.bone_indices[3]] * input.bone_weights[3];
+            skin_matrix = mat4x4<f32>(bone_1, bone_2, bone_3, bone_4);
+        }
 
-        var world_space = i_transform /* skin_matrix*/ * vertex_position;
+        var world_space = i_transform * skin_matrix * vertex_position;
 
         // projected shadow mesh
-        if (material_uniforms.shader == SHADOW_MESH_SHADER) {
+        if (material.shader == SHADOW_MESH_SHADER) {
             let above = 0.01;
             let distance = -(world_space.y - above) / vec3(0.5, -0.8, 0.5).y;
             let projected_pos = world_space.xyz + (distance * vec3(0.5, -0.8, 0.5));
@@ -99,21 +122,22 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         // todo: emscripten (!)
 
         // DIRECTIONAL LIGHT
-        var world_space_normal = normalize(((i_transform/* * skin_matrix*/) * vec4<f32>(input.normal.xyz, 0.0)).xyz);
+        var world_space_normal = normalize(((i_transform * skin_matrix) * vec4<f32>(input.normal.xyz, 0.0)).xyz);
         let diff = max(dot(world_space_normal, -vec3(0.5, -0.8, 0.5)), 0.0);
 
         output.world_normal = world_space_normal;
         output.light = diff;
         
         // SHADOW
-        if (global_uniforms.shadows == BASE_SHADER) {
+        if (global_uniforms.shadows == 1) {
             let light_space_pos = global_uniforms.light_view_proj * world_space;
             // Convert XY (-1, 1) to (0, 1), Y is flipped because texture coords are Y-down, Z is already in (0, 1) space
             output.shadow_pos = vec3(light_space_pos.xy * vec2(0.5, -0.5) + vec2(0.5), light_space_pos.z) / light_space_pos.w;
-            output.color = light_space_pos;
+            output.light_space_pos = light_space_pos;
         }
         // UV
-        output.uv = input.i_atlas_uv + input.uv * max(1.0f, f32(input.i_data.x)); // texture scaling
+        let uv_scale = 1.0 / (1. - input.i_norms[0]);
+        output.uv = input.i_atlas_uv + input.uv * uv_scale; // texture scaling
     } else if (input.i_atlas_uv.x != 0.0) {
         // HUD SHADER
         // let i = vertex_index % 3u;
@@ -124,31 +148,42 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         output.uv = input.i_atlas_uv + (input.uv * char_scale);
     }
     
+    output.i_data = input.i_data;
     return output;
 }
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
-    @location(0) color: vec4<f32>,
+    @location(0) light_space_pos: vec4<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) light: f32,
     @location(3) shadow_pos: vec3<f32>,
     @location(4) world_normal: vec3<f32>, // World-space normal for debugging
     @location(5) world_space: vec4<f32>, // World-space normal for debugging
     @location(6) center_pos: vec4<f32>, // World-space normal for debugging
-    @location(7) shadow_depth: f32
+    @location(7) shadow_depth: f32,
+    @location(8) i_data: vec3<u32>
 };
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let material_uniforms = material_uniform_array[1];
+    let shader = input.i_data[1]; // todo: put shader id in material instead
+    let material = material_uniform_array[input.i_data[2]];
     // ENVIRONMENT CUBE
-    if (material_uniforms.shader == ENV_CUBE_SHADER) {
+    if (shader == ENV_CUBE_SHADER) {
         return textureSample(cubemap, cubemap_sampler, normalize(input.world_space.xyz));
+    }
+    if (shader == HUD_SHADER) {
+        let color = textureSample(textures, texture_sampler, input.uv, input.i_data[0]);
+        if (color.a < 0.49) {
+            discard;
+        }
+        return color;
     }
 
     let depth = (input.pos.z / input.pos.w);
-    var tex_color = textureSample(textures, texture_sampler, input.uv, 0);
+    let texture_id = input.i_data[0];
+    var tex_color = textureSample(textures, texture_sampler, input.uv, texture_id);
     
     var color = tex_color.rgb;
     var alpha = tex_color.a;
@@ -157,7 +192,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // REFLECTION CUBEMAP
-    if (material_uniforms.shader == REFLECTION_SHADER) {
+    if (shader == REFLECTION_SHADER) {
         let P = input.world_space.xyz;
         let probeCenter = vec3<f32>(0.0, 0.0, 0.0);
         let viewDir = normalize(global_uniforms.camera_world_space.xyz - P);
@@ -169,7 +204,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         // If t is negative, the ray missed the sphere; in a well-set scene this shouldn't happen.
         let sampleDir = normalize((P + r * t) - probeCenter);
 
-        color = ((1.0 - material_uniforms.reflective) * color) + (material_uniforms.reflective * textureSample(cubemap, cubemap_sampler, sampleDir).rgb);
+        color = ((1.0 - material.reflective) * color) + (material.reflective * textureSample(cubemap, cubemap_sampler, sampleDir).rgb);
 
         if (t < 0.) {
             color = vec3(1.,0.,1.);
@@ -185,11 +220,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     
     // SHADOWS
     var shadow = 1.;
-    if (global_uniforms.shadows == BASE_SHADER || material_uniforms.shader == REFLECTION_SHADER) {
+    if (global_uniforms.shadows == 1) {
         shadow = calculate_shadow(input);
     }
 
-    if (material_uniforms.shader == BASE_SHADER || material_uniforms.shader == REFLECTION_SHADER) {
+    if (shader == BASE_SHADER || shader == REFLECTION_SHADER) {
         // OBSCURE DEPTH
         let depth_limit = 20.0;
         let depth_cutoff = pow(depth/depth_limit, 4.0);
@@ -208,7 +243,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // color += (volumetric_intensity * vol_light * vec3(0.8, 0.4, 0.2));
 
     // SHADOW MESH
-    if (material_uniforms.shader == SHADOW_MESH_SHADER) {
+    if (shader == SHADOW_MESH_SHADER) {
         // color = vec3(input.shadow_depth);
         color = vec3(0.02,0.02,0.05);
         // alpha = input.shadow_depth;
@@ -232,7 +267,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // todo: is it possible that the char mesh's normals don't make sense (?)
     // return vec4<f32>(input.world_normal, alpha); //*draw normals*
     // return vec4<f32>(color * color_based_on_shadow_uv(input.shadow_pos), alpha); //*draw shadowmap extent*
-    // return vec4<f32>(vec3(smoothstep(0.51, 0.52, 1. - input.color.z)), alpha); //*draw shadowmap*
+    // return vec4<f32>(vec3(smoothstep(0.51, 0.52, 1. - input.light_space_pos.z)), alpha); //*draw shadowmap*
     // return vec4<f32>(vec3(shadow), alpha); //*draw only shadows*
     // return vec4<f32>(vec3(1./depth), alpha); //*draw depth*
 }

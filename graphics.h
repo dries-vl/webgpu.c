@@ -2,8 +2,8 @@
 #define GAME_DATA_H_
 
 // todo: either pass as param, or put in webgpu.c as global, but not in header file
-static const int FORCE_GPU_CHOICE = 0;
-static const int DISCRETE_GPU = 1; // 0 for forcing integrated, 1 for forcing discrete
+static const int FORCE_GPU_CHOICE = 1;
+static const int DISCRETE_GPU = 0; // 0 for forcing integrated, 1 for forcing discrete
 static const int MSAA_ENABLED = 1;
 static const int SHADOWS_ENABLED = 1;
 static const int POST_PROCESSING_ENABLED = 0;
@@ -20,11 +20,12 @@ static const int POST_PROCESSING_ENABLED = 0;
 #define SKELETON_SIZE (MAX_BONES * 16) // 512 bytes (128 pixels)
 #define ANIMATION_SIZE (SKELETON_SIZE * MAX_FRAMES) // 16384 bytes (4096 pixels)
 
-struct MaterialUniforms { // 256 bytes (minimum enforced by graphics api)
+struct MaterialUniforms { // 256 bytes (is ideal offset for uniforms)
     // 16+ byte elements must align to 16 byte offsets (!) 
     unsigned int shader; // 0-4
     float reflective; // 4-8
-    unsigned char padding[248]; // 8-256
+    unsigned int animated; // 8-12
+    unsigned char padding[244]; // 12-256
 };
 struct GlobalUniforms { // 1024 bytes
     // 16+ byte elements must align to 16 byte offsets (!)
@@ -38,10 +39,6 @@ struct GlobalUniforms { // 1024 bytes
     float light_view_proj[16]; // 160-224
     unsigned char padding[800]; // 224-1024
 };
-
-// Global uniform data (needs to be accessible from outside)
-struct GlobalUniforms global_uniform_data; // global uniform data in RAM
-struct MaterialUniforms material_uniform_data[MAX_MATERIALS]; // material uniforms data in RAM
 
 enum MeshFlags {
     MESH_ANIMATED = 1 << 0,
@@ -76,7 +73,7 @@ int   createGPUMesh(void *context, int material_id, enum MeshFlags flags, void *
 void  setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc);
 int   createGPUTexture(void *context, int mesh_id, void *data, int w, int h);
 void  setGPUInstanceBuffer(void *context, int mesh_id, void* ii, int iic);
-struct draw_result drawGPUFrame(void *context, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename);
+struct draw_result drawGPUFrame(void *context, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename,struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniforms[MAX_MATERIALS]);
 double block_on_gpu_queue(void *context, struct Platform *p);
 
 struct Vertex { // 48 bytes
@@ -90,8 +87,8 @@ struct Vertex { // 48 bytes
 };
 struct Instance { // 96 bytes
     float transform[16]; // 64 bytes f32 // *info* translation + rotation + scale
-    unsigned int data[3]; // 12 bytes u32 // *info* raw data
-    unsigned short norms[4]; // 8 bytes n16 // *info* raw normalized data (eg. metallic, etc.)
+    unsigned int data[3]; // 12 bytes u32 // *info* texture + shader + material
+    unsigned short norms[4]; // 8 bytes n16 // *info* (?) + (?) + (?) + (?)
     unsigned int animation; // 4 bytes u32
     float animation_phase; // 4 bytes f32
     unsigned short atlas_uv[2]; // 4 bytes n16 // *info* the texture index is a per-mesh uniform, and this picks within that texture for atlases

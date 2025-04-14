@@ -47,8 +47,8 @@ static const WGPUVertexBufferLayout VERTEX_LAYOUT[2] = {
             { .format = WGPUVertexFormat_Unorm16x4, .offset = 76,  .shaderLocation = 12 }, // norms[4] (8 bytes)
             { .format = WGPUVertexFormat_Uint32,    .offset = 84,  .shaderLocation = 13 }, // animation (4 bytes)
             { .format = WGPUVertexFormat_Float32,   .offset = 88,  .shaderLocation = 14 }, // animation_phase (4 bytes)
-            { .format = WGPUVertexFormat_Unorm16x2, .offset = 92,  .shaderLocation = 15 }  // atlas_uv[2] (4 bytes)
-        }
+            { .format = WGPUVertexFormat_Unorm16x2, .offset = 92,  .shaderLocation = 15 },  // atlas_uv[2] (4 bytes)
+}
     }
 };
 #pragma endregion
@@ -127,11 +127,12 @@ typedef struct {
 } WebGPUContext;
 #pragma endregion
 
-static void writeDataToTexture(void *context_ptr, WGPUTexture *tex, void *data, int w, int h, uint64_t offset) {
+static void writeDataToTexture(void *context_ptr, WGPUTexture *tex, void *data, int w, int h, uint64_t offset, int layer) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     WGPUImageCopyTexture ict = {0};
     ict.texture = *tex;
     ict.origin.y = (offset / 4) / w;
+    ict.origin.z = layer;
     WGPUTextureDataLayout tdl = {0};
     tdl.bytesPerRow  = 4 * w; // 4 bytes per pixel (RGBA)
     tdl.rowsPerImage = h;
@@ -1124,7 +1125,7 @@ void setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16]
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     Mesh* mesh = &context->meshes[mesh_id];
     mesh->flags = mesh->flags | MESH_ANIMATED; // todo: this should be an instance thing (?)
-    writeDataToTexture(context, &context->animations, bf, ANIMATION_SIZE / 4, 1, context->animation_count * ANIMATION_SIZE);
+    writeDataToTexture(context, &context->animations, bf, ANIMATION_SIZE / 4, 1, context->animation_count * ANIMATION_SIZE, 0);
     context->animation_count += 1;
 }
 
@@ -1140,7 +1141,7 @@ int createGPUTexture(void *context_ptr, int mesh_id, void *data, int w, int h) {
     context->texture_count += 1;
     
     // Upload the pixel data.
-    writeDataToTexture(context, &context->texture_array, data, w, h, 0);
+    writeDataToTexture(context, &context->texture_array, data, w, h, 0, slot);
 
     printf("Added texture to material %d at slot %d (binding=%d)\n", mesh->material_id, slot, slot+1);
 
@@ -1250,7 +1251,8 @@ void createDrawIndirectBuffers(void *context_ptr) {
     // wgpuQueueWriteBuffer(context->queue, context->indirect_count_buffer, 0, &drawCount, sizeof(uint32_t));
 }
 
-struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename) {
+struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename,
+struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniforms[MAX_MATERIALS]) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     struct draw_result result = {0};
     double mut_ms = p->current_time_ms();
@@ -1315,17 +1317,17 @@ struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offse
     // update all the gpu data
     // Write CPU–side uniform data to GPU
     // todo: condition to only do when updated data
-    wgpuQueueWriteBuffer(context->queue, context->global_uniform_buffer, 0, &global_uniform_data, sizeof(global_uniform_data));
+    wgpuQueueWriteBuffer(context->queue, context->global_uniform_buffer, 0, global_uniforms, sizeof(struct GlobalUniforms));
     for (int material_id = 0; material_id < MAX_MATERIALS; material_id++) {
         Material *material = &context->materials[material_id];
         // If the material requires uniform data updates, update the material uniform buffer
         // todo: only write when material setting UPDATE_MATERIAL_UNIFORMS is true
         // todo: we could even set this to true when we do an actual update, and otherwise never do this
         // todo: we can also do that for the global uniforms
-        if (1 && material->used) {
+        if (1) {
             uint64_t offset = material_id * sizeof(struct MaterialUniforms);
             // todo: we could batch this write buffer call into one single call for the pipeline instead
-            wgpuQueueWriteBuffer(context->queue, context->material_uniform_buffer, offset, &material_uniform_data[material_id], sizeof(struct MaterialUniforms));
+            wgpuQueueWriteBuffer(context->queue, context->material_uniform_buffer, offset, &material_uniforms[material_id], sizeof(struct MaterialUniforms));
         }
     }
     for (int mesh_id = 0; mesh_id < MAX_MESHES; mesh_id++) {
