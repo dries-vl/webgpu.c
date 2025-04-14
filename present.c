@@ -68,7 +68,7 @@ static struct Instance ground_instance = {
     .data = {2, BASE_SHADER, 0},
     .norms = {FLOAT_TO_U16(0.975), 0, 0, 0},
     .animation = 0,
-    .animation_phase = 0.0f,
+    .frame = 0.0f,
     .atlas_uv = {0}
 };
 
@@ -82,7 +82,7 @@ struct Instance pine = {
     .data = {4, BASE_SHADER, 0},
     .norms = {0},
     .animation = 0,
-    .animation_phase = 0.0f,
+    .frame = 0.0f,
     .atlas_uv = {0}
 };
 struct Instance pines[10];
@@ -376,8 +376,10 @@ int tick(struct Platform *p, void *context) {
         character_shadow_id = createGPUMesh(context, main_pipeline, 2, v, vc, i, ic, &character, 1);
         material_uniforms[3].animated = 1;
         material_uniforms[character_shadow_id].shader = SHADOW_SHADER;
+        // todo: problem: less than 131kb to read from -> segfault
         setGPUMeshBoneData(context, character_mesh_id, bf, bc, fc);
         setGPUMeshBoneData(context, character_shadow_id, bf, bc, fc);
+        // todo: below: we will just save all the bone data to the gpu, then unmap, same for textures and meshes
         // todo: we cannot unmap the bones data, maybe memcpy it here to make it persist
         // todo: fix script for correct UVs etc.
         // p->unmap_file(&character_mm);
@@ -501,6 +503,11 @@ int tick(struct Platform *p, void *context) {
     float new_[4] = {view[12], view[13], view[14], 1.0};
     memcpy(camera_world_space, &new_, sizeof(camera_world_space));
     memcpy(global_uniforms.camera_world_space, camera_world_space, sizeof(camera_world_space));
+    
+    // Update animation
+    // todo: allow switching animation
+    // todo: separate animation data from mesh; reuse skeleton and animations for all eg. humans/horses
+    character.frame = character.frame >= 32.0 ? 0.0 : character.frame + 0.1;
 
     // SET SHADOWS
     if (SHADOWS_ENABLED) {

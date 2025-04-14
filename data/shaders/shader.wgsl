@@ -57,8 +57,9 @@ const SHADOW_MESH_SHADER: u32 = 2;
 const REFLECTION_SHADER: u32 = 3;
 const ENV_CUBE_SHADER: u32 = 4;
 
-const animation_size: u32 = 4096; // nr of pixels per animation (is also the width of the texture -> 1 height per animation)
-const frame_size: u32 = 32 * 4; // pixels (1 pixel is one vec4 in the bone, 32 bones in a frame/skeleton)
+const animation_size: u32 = 8192; // nr of pixels per animation (is also the width of the texture -> 1 height per animation)
+const frame_size: u32 = 64 * 4; // pixels (1 pixel is one vec4 in the bone, 64 bones in a frame/skeleton)
+const bone_size: u32 = 4;
 
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -75,25 +76,32 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
     );
     if (input.i_atlas_uv.x == 0.0) {
         if (material.animated == 1) {
-            // todo: 4 bones with weight instead of just one
-            // todo: save bone data in 1byte instead of 4bytes
-            // todo: limit each animation to 32 frames
-            // todo: limit each frame to 32 bones
-            let frame = u32(input.i_frame); // [32 x [32 x [p1,p2,p3,p4] ] ] == 4096 pixels
+            let frame = u32(input.i_frame); // [32 x [64 x [p1,p2,p3,p4] ] ] == 8192 pixels
             let frame_start = frame * frame_size;
-            let bone_start = frame_start + input.bone_indices[0];
-            let bone_1 = textureLoad(animation_texture, vec2<u32>(bone_start, input.i_animation), 0);
-            let bone_2 = textureLoad(animation_texture, vec2<u32>(bone_start + 4, input.i_animation), 0);
-            let bone_3 = textureLoad(animation_texture, vec2<u32>(bone_start + 8, input.i_animation), 0);
-            let bone_4 = textureLoad(animation_texture, vec2<u32>(bone_start + 12, input.i_animation), 0);
-            // BASE SHADER
-            // var bones = mesh_uniforms.bones; // var makes a local copy though
-            // let skin_matrix = 
-            //     bones[input.bone_indices[0]] * input.bone_weights[0] +
-            //     bones[input.bone_indices[1]] * input.bone_weights[1] +
-            //     bones[input.bone_indices[2]] * input.bone_weights[2] +
-            //     bones[input.bone_indices[3]] * input.bone_weights[3];
-            skin_matrix = mat4x4<f32>(bone_1, bone_2, bone_3, bone_4);
+            let bone_0 = frame_start + (input.bone_indices[0] * bone_size);
+            let bone_1 = frame_start + (input.bone_indices[1] * bone_size);
+            let bone_2 = frame_start + (input.bone_indices[2] * bone_size);
+            let bone_3 = frame_start + (input.bone_indices[3] * bone_size);
+            skin_matrix = mat4x4<f32>(textureLoad(animation_texture, vec2<u32>(bone_0, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_0 + 1, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_0 + 2, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_0 + 3, input.i_animation), 0))
+                        * input.bone_weights[0]
+                        + mat4x4<f32>(textureLoad(animation_texture, vec2<u32>(bone_1, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_1 + 1, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_1 + 2, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_1 + 3, input.i_animation), 0))
+                        * input.bone_weights[1]
+                        + mat4x4<f32>(textureLoad(animation_texture, vec2<u32>(bone_2, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_2 + 1, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_2 + 2, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_2 + 3, input.i_animation), 0))
+                        * input.bone_weights[2]
+                        + mat4x4<f32>(textureLoad(animation_texture, vec2<u32>(bone_3, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_3 + 1, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_3 + 2, input.i_animation), 0),
+                                      textureLoad(animation_texture, vec2<u32>(bone_3 + 3, input.i_animation), 0))
+                        * input.bone_weights[3];
         }
 
         var world_space = i_transform * skin_matrix * vertex_position;

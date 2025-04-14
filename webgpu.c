@@ -46,7 +46,7 @@ static const WGPUVertexBufferLayout VERTEX_LAYOUT[2] = {
             { .format = WGPUVertexFormat_Uint32x3,  .offset = 64,  .shaderLocation = 11 }, // data[3] (12 bytes)
             { .format = WGPUVertexFormat_Unorm16x4, .offset = 76,  .shaderLocation = 12 }, // norms[4] (8 bytes)
             { .format = WGPUVertexFormat_Uint32,    .offset = 84,  .shaderLocation = 13 }, // animation (4 bytes)
-            { .format = WGPUVertexFormat_Float32,   .offset = 88,  .shaderLocation = 14 }, // animation_phase (4 bytes)
+            { .format = WGPUVertexFormat_Float32,   .offset = 88,  .shaderLocation = 14 }, // frame (4 bytes)
             { .format = WGPUVertexFormat_Unorm16x2, .offset = 92,  .shaderLocation = 15 },  // atlas_uv[2] (4 bytes)
 }
     }
@@ -127,17 +127,17 @@ typedef struct {
 } WebGPUContext;
 #pragma endregion
 
-static void writeDataToTexture(void *context_ptr, WGPUTexture *tex, void *data, int w, int h, uint64_t offset, int layer) {
+static void writeDataToTexture(void *context_ptr, WGPUTexture *tex, void *data, int w, int h, uint64_t offset, int byte_per_pixel, int layer) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     WGPUImageCopyTexture ict = {0};
     ict.texture = *tex;
-    ict.origin.y = (offset / 4) / w;
+    ict.origin.y = (offset / byte_per_pixel) / w;
     ict.origin.z = layer;
     WGPUTextureDataLayout tdl = {0};
-    tdl.bytesPerRow  = 4 * w; // 4 bytes per pixel (RGBA)
+    tdl.bytesPerRow  = byte_per_pixel * w;
     tdl.rowsPerImage = h;
     WGPUExtent3D ext = { .width = (uint32_t)w, .height = (uint32_t)h, .depthOrArrayLayers = 1 };
-    wgpuQueueWriteTexture(context->queue, &ict, data, (size_t)(4 * w * h), &tdl, &ext);
+    wgpuQueueWriteTexture(context->queue, &ict, data, (size_t)(byte_per_pixel * w * h), &tdl, &ext);
 }
 
 // todo: separate context from device setup; and then allow the context to be freed/recreated while keeping the device stuff
@@ -261,28 +261,32 @@ static void setup_context(WebGPUContext *context) {
         context->material_uniform_buffer = wgpuDeviceCreateBuffer(context->device, &ubDesc2);
 
         // Create animations texture
-        #define ANIMATION_LIMIT 200
-        WGPUTextureDescriptor animTexDesc = {.size={.depthOrArrayLayers=1, .width=ANIMATION_SIZE / 4, .height=ANIMATION_LIMIT}, .dimension=WGPUTextureDimension_2D,
-        .format=WGPUTextureFormat_RGBA8Unorm, .usage=WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, .mipLevelCount = 1, .sampleCount = 1, .label = "Animation Texture"};
-        WGPUTextureViewDescriptor animViewDesc = {.format = animTexDesc.format, .dimension = WGPUTextureViewDimension_2D, .mipLevelCount = 1, .arrayLayerCount = 1, 
-        .label = "Animation Texture View"};
-        WGPUSamplerDescriptor animSamplerDesc = {.label = "Animation Sampler", .minFilter = WGPUFilterMode_Nearest, .magFilter = WGPUFilterMode_Nearest, .mipmapFilter = WGPUMipmapFilterMode_Nearest,
-        .maxAnisotropy = 1, .addressModeU = WGPUAddressMode_ClampToEdge, .addressModeV = WGPUAddressMode_ClampToEdge, .addressModeW = WGPUAddressMode_ClampToEdge};
-        context->animations = wgpuDeviceCreateTexture(context->device, &animTexDesc);
-        context->animations_view = wgpuTextureCreateView(context->animations, &animViewDesc);
-        context->animations_sampler = wgpuDeviceCreateSampler(context->device, &animSamplerDesc);
+        {
+            #define ANIMATION_LIMIT 200
+            WGPUTextureDescriptor animTexDesc = {.size={.depthOrArrayLayers=1, .width=ANIMATION_TEXTURE_WIDTH, .height=ANIMATION_LIMIT}, .dimension=WGPUTextureDimension_2D,
+            .format=WGPUTextureFormat_RGBA32Float, .usage=WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, .mipLevelCount = 1, .sampleCount = 1, .label = "Animation Texture"};
+            WGPUTextureViewDescriptor animViewDesc = {.format = animTexDesc.format, .dimension = WGPUTextureViewDimension_2D, .mipLevelCount = 1, .arrayLayerCount = 1, 
+            .label = "Animation Texture View"};
+            WGPUSamplerDescriptor animSamplerDesc = {.label = "Animation Sampler", .minFilter = WGPUFilterMode_Nearest, .magFilter = WGPUFilterMode_Nearest, .mipmapFilter = WGPUMipmapFilterMode_Nearest,
+            .maxAnisotropy = 1, .addressModeU = WGPUAddressMode_ClampToEdge, .addressModeV = WGPUAddressMode_ClampToEdge, .addressModeW = WGPUAddressMode_ClampToEdge};
+            context->animations = wgpuDeviceCreateTexture(context->device, &animTexDesc);
+            context->animations_view = wgpuTextureCreateView(context->animations, &animViewDesc);
+            context->animations_sampler = wgpuDeviceCreateSampler(context->device, &animSamplerDesc);
+        }
 
         // Create texture array
-        #define TEXTURE_LIMIT 256
-        WGPUTextureDescriptor texDesc = {.size={.depthOrArrayLayers=TEXTURE_LIMIT, .width=TEXTURE_SIZE, .height=TEXTURE_SIZE}, .dimension=WGPUTextureDimension_2D,
-        .format=WGPUTextureFormat_RGBA8Unorm, .usage=WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, .mipLevelCount = 1, .sampleCount = 1, .label = "Textures array"};
-        WGPUTextureViewDescriptor viewDesc = {.format = animTexDesc.format, .dimension = WGPUTextureViewDimension_2DArray, .mipLevelCount = 1, .arrayLayerCount = TEXTURE_LIMIT, 
-        .label = "Textures array View"};
-        WGPUSamplerDescriptor samplerDesc = {.label = "Textures array Sampler", .minFilter = WGPUFilterMode_Linear, .magFilter = WGPUFilterMode_Linear, .mipmapFilter = WGPUMipmapFilterMode_Linear,
-        .maxAnisotropy = 1, .addressModeU = WGPUAddressMode_Repeat, .addressModeV = WGPUAddressMode_Repeat, .addressModeW = WGPUAddressMode_Repeat};
-        context->texture_array = wgpuDeviceCreateTexture(context->device, &texDesc);
-        context->texture_array_view = wgpuTextureCreateView(context->texture_array, &viewDesc);
-        context->texture_array_sampler = wgpuDeviceCreateSampler(context->device, &samplerDesc);
+        {
+            #define TEXTURE_LIMIT 256
+            WGPUTextureDescriptor texDesc = {.size={.depthOrArrayLayers=TEXTURE_LIMIT, .width=TEXTURE_SIZE, .height=TEXTURE_SIZE}, .dimension=WGPUTextureDimension_2D,
+            .format=WGPUTextureFormat_RGBA8Unorm, .usage=WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, .mipLevelCount = 1, .sampleCount = 1, .label = "Textures array"};
+            WGPUTextureViewDescriptor viewDesc = {.format = texDesc.format, .dimension = WGPUTextureViewDimension_2DArray, .mipLevelCount = 1, .arrayLayerCount = TEXTURE_LIMIT, 
+            .label = "Textures array View"};
+            WGPUSamplerDescriptor samplerDesc = {.label = "Textures array Sampler", .minFilter = WGPUFilterMode_Linear, .magFilter = WGPUFilterMode_Linear, .mipmapFilter = WGPUMipmapFilterMode_Linear,
+            .maxAnisotropy = 1, .addressModeU = WGPUAddressMode_Repeat, .addressModeV = WGPUAddressMode_Repeat, .addressModeW = WGPUAddressMode_Repeat};
+            context->texture_array = wgpuDeviceCreateTexture(context->device, &texDesc);
+            context->texture_array_view = wgpuTextureCreateView(context->texture_array, &viewDesc);
+            context->texture_array_sampler = wgpuDeviceCreateSampler(context->device, &samplerDesc);
+        }
 
         // Create shadow texture + sampler
         {
@@ -509,6 +513,8 @@ static void setup_context(WebGPUContext *context) {
     printf("[webgpu.c] max buffer size: %d\n", limits.limits.maxBufferSize);
     printf("[webgpu.c] max nr of textures in array: %d\n", limits.limits.maxTextureArrayLayers);
     printf("[webgpu.c] max texture 2D dimension: %d\n", limits.limits.maxTextureDimension2D);
+    printf("[webgpu.c] max bindings per bindgroup: %d\n", limits.limits.maxBindingsPerBindGroup);
+    printf("[webgpu.c] max texture 1D dimension: %d\n", limits.limits.maxTextureDimension1D);
     #ifdef __EMSCRIPTEN__
     setup_callback();
     #endif
@@ -1124,8 +1130,8 @@ int createGPUMesh(void *context_ptr, int pipeline_id, enum MeshFlags flags, void
 void setGPUMeshBoneData(void *context_ptr, int mesh_id, float *bf[MAX_BONES][16], int bc, int fc) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
     Mesh* mesh = &context->meshes[mesh_id];
-    mesh->flags = mesh->flags | MESH_ANIMATED; // todo: this should be an instance thing (?)
-    writeDataToTexture(context, &context->animations, bf, ANIMATION_SIZE / 4, 1, context->animation_count * ANIMATION_SIZE, 0);
+    mesh->flags = mesh->flags | MESH_ANIMATED; // todo: this should be an instance thing (!)
+    writeDataToTexture(context, &context->animations, bf, ANIMATION_TEXTURE_WIDTH, 1, context->animation_count * ANIMATION_SIZE, 16, 0);
     context->animation_count += 1;
 }
 
@@ -1141,7 +1147,7 @@ int createGPUTexture(void *context_ptr, int mesh_id, void *data, int w, int h) {
     context->texture_count += 1;
     
     // Upload the pixel data.
-    writeDataToTexture(context, &context->texture_array, data, w, h, 0, slot);
+    writeDataToTexture(context, &context->texture_array, data, w, h, 0, 4, slot);
 
     printf("Added texture to material %d at slot %d (binding=%d)\n", mesh->material_id, slot, slot+1);
 

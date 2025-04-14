@@ -61,7 +61,7 @@ struct GameState gameState = {
             .data = {0},
             .norms = {0},
             .animation = 0,
-            .animation_phase = 0.0f,
+            .frame = 0.0f,
             .atlas_uv = {0}
         },
         .velocity = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}

@@ -15,10 +15,11 @@ static const int POST_PROCESSING_ENABLED = 0;
 #define MAX_PIPELINES 2 // todo: remove, only one pipeline
 #define MAX_MESHES 1024
 #define MAX_MATERIALS (UNIFORM_BUFFER_MAX_SIZE / sizeof(struct MaterialUniforms)) // 256 bytes x 256 materials limit -> reuse material for different mesh by using atlas for textures + instance atlas uv
-#define MAX_BONES 32
+#define MAX_BONES 64
 #define MAX_FRAMES 32
-#define SKELETON_SIZE (MAX_BONES * 16) // 512 bytes (128 pixels)
-#define ANIMATION_SIZE (SKELETON_SIZE * MAX_FRAMES) // 16384 bytes (4096 pixels)
+#define SKELETON_SIZE (MAX_BONES * 64) // 4096 bytes (16 byte rgba32 -> 256 pixels)
+#define ANIMATION_SIZE (SKELETON_SIZE * MAX_FRAMES) // 131k bytes (16 byte rgba32 -> 8192 pixels)
+#define ANIMATION_TEXTURE_WIDTH (ANIMATION_SIZE / 16)
 
 struct MaterialUniforms { // 256 bytes (is ideal offset for uniforms)
     // 16+ byte elements must align to 16 byte offsets (!) 
@@ -90,7 +91,7 @@ struct Instance { // 96 bytes
     unsigned int data[3]; // 12 bytes u32 // *info* texture + shader + material
     unsigned short norms[4]; // 8 bytes n16 // *info* (?) + (?) + (?) + (?)
     unsigned int animation; // 4 bytes u32
-    float animation_phase; // 4 bytes f32
+    float frame; // 4 bytes f32
     unsigned short atlas_uv[2]; // 4 bytes n16 // *info* the texture index is a per-mesh uniform, and this picks within that texture for atlases
 };
 
