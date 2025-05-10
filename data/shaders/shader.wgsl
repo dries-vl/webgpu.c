@@ -134,7 +134,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Vert
         let diff = max(dot(world_space_normal, -vec3(0.5, -0.8, 0.5)), 0.0);
 
         output.world_normal = world_space_normal;
-        output.light = diff;
+        output.light = diff * 2.;
         
         // SHADOW
         if (global_uniforms.shadows == 1) {
@@ -242,7 +242,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let ambient_light = 0.6;
         let ambient_light_color = vec3(.33, .33, 1.) * ambient_light;
         let dir_light_color = vec3(1.,1.,.5) * input.light * shadow;
-        color = color * min(ambient_light_color + dir_light_color, vec3(1.));
+        color = color * (ambient_light_color + dir_light_color);
+        // color = color / (color + vec3(1.0/2.2)); // gamma (needed for 16bit output only)
+        // color = pow(color, vec3(1.0 / 2.2)); // gamma (needed for 16bit output only)
     }
 
     // VOLUMETRIC LIGHT

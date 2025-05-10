@@ -17,7 +17,7 @@ void (*setup_callback)();
 #include "graphics.h"
 
 #pragma region PREDEFINED DATA
-static const WGPUTextureFormat screen_color_format = WGPUTextureFormat_RGBA8Unorm;
+static const WGPUTextureFormat screen_color_format = WGPUTextureFormat_RGBA8UnormSrgb;
 static const WGPUTextureFormat depth_stencil_format = WGPUTextureFormat_Depth32Float;
 static const WGPUVertexBufferLayout VERTEX_LAYOUT[2] = {
     {   // Vertex layout
@@ -124,7 +124,28 @@ typedef struct {
     WGPUBindGroup       global_bindgroup;
     WGPUBuffer          global_uniform_buffer;
     WGPUBuffer          material_uniform_buffer;
+    // new renderer
+    WGPUPipelineLayout        cs_inst_pl;
+    WGPUPipelineLayout        cs_mlet_pl;
+    WGPUBindGroupLayout       inst_bgl;
+    WGPUBindGroupLayout       mlet_bgl;
+    WGPUBindGroup             inst_bind;
+    WGPUBindGroup             mlet_bind;
+    WGPUComputePipeline       cs_inst_pipeline;
+    WGPUComputePipeline       cs_mlet_pipeline;
+    WGPUBuffer                visible_mlet_buf;
+    WGPUBuffer                stream_vtx_buf;
+    WGPUBuffer                stream_idx_buf;
+    WGPUBuffer                counter_buf;
 } WebGPUContext;
+#pragma endregion
+
+#pragma region NEW RENDERER // todo: move
+#define MAX_STREAM_VERTS   (1<<20)   /* tweak */
+#define MAX_STREAM_INDICES (1<<21)
+#define MAX_VISIBLE_MLETS  (1<<17)   /* 128 k meshlets */
+struct GPUCounters { unsigned int vtx_cnt, idx_cnt, mlet_cnt; };
+struct GPUCounters zero = {0};
 #pragma endregion
 
 static void writeDataToTexture(void *context_ptr, WGPUTexture *tex, void *data, int w, int h, uint64_t offset, int byte_per_pixel, int layer) {
@@ -140,6 +161,32 @@ static void writeDataToTexture(void *context_ptr, WGPUTexture *tex, void *data, 
     wgpuQueueWriteTexture(context->queue, &ict, data, (size_t)(byte_per_pixel * w * h), &tdl, &ext);
 }
 
+const char *format_name(WGPUTextureFormat f) {
+    switch (f) {
+    case WGPUTextureFormat_RGBA8Unorm:          return "RGBA8Unorm";
+    case WGPUTextureFormat_RGBA8UnormSrgb:      return "RGBA8UnormSrgb";
+    case WGPUTextureFormat_BGRA8Unorm:          return "BGRA8Unorm";
+    case WGPUTextureFormat_BGRA8UnormSrgb:      return "BGRA8UnormSrgb";
+    case WGPUTextureFormat_RGB10A2Unorm:        return "RGB10A2Unorm";
+    case WGPUTextureFormat_RGBA16Float:         return "RGBA16Float";
+    default:                                    return "Unknown";
+    }
+}
+
+void print_surface_formats(WebGPUContext *context) {
+    WGPUSurfaceCapabilities caps = {0};
+    wgpuSurfaceGetCapabilities(context->surface,
+                               context->adapter,
+                               &caps);
+
+    printf("available surface formats (%zu):\n", caps.formatCount);
+    for (size_t i = 0; i < caps.formatCount; i++) {
+        WGPUTextureFormat f = caps.formats[i];
+        printf("  %zu: %d = %s\n",
+               i, (int)f, format_name(f));
+    }
+}
+
 // todo: separate context from device setup; and then allow the context to be freed/recreated while keeping the device stuff
 static void setup_context(WebGPUContext *context) {
     assert(context->adapter);
@@ -147,8 +194,7 @@ static void setup_context(WebGPUContext *context) {
     context->queue = wgpuDeviceGetQueue(context->device);
     assert(context->queue);
 
-    WGPUSurfaceCapabilities caps = {0};
-    wgpuSurfaceGetCapabilities(context->surface, context->adapter, &caps);
+    print_surface_formats(context);
     WGPUTextureFormat chosenFormat = screen_color_format;
 
     if (!POST_PROCESSING_ENABLED) {context->viewport_width=context->width;context->viewport_height=context->height;}
@@ -405,7 +451,7 @@ static void setup_context(WebGPUContext *context) {
     }
 
     // Create the depth texture attachment
-    {
+    if (1) {
         WGPUTextureDescriptor depthTextureDesc = {
             .usage = WGPUTextureUsage_RenderAttachment,
             .label = "DEPTH TEXTURE",
@@ -505,6 +551,18 @@ static void setup_context(WebGPUContext *context) {
     {
         create_shadow_pipeline(context);
     }
+    
+    // Create buffers for new renderer
+    {
+        context->visible_mlet_buf = create_storage(MAX_VISIBLE_MLETS*sizeof(unsigned int), WGPUBufferUsage_Storage|WGPUBufferUsage_CopyDst);
+        context->stream_vtx_buf   = create_storage(MAX_STREAM_VERTS*sizeof(struct Vertex), WGPUBufferUsage_Vertex|WGPUBufferUsage_Storage);
+        context->stream_idx_buf   = create_storage(MAX_STREAM_INDICES*sizeof(unsigned int), WGPUBufferUsage_Index|WGPUBufferUsage_Storage);
+        context->counter_buf      = create_storage(sizeof(struct GPUCounters), WGPUBufferUsage_Indirect|WGPUBufferUsage_Storage|WGPUBufferUsage_CopyDst);
+        
+        // two compute pass pipelines
+        WGPUComputePipeline cs_inst = create_compute(context->device,"instance.wgsl","main");
+        WGPUComputePipeline cs_mlet = create_compute(context->device,"meshlet.wgsl","main");
+    }
 
     context->initialized = true;
     printf("[webgpu.c] wgpuInit done.\n");
@@ -539,8 +597,8 @@ static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter 
         context->adapter = adapter;
         assert(context->adapter);
         WGPUDeviceDescriptor desc = {0}; desc.deviceLostCallback = my_error_cb;
-        desc.requiredFeatures = (WGPUFeatureName[]){ WGPUNativeFeature_MultiDrawIndirect };
-        desc.requiredFeatureCount = 1;
+        desc.requiredFeatures = (WGPUFeatureName[]){ WGPUNativeFeature_MultiDrawIndirect, WGPUNativeFeature_TextureAdapterSpecificFormatFeatures, WGPUNativeFeature_TextureFormat16bitNorm, WGPUNativeFeature_TextureCompressionAstcHdr };
+        desc.requiredFeatureCount = 4;
         wgpuAdapterRequestDevice(context->adapter, &desc, handle_request_device, context);
     } else fprintf(stderr, "[webgpu.c] RequestAdapter failed: %s\n", message);
 }
@@ -616,7 +674,7 @@ void *createGPUContext(void *hInstance, void *hwnd, int width, int height, int v
     WGPUInstanceDescriptor instDesc = {0};
     WGPUInstanceExtras extras = {0};
     extras.chain.sType = WGPUSType_InstanceExtras;
-    extras.backends   = WGPUInstanceBackend_Primary;
+    extras.backends   = WGPUInstanceBackend_DX12;
     extras.flags      = WGPUInstanceFlag_DiscardHalLabels;
     extras.dx12ShaderCompiler = WGPUDx12Compiler_Undefined;
     extras.gles3MinorVersion  = WGPUGles3MinorVersion_Automatic;
@@ -1257,9 +1315,12 @@ void createDrawIndirectBuffers(void *context_ptr) {
     // wgpuQueueWriteBuffer(context->queue, context->indirect_count_buffer, 0, &drawCount, sizeof(uint32_t));
 }
 
-struct draw_result drawGPUFrame(void *context_ptr, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename,
-struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniforms[MAX_MATERIALS]) {
+struct draw_result drawGPUFrame(
+    void *context_ptr, struct Platform *p, int offset_x, int offset_y, int viewport_width, int viewport_height, int save_to_disk, char *filename,
+    struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniforms[MAX_MATERIALS]
+) {
     WebGPUContext *context = (WebGPUContext *)context_ptr;
+
     struct draw_result result = {0};
     double mut_ms = p->current_time_ms();
 
@@ -1322,6 +1383,7 @@ struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniform
     
     // update all the gpu data
     // Write CPU–side uniform data to GPU
+    #pragma region WRITE DATA TO GPU
     // todo: condition to only do when updated data
     wgpuQueueWriteBuffer(context->queue, context->global_uniform_buffer, 0, global_uniforms, sizeof(struct GlobalUniforms));
     for (int material_id = 0; material_id < MAX_MATERIALS; material_id++) {
@@ -1347,7 +1409,23 @@ struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniform
         }
     }
     result.write_buffer_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
+    #pragma endregion
 
+    // COMPUTE PASSES
+    #pragma region COMPUTE PASS
+    // counters to zero each frame
+    wgpuQueueWriteBuffer(context->queue,context->counter_buf,0,&zero,sizeof(zero));
+    wgpuCommandEncoderBeginComputePass(encoder,NULL);
+    wgpuComputePassEncoderSetPipeline(context->cp,context->cs_inst);
+    wgpuComputePassEncoderSetBindGroup(cp,0,inst_bind,0,NULL);
+    wgpuComputePassEncoderDispatchWorkgroups(cp,(instance_cnt+255)/256,1,1);
+    wgpuComputePassEncoderSetPipeline(cp,cs_mlet);
+    wgpuComputePassEncoderSetBindGroup(cp,0,mlet_bind,0,NULL);
+    wgpuComputePassEncoderDispatchWorkgroups(cp,ceil_div(MAX_VISIBLE_MLETS,64),1,1);
+    wgpuComputePassEncoderEnd(cp);
+    #pragma endregion
+
+    #pragma region RENDER PASS ENCODER
     static int pass_desc_created = 0;
     static WGPURenderPassDescriptor passDesc = {0};
     static WGPURenderPassColorAttachment colorAtt = {0};
@@ -1371,8 +1449,9 @@ struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniform
 
     WGPUCommandEncoderDescriptor encDesc = {0};
     WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(context->device, &encDesc);
-
-    // SHADOW PASS
+    #pragma endregion
+   
+    #pragma region SHADOW PASS
     // Reuse the global pipeline uniform data in the shader uniforms // todo: is it possible to reuse the same gpu-buffer and write only once?
     // wgpuQueueWriteBuffer(context->queue, context->shadow_uniform_buffer, 0, context->pipelines[0].global_uniform_data, GLOBAL_UNIFORM_CAPACITY);
     if (SHADOWS_ENABLED) {
@@ -1391,7 +1470,7 @@ struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniform
             WGPURenderBundleEncoderDescriptor bundle_desc = {
                 .label = "shadow-bundle",
                 .colorFormatCount = 0,
-                .colorFormats = (WGPUTextureFormat[]){},
+                .colorFormats = (WGPUTextureFormat[]){0},
                 .depthStencilFormat = depth_stencil_format,
                 .sampleCount = 1,
                 .depthReadOnly = 0,
@@ -1427,7 +1506,9 @@ struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniform
         wgpuRenderPassEncoderRelease(shadowPass);
     }
     result.shadowmap_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
+    #pragma endregion
 
+    #pragma region MAIN PASS
     // Bundle
     #define USE_BUNDLE 0
     static WGPURenderBundle main_bundle = NULL;
@@ -1485,6 +1566,7 @@ struct GlobalUniforms *global_uniforms, struct MaterialUniforms material_uniform
     wgpuRenderPassEncoderRelease(main_pass);
     
     result.main_pass_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
+    #pragma endregion
 
     // save to disk
     #ifndef __EMSCRIPTEN__
