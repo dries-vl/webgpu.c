@@ -124,19 +124,6 @@ typedef struct {
     WGPUBindGroup       global_bindgroup;
     WGPUBuffer          global_uniform_buffer;
     WGPUBuffer          material_uniform_buffer;
-    // new renderer
-    WGPUPipelineLayout        cs_inst_pl;
-    WGPUPipelineLayout        cs_mlet_pl;
-    WGPUBindGroupLayout       inst_bgl;
-    WGPUBindGroupLayout       mlet_bgl;
-    WGPUBindGroup             inst_bind;
-    WGPUBindGroup             mlet_bind;
-    WGPUComputePipeline       cs_inst_pipeline;
-    WGPUComputePipeline       cs_mlet_pipeline;
-    WGPUBuffer                visible_mlet_buf;
-    WGPUBuffer                stream_vtx_buf;
-    WGPUBuffer                stream_idx_buf;
-    WGPUBuffer                counter_buf;
 } WebGPUContext;
 #pragma endregion
 
@@ -552,18 +539,6 @@ static void setup_context(WebGPUContext *context) {
         create_shadow_pipeline(context);
     }
     
-    // Create buffers for new renderer
-    {
-        context->visible_mlet_buf = create_storage(MAX_VISIBLE_MLETS*sizeof(unsigned int), WGPUBufferUsage_Storage|WGPUBufferUsage_CopyDst);
-        context->stream_vtx_buf   = create_storage(MAX_STREAM_VERTS*sizeof(struct Vertex), WGPUBufferUsage_Vertex|WGPUBufferUsage_Storage);
-        context->stream_idx_buf   = create_storage(MAX_STREAM_INDICES*sizeof(unsigned int), WGPUBufferUsage_Index|WGPUBufferUsage_Storage);
-        context->counter_buf      = create_storage(sizeof(struct GPUCounters), WGPUBufferUsage_Indirect|WGPUBufferUsage_Storage|WGPUBufferUsage_CopyDst);
-        
-        // two compute pass pipelines
-        WGPUComputePipeline cs_inst = create_compute(context->device,"instance.wgsl","main");
-        WGPUComputePipeline cs_mlet = create_compute(context->device,"meshlet.wgsl","main");
-    }
-
     context->initialized = true;
     printf("[webgpu.c] wgpuInit done.\n");
     WGPUSupportedLimits limits = {0}; wgpuDeviceGetLimits(context->device, &limits);
@@ -1409,20 +1384,6 @@ struct draw_result drawGPUFrame(
         }
     }
     result.write_buffer_ms = p->current_time_ms() - mut_ms; mut_ms = p->current_time_ms();
-    #pragma endregion
-
-    // COMPUTE PASSES
-    #pragma region COMPUTE PASS
-    // counters to zero each frame
-    wgpuQueueWriteBuffer(context->queue,context->counter_buf,0,&zero,sizeof(zero));
-    wgpuCommandEncoderBeginComputePass(encoder,NULL);
-    wgpuComputePassEncoderSetPipeline(context->cp,context->cs_inst);
-    wgpuComputePassEncoderSetBindGroup(cp,0,inst_bind,0,NULL);
-    wgpuComputePassEncoderDispatchWorkgroups(cp,(instance_cnt+255)/256,1,1);
-    wgpuComputePassEncoderSetPipeline(cp,cs_mlet);
-    wgpuComputePassEncoderSetBindGroup(cp,0,mlet_bind,0,NULL);
-    wgpuComputePassEncoderDispatchWorkgroups(cp,ceil_div(MAX_VISIBLE_MLETS,64),1,1);
-    wgpuComputePassEncoderEnd(cp);
     #pragma endregion
 
     #pragma region RENDER PASS ENCODER
